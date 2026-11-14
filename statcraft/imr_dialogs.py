@@ -481,8 +481,7 @@ class IMRChartDialog(QDialog):
         selected_refs: List[str] = []
         for it in items:
             idx = it.data(Qt.ItemDataRole.UserRole)
-            col = self.worksheet.columns[idx]
-            selected_refs.append(format_variable_reference(col, idx))
+            selected_refs.append(format_variable_reference(idx, self.worksheet))
 
         cur_text = self.edit_vars.text().strip()
         add_text = " ".join(selected_refs)
