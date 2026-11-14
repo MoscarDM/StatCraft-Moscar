@@ -56,6 +56,7 @@ class IMRChartWidget(GraphInteractionMixin, QWidget):
         super().__init__(parent)
         self.entry = entry
         self.result = entry.get("result", entry) if isinstance(entry, dict) else {}
+        self._init_graph_interaction()
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumSize(QSize(760, 680))
