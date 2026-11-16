@@ -3363,6 +3363,9 @@ class Presenter:
                 conf_level=st.get("conf_level", 95.0),
                 variable_name=var_name,
                 title=st.get("title", ""),
+                method=st.get("method", "CLS"),
+                transform=st.get("transform", None),
+                boxcox_lambda=st.get("boxcox_lambda", None),
             )
         res["analysis"] = "arima"
         res["graph"] = "arima"

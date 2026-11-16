@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
-from scipy import stats, optimize, signal
+from scipy import linalg, optimize, signal, stats
 
 def _arima_observations(values):
     """Preserve time positions: missing values must never close up the series."""
@@ -86,6 +86,158 @@ def undifference_forecasts(
     return full[-len(fc):]
 
 
+def _normalize_method(method: Optional[str]) -> str:
+    if not isinstance(method, str):
+        raise ValueError("Estimation method must be 'CLS' or 'ML'.")
+    norm = method.strip().upper()
+    if norm not in ("CLS", "ML"):
+        raise ValueError(f"Unsupported estimation method {method!r}; choose 'CLS' or 'ML'.")
+    return norm
+
+
+def _normalize_transform(
+    transform: Optional[str],
+    boxcox_lambda: Optional[float],
+) -> Tuple[Optional[str], Optional[float]]:
+    if transform is None:
+        norm = None
+    elif isinstance(transform, str):
+        raw = transform.strip().lower()
+        if raw in ("", "none"):
+            norm = None
+        elif raw == "log":
+            norm = "log"
+        elif raw in ("boxcox", "box-cox"):
+            norm = "boxcox"
+        else:
+            raise ValueError(f"Unsupported transform {transform!r}; choose None, 'log', or 'boxcox'.")
+    else:
+        raise ValueError(f"Unsupported transform {transform!r}; choose None, 'log', or 'boxcox'.")
+
+    lam: Optional[float] = None
+    if boxcox_lambda is not None:
+        if isinstance(boxcox_lambda, bool):
+            raise ValueError("Box-Cox lambda must be a finite real number.")
+        try:
+            lam = float(boxcox_lambda)
+        except (TypeError, ValueError):
+            raise ValueError("Box-Cox lambda must be a finite real number.") from None
+        if not math.isfinite(lam):
+            raise ValueError("Box-Cox lambda must be a finite real number.")
+    return norm, lam
+
+
+def _apply_transform(
+    y: np.ndarray,
+    transform: Optional[str],
+    boxcox_lambda: Optional[float],
+) -> Tuple[np.ndarray, Optional[float]]:
+    if transform is None:
+        return y, None
+    nonpos = np.where(y <= 0)[0]
+    if len(nonpos) > 0:
+        idx = int(nonpos[0])
+        raise ValueError(
+            f"ARIMA {transform} transform requires strictly positive observations "
+            f"(found {y[idx]} at row {idx + 1})."
+        )
+    if transform == "log":
+        return np.log(y), None
+    if boxcox_lambda is None:
+        if np.ptp(y) == 0:
+            lam = 1.0
+        else:
+            _, lam_est = stats.boxcox(y)
+            lam = float(lam_est)
+    else:
+        lam = float(boxcox_lambda)
+    if abs(lam) < 1e-12:
+        return np.log(y), lam
+    return (np.power(y, lam) - 1.0) / lam, lam
+
+
+def _invert_transform_quantile(z: float, transform: Optional[str], lam: Optional[float]) -> float:
+    if transform is None:
+        return float(z)
+    if transform == "log" or (lam is not None and abs(lam) < 1e-12):
+        return float(math.exp(z))
+    assert lam is not None
+    inner = max(lam * z + 1.0, 1e-12)
+    return float(inner ** (1.0 / lam))
+
+
+def _invert_transform_point(
+    z: float,
+    variance: float,
+    transform: Optional[str],
+    lam: Optional[float],
+) -> float:
+    if transform is None:
+        return float(z)
+    var = max(0.0, float(variance))
+    if transform == "log" or (lam is not None and abs(lam) < 1e-12):
+        return float(math.exp(z + 0.5 * var))
+    assert lam is not None
+    inner = max(lam * z + 1.0, 1e-12)
+    adj = 1.0 + (var * (1.0 - lam)) / (2.0 * inner * inner)
+    return float((inner ** (1.0 / lam)) * max(adj, 0.0))
+
+
+def _kalman_arma_innovations(
+    z: np.ndarray,
+    ar: np.ndarray,
+    ma: np.ndarray,
+) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], bool]:
+    """Compute exact one-step-ahead innovations v_t and scaled variances f_t via Kalman filter."""
+    n = len(z)
+    p_star = len(ar) - 1
+    q_star = len(ma) - 1
+    if p_star == 0 and q_star == 0:
+        return np.copy(z), np.ones(n, dtype=float), True
+
+    r = max(1, p_star, q_star + 1)
+    T = np.zeros((r, r), dtype=float)
+    if p_star > 0:
+        T[:p_star, 0] = -ar[1:]
+    if r > 1:
+        T[:-1, 1:] = np.eye(r - 1)
+
+    try:
+        eigs = np.linalg.eigvals(T)
+    except np.linalg.LinAlgError:
+        return None, None, False
+    if not np.all(np.isfinite(eigs)) or float(np.max(np.abs(eigs))) >= 1.0 - 1e-6:
+        return None, None, False
+
+    R = np.zeros(r, dtype=float)
+    R[0] = 1.0
+    if q_star > 0:
+        R[1:q_star + 1] = ma[1:]
+    Q_mat = np.outer(R, R)
+
+    try:
+        P = linalg.solve_discrete_lyapunov(T, Q_mat)
+    except Exception:
+        return None, None, False
+    if not np.all(np.isfinite(P)):
+        return None, None, False
+    P = 0.5 * (P + P.T)
+
+    a = np.zeros(r, dtype=float)
+    v = np.empty(n, dtype=float)
+    f = np.empty(n, dtype=float)
+    for t in range(n):
+        v_t = z[t] - a[0]
+        f_t = max(float(P[0, 0]), 1e-12)
+        v[t] = v_t
+        f[t] = f_t
+        K_t = (T @ P[:, 0]) / f_t
+        a = T @ a + K_t * v_t
+        P = T @ P @ T.T + Q_mat - f_t * np.outer(K_t, K_t)
+        P = 0.5 * (P + P.T)
+    return v, f, True
+
+
 def fit_arima(
     values: Any,
     p: int = 1,
@@ -101,10 +253,26 @@ def fit_arima(
     max_iter: int = 50,
     variable_name: str = "Series",
     title: str = "",
+    method: str = "CLS",
+    transform: Optional[str] = None,
+    boxcox_lambda: Optional[float] = None,
+    order: Optional[Tuple[int, int, int]] = None,
+    seasonal_order: Optional[Tuple[int, int, int, int]] = None,
+    forecast_steps: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Fit ARIMA(p,d,q)x(P,D,Q)_s model to time series values."""
-    for name, order in (("p", p), ("d", d), ("q", q), ("P", P), ("D", D), ("Q", Q)):
-        if type(order) is not int or order < 0:
+    if order is not None:
+        p, d, q = order
+    if seasonal_order is not None:
+        P, D, Q, S = seasonal_order
+    if forecast_steps is not None:
+        forecasts = forecast_steps
+
+    method_norm = _normalize_method(method)
+    transform_norm, lam_arg = _normalize_transform(transform, boxcox_lambda)
+
+    for name, order_val in (("p", p), ("d", d), ("q", q), ("P", P), ("D", D), ("Q", Q)):
+        if type(order_val) is not int or order_val < 0:
             raise ValueError(f"ARIMA order {name} must be a nonnegative integer.")
     if type(S) is not int or S < 1 or (S == 1 and (P or D or Q)):
         raise ValueError("Seasonal models require an integer period of at least 2.")
@@ -123,11 +291,13 @@ def fit_arima(
     if n_orig < (p + q + P + Q + d + D * S + 5):
         raise ValueError(f"Series too short for requested ARIMA specification (length {n_orig}).")
 
+    y_work, lam_used = _apply_transform(y, transform_norm, lam_arg)
+
     if include_constant is None:
         include_constant = (d == 0 and D == 0)
 
     # 1. Differencing
-    w = difference_series(y, d=d, D=D, S=S)
+    w = difference_series(y_work, d=d, D=D, S=S)
     N = len(w)
 
     param_names = []
@@ -158,34 +328,77 @@ def fit_arima(
         ma = np.convolve(np.r_[1, -theta], seasonal_ma)
         return ar, ma
 
-    def compute_residuals(params):
-        ar, ma = polynomials(params)
+    def compute_cls_residuals(params):
+        ar_p, ma_p = polynomials(params)
         center = params[-1] if include_constant else 0.0
         with np.errstate(over="ignore", invalid="ignore"):
-            return signal.lfilter(ar, ma, w - center)
+            return signal.lfilter(ar_p, ma_p, w - center)
 
-    def objective(params):
+    def cls_objective(params):
         with np.errstate(over="ignore", invalid="ignore"):
-            residuals = compute_residuals(params)
-            ss = np.dot(residuals, residuals)
-        return float(ss) if np.isfinite(ss) else 1e100
+            residuals = compute_cls_residuals(params)
+            ss_val = np.dot(residuals, residuals)
+        return float(ss_val) if np.isfinite(ss_val) else 1e100
+
+    def compute_ml_innovations(params):
+        ar_p, ma_p = polynomials(params)
+        center = params[-1] if include_constant else 0.0
+        return _kalman_arma_innovations(w - center, ar_p, ma_p)
+
+    def ml_objective(params):
+        v, f, ok = compute_ml_innovations(params)
+        if not ok or v is None or f is None:
+            return 1e100
+        sigma2 = float(np.mean((v ** 2) / f))
+        if not np.isfinite(sigma2) or sigma2 <= 0:
+            return 1e100
+        obj = float(N * math.log(sigma2) + np.sum(np.log(f)))
+        return obj if np.isfinite(obj) else 1e100
 
     x0 = np.zeros(num_params, dtype=float)
     if include_constant:
         x0[-1] = float(np.mean(w))
     converged = True
     if num_params:
-        optimum = optimize.minimize(objective, x0, method="L-BFGS-B",
-                                    options={"maxiter": max_iter})
-        opt_params = optimum.x
-        converged = bool(optimum.success)
+        if method_norm == "CLS":
+            optimum = optimize.minimize(cls_objective, x0, method="L-BFGS-B",
+                                        options={"maxiter": max_iter})
+            opt_params = optimum.x
+            converged = bool(optimum.success)
+        else:
+            # Warm-start ML from CLS if stationary, else from x0
+            cls_opt = optimize.minimize(cls_objective, x0, method="L-BFGS-B",
+                                        options={"maxiter": max(15, max_iter // 2)})
+            _, _, cls_ok = compute_ml_innovations(cls_opt.x)
+            ml_x0 = cls_opt.x if cls_ok else x0
+            optimum = optimize.minimize(ml_objective, ml_x0, method="L-BFGS-B",
+                                        options={"maxiter": max_iter})
+            opt_params = optimum.x
+            converged = bool(optimum.success)
     else:
         opt_params = x0
-    opt_residuals = compute_residuals(opt_params)
+
     ar, ma = polynomials(opt_params)
+    if method_norm == "ML":
+        v_opt, f_opt, ok_opt = compute_ml_innovations(opt_params)
+        if not ok_opt or v_opt is None or f_opt is None:
+            opt_residuals = compute_cls_residuals(opt_params)
+            e_opt = opt_residuals
+            f_opt = np.ones(N, dtype=float)
+        else:
+            opt_residuals = v_opt
+            e_opt = v_opt / np.sqrt(f_opt)
+        ss = float(np.sum(e_opt ** 2))
+        sigma2_ml = max(ss / N, 1e-12)
+        log_likelihood = float(-0.5 * N * (math.log(2.0 * math.pi) + 1.0 + math.log(sigma2_ml)) - 0.5 * np.sum(np.log(f_opt)))
+    else:
+        opt_residuals = compute_cls_residuals(opt_params)
+        e_opt = opt_residuals
+        ss = float(np.sum(opt_residuals ** 2))
+        sigma2_cls = max(ss / N, 1e-12)
+        log_likelihood = float(-0.5 * N * (math.log(2.0 * math.pi) + 1.0 + math.log(sigma2_cls)))
 
     # Degrees of freedom and SS / MS
-    ss = float(np.sum(opt_residuals ** 2))
     df = max(1, N - num_params)
     ms = ss / df
     s_err = math.sqrt(ms)
@@ -193,12 +406,21 @@ def fit_arima(
     # Approximate covariance matrix from numerical Jacobian
     eps = 1e-5
     J = np.zeros((N, num_params), dtype=float)
-    r0 = opt_residuals
+    r0 = e_opt
     for j in range(num_params):
         step = np.zeros(num_params, dtype=float)
         step[j] = eps
-        rj = compute_residuals(opt_params + step)
-        J[:, j] = (rj - r0) / eps
+        if method_norm == "ML":
+            vj, fj, okj = compute_ml_innovations(opt_params + step)
+            if okj and vj is not None and fj is not None:
+                J[:, j] = (vj / np.sqrt(fj) - r0) / eps
+            else:
+                vj, fj, okj = compute_ml_innovations(opt_params - step)
+                if okj and vj is not None and fj is not None:
+                    J[:, j] = (r0 - vj / np.sqrt(fj)) / eps
+        else:
+            rj = compute_cls_residuals(opt_params + step)
+            J[:, j] = (rj - r0) / eps
 
     try:
         jt_j = J.T @ J
@@ -220,14 +442,11 @@ def fit_arima(
         })
 
     # Within-sample fitted values on original scale
-    # Fit on differenced series: w - residuals
-    w_fit = w - opt_residuals
-    # Align fitted values to original series length
     diff_loss = n_orig - N
-    fitted_vals = [None] * diff_loss
+    fitted_vals: List[Optional[float]] = [None] * diff_loss
     for t in range(N):
-        # Y_t = fitted
-        fitted_vals.append(float(y[diff_loss + t] - opt_residuals[t]))
+        z_fit = float(y_work[diff_loss + t] - opt_residuals[t])
+        fitted_vals.append(_invert_transform_point(z_fit, ms, transform_norm, lam_used))
 
     # Out-of-sample Forecasts
     forecast_list = []
@@ -249,7 +468,7 @@ def fit_arima(
             w_ext.append(pred_w)
             a_ext.append(0.0)
 
-        # Forecast variance accumulates squared impulse responses on the original scale.
+        # Forecast variance accumulates squared impulse responses on the working scale.
         denominator = ar
         for _ in range(d):
             denominator = np.convolve(denominator, [1, -1])
@@ -263,20 +482,23 @@ def fit_arima(
         responses = signal.lfilter(ma, denominator, impulse)
         standard_errors = s_err * np.sqrt(np.cumsum(responses ** 2))
 
-        # Invert differencing
-        y_fc = undifference_forecasts(y, w_fc, d=d, D=D, S=S)
+        # Invert differencing on working scale, then back-transform
+        z_fc = undifference_forecasts(y_work, w_fc, d=d, D=D, S=S)
 
-        for h, f_val in enumerate(y_fc):
+        for h, z_val in enumerate(z_fc):
             period_num = n_orig + (h + 1)
-            se_h = standard_errors[h]
-            low = float(f_val - z_crit * se_h)
-            upp = float(f_val + z_crit * se_h)
+            se_h = float(standard_errors[h])
+            z_low = z_val - z_crit * se_h
+            z_upp = z_val + z_crit * se_h
+            f_val = _invert_transform_point(z_val, se_h ** 2, transform_norm, lam_used)
+            low = _invert_transform_quantile(z_low, transform_norm, lam_used)
+            upp = _invert_transform_quantile(z_upp, transform_norm, lam_used)
             forecast_list.append({
                 "period": period_num,
-                "forecast": float(f_val),
+                "forecast": f_val,
                 "lower": low,
                 "upper": upp,
-                "se": float(se_h),
+                "se": se_h,
             })
 
     return {
@@ -290,10 +512,14 @@ def fit_arima(
         "D": D,
         "Q": Q,
         "S": S,
+        "method": method_norm,
+        "transform": transform_norm,
+        "boxcox_lambda": lam_used,
         "include_constant": include_constant,
         "n_orig": n_orig,
         "N": N,
         "ss": float(ss),
+        "log_likelihood": log_likelihood,
         "converged": converged,
         "stationary": bool(np.all(np.abs(np.roots(ar)) < 1)),
         "invertible": bool(np.all(np.abs(np.roots(ma)) < 1)),

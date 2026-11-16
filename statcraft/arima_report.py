@@ -39,6 +39,20 @@ def generate_arima_report(result: Dict[str, Any]) -> str:
     lines.append("=" * len(spec_str))
     lines.append("")
 
+    method = result.get("method")
+    transform = result.get("transform")
+    if method:
+        lines.append(f"Estimation Method: {method}")
+    if transform:
+        if transform == "boxcox" and result.get("boxcox_lambda") is not None:
+            lines.append(f"Transformation: Box-Cox (lambda = {result['boxcox_lambda']:.4f})")
+        elif transform == "log":
+            lines.append("Transformation: Log (natural)")
+        else:
+            lines.append(f"Transformation: {transform}")
+    if method or transform:
+        lines.append("")
+
     for heading, headers, rows in best_model_sections(result):
         lines.extend([heading, " | ".join(headers)])
         lines.extend(" | ".join(str(cell) for cell in row) for row in rows)
