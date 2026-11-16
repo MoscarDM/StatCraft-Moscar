@@ -4979,7 +4979,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.one_sample_variance_dialog
         dlg = OneVarianceDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("one_sample_variance", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("one_sample_variance", dlg)
             p = dlg.result_payload
             if p:
                 entry = self._call(lambda: self.presenter.one_variance(settings=p), result=True)
@@ -4991,7 +4993,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.two_sample_variances_dialog
         dlg = TwoVariancesDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("two_sample_variances", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("two_sample_variances", dlg)
             p = dlg.result_payload
             if p:
                 entry = self._call(lambda: self.presenter.two_variances(settings=p), result=True)
@@ -5087,7 +5091,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.test_equal_variances_dialog
         dlg = TestEqualVariancesDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("test_equal_variances", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("test_equal_variances", dlg)
             p = dlg.result_payload
             if p:
                 entry = self._call(lambda: self.presenter.test_equal_variances(
@@ -6972,8 +6978,10 @@ class ModernWindow(QMainWindow):
         from .graphical_summary_dialogs import GraphicalSummaryDialog
         from PySide6.QtWidgets import QDialog
         dlg = GraphicalSummaryDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("graphical_summary", dlg)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
+        self._save_custom_dialog_state("graphical_summary", dlg)
         settings = dlg.get_settings()
         for v in settings.get('variables', []):
             self._call(lambda idx=v, conf=settings['confidence']: self.presenter.graphical_summary(idx, conf), result=True)

@@ -423,6 +423,8 @@ class OneWayAnovaDialog(QDialog):
         self.worksheet = window.presenter.worksheet
         self.entry = None
         self.options = oneway_settings()
+        from .variable_dialogs import default_confidence_percent
+        self.options['confidence'] = default_confidence_percent()
         self.active_edit: QLineEdit | None = None
 
         self.setWindowTitle('One-Way Analysis of Variance')

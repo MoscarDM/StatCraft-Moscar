@@ -210,6 +210,37 @@ def execute_command_block(presenter, main_cmd: str, subcommands: List[str] | Tup
         presenter.erase_variables(indices=indices)
         return presenter._record("Erase Variables", {"columns": ["C" + str(i + 1) for i in indices]})
 
+    if verb == "COPY":
+        cols = resolve_variables(rest, presenter.worksheet, ("number", "text", "date"))
+        if len(cols) < 2 or len(cols) % 2 != 0:
+            raise ValueError("Syntax: COPY C_src [C_src2 ...] C_dst [C_dst2 ...]")
+        half = len(cols) // 2
+        src_cols, dst_cols = cols[:half], cols[half:]
+        inc_rows, omit_rows = None, None
+        for sub in subcommands:
+            toks = sub.strip().split()
+            if not toks:
+                continue
+            head = toks[0].upper()
+            if head == "USE":
+                inc_rows = {int(v) - 1 for v in _parse_number_tokens(" ".join(toks[1:])) if v >= 1}
+            elif head == "OMIT":
+                omit_rows = {int(v) - 1 for v in _parse_number_tokens(" ".join(toks[1:])) if v >= 1}
+        created = presenter.copy_columns_to_columns(src_cols, dst_cols, include_rows=inc_rows, omit_rows=omit_rows)
+        return presenter._record("Copy Columns", {"columns": ["C" + str(i + 1) for i in created]})
+
+    if verb == "DELETE":
+        toks = rest.split()
+        if len(toks) < 2:
+            raise ValueError("Syntax: DELETE rows C1 [C2 ...]")
+        split_at = next((idx for idx, t in enumerate(toks) if t.upper().startswith("C") and t[1:].isdigit()), None)
+        if split_at is None or split_at == 0:
+            raise ValueError("Syntax: DELETE rows C1 [C2 ...]")
+        rows_zero = sorted({int(v) - 1 for v in _parse_number_tokens(" ".join(toks[:split_at])) if v >= 1})
+        col_indices = resolve_variables(" ".join(toks[split_at:]), presenter.worksheet, ("number", "text", "date"))
+        presenter.delete_rows(rows_zero, col_indices)
+        return presenter._record("Delete Rows", {"rows": [r + 1 for r in rows_zero], "columns": ["C" + str(i + 1) for i in col_indices]})
+
     if verb == "SET":
         m = re.match(r"^(C[1-9][0-9]*)\s*(.*)$", rest, re.IGNORECASE)
         if not m:
@@ -234,7 +265,13 @@ def execute_command_block(presenter, main_cmd: str, subcommands: List[str] | Tup
         from .recipes import run
         return run(presenter, {"action": "graph", "parameters": {"method": "boxplot", "indices": indices, "bins": 1}})
 
-    if verb == "PLOT":
+    if verb in ("DOTPLOT", "DOT"):
+        indices = resolve_variables(rest, presenter.worksheet, ("number",))
+        if len(indices) < 1:
+            raise ValueError("DOTPLOT takes one or more numeric columns (e.g., DOTPLOT C1).")
+        return presenter.dotplot_graphs(indices, "one" if len(indices) == 1 else "multiple")
+
+    if verb in ("PLOT", "SCATTERPLOT"):
         cleaned = rest.replace("*", " ")
         indices = resolve_variables(cleaned, presenter.worksheet, ("number",))
         if len(indices) != 2:

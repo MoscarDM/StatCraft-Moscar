@@ -222,9 +222,10 @@ class TwoVariancesDialog(QDialog):
         self.worksheet = worksheet
         self.result_payload = None
 
+        from .variable_dialogs import default_confidence_percent
         self.options = {
             "is_variance_ratio": False,
-            "confidence_level": 95.0,
+            "confidence_level": default_confidence_percent(),
             "hypothesized_ratio": 1.0,
             "alternative": "not_equal",
             "use_normal_distribution": True,
@@ -471,3 +472,31 @@ class TwoVariancesDialog(QDialog):
 
         self.result_payload = payload
         self.accept()
+
+    def get_state(self) -> dict:
+        import copy
+        return {
+            "mode_idx": self.mode_combo.currentIndex(),
+            "stacked_samples": self.stacked_samples_edit.text(),
+            "stacked_ids": self.stacked_ids_edit.text(),
+            "s1": self.s1_edit.text(),
+            "s2": self.s2_edit.text(),
+            "options": copy.deepcopy(self.options),
+        }
+
+    def set_state(self, state: dict) -> None:
+        import copy
+        if not isinstance(state, dict):
+            return
+        if "mode_idx" in state:
+            self.mode_combo.setCurrentIndex(int(state["mode_idx"]))
+        for attr, key in (
+            ("stacked_samples_edit", "stacked_samples"),
+            ("stacked_ids_edit", "stacked_ids"),
+            ("s1_edit", "s1"),
+            ("s2_edit", "s2"),
+        ):
+            if key in state:
+                getattr(self, attr).setText(str(state[key]))
+        if isinstance(state.get("options"), dict):
+            self.options.update(copy.deepcopy(state["options"]))

@@ -47,7 +47,8 @@ class GraphicalSummaryDialog(QDialog):
         input_layout.addWidget(self.var_edit)
 
         input_layout.addWidget(QLabel("Confidence level (%):"))
-        self.conf_edit = QLineEdit("95.0")
+        from .variable_dialogs import default_confidence_percent
+        self.conf_edit = QLineEdit(str(default_confidence_percent()))
         input_layout.addWidget(self.conf_edit)
 
         input_layout.addStretch()
@@ -109,3 +110,14 @@ class GraphicalSummaryDialog(QDialog):
             'variables': indices,
             'confidence': conf,
         }
+
+    def get_state(self) -> dict:
+        return {"vars_text": self.var_edit.text(), "conf_text": self.conf_edit.text()}
+
+    def set_state(self, state: dict) -> None:
+        if not isinstance(state, dict):
+            return
+        if "vars_text" in state:
+            self.var_edit.setText(str(state["vars_text"]))
+        if "conf_text" in state:
+            self.conf_edit.setText(str(state["conf_text"]))

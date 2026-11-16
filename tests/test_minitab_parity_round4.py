@@ -321,6 +321,89 @@ class TestMinitabParityRound4(unittest.TestCase):
         self.assertEqual(d2.edit_subgroup.text(), "C2")
         d1.close(); d2.close()
 
+    def test_session_commands_copy_delete_dotplot_scatterplot(self):
+        from statcraft.session_commands import execute_script
+        self.win.presenter.paste(0, 0, "10\t2\n20\t4\n30\t6\n40\t8\n")
+        execute_script(self.win.presenter, "COPY C1 C3;\n  USE 1 3.")
+        self.assertEqual(self.win.presenter.worksheet.columns[2].values, [10.0, 30.0])
+        execute_script(self.win.presenter, "DELETE 2 4 C1")
+        self.assertEqual(self.win.presenter.worksheet.columns[0].values, [10.0, 30.0])
+        out = execute_script(self.win.presenter, "DOTPLOT C1\nSCATTERPLOT C2 * C1")
+        self.assertEqual(len(out), 2)
+
+    def test_basic_stats_dialogs_respect_default_confidence_and_state(self):
+        from PySide6.QtCore import QSettings
+        from statcraft.one_sample_t_dialogs import OneSampleTDialog
+        from statcraft.two_sample_t_dialogs import TwoSampleTDialog
+        from statcraft.paired_t_dialogs import PairedTDialog
+        from statcraft.one_sample_z_dialogs import OneSampleZDialog
+        from statcraft.one_sample_proportion_dialogs import OneSampleProportionDialog
+        from statcraft.two_sample_proportion_dialogs import TwoSampleProportionDialog
+        from statcraft.one_variance_dialogs import OneVarianceDialog
+        from statcraft.two_variances_dialogs import TwoVariancesDialog
+        from statcraft.equal_variances_dialogs import TestEqualVariancesDialog
+        from statcraft.graphical_summary_dialogs import GraphicalSummaryDialog
+
+        settings = QSettings("StatCraft", "Desktop")
+        prev_val = settings.value("options/default_confidence")
+        try:
+            settings.setValue("options/default_confidence", 99.0)
+            self.win.presenter.paste(0, 0, "10\tA\n20\tB\n")
+            ws = self.win.presenter.worksheet
+
+            for cls in (
+                OneSampleTDialog,
+                TwoSampleTDialog,
+                PairedTDialog,
+                OneSampleZDialog,
+                OneSampleProportionDialog,
+                TwoSampleProportionDialog,
+            ):
+                d = cls(ws, self.win)
+                self.assertEqual(d.settings["confidence_level"], 99.0)
+                d.close()
+
+            ov1 = OneVarianceDialog(ws, self.win)
+            self.assertEqual(ov1.options["confidence_level"], 99.0)
+            ov1.sample_cols_edit.setText("C1")
+            self.win._save_custom_dialog_state("one_sample_variance", ov1)
+            ov2 = OneVarianceDialog(ws, self.win)
+            self.win._restore_custom_dialog_state("one_sample_variance", ov2)
+            self.assertEqual(ov2.sample_cols_edit.text(), "C1")
+            ov1.close(); ov2.close()
+
+            tv1 = TwoVariancesDialog(ws, self.win)
+            self.assertEqual(tv1.options["confidence_level"], 99.0)
+            tv1.s1_edit.setText("C1")
+            self.win._save_custom_dialog_state("two_sample_variances", tv1)
+            tv2 = TwoVariancesDialog(ws, self.win)
+            self.win._restore_custom_dialog_state("two_sample_variances", tv2)
+            self.assertEqual(tv2.s1_edit.text(), "C1")
+            tv1.close(); tv2.close()
+
+            ev1 = TestEqualVariancesDialog(ws, self.win)
+            self.assertEqual(ev1.options["confidence_level"], 99.0)
+            ev1.resp_edit.setText("C1")
+            self.win._save_custom_dialog_state("test_equal_variances", ev1)
+            ev2 = TestEqualVariancesDialog(ws, self.win)
+            self.win._restore_custom_dialog_state("test_equal_variances", ev2)
+            self.assertEqual(ev2.resp_edit.text(), "C1")
+            ev1.close(); ev2.close()
+
+            gs1 = GraphicalSummaryDialog(ws, self.win)
+            self.assertEqual(gs1.conf_edit.text(), "99.0")
+            gs1.var_edit.setText("C1")
+            self.win._save_custom_dialog_state("graphical_summary", gs1)
+            gs2 = GraphicalSummaryDialog(ws, self.win)
+            self.win._restore_custom_dialog_state("graphical_summary", gs2)
+            self.assertEqual(gs2.var_edit.text(), "C1")
+            gs1.close(); gs2.close()
+        finally:
+            if prev_val is None:
+                settings.remove("options/default_confidence")
+            else:
+                settings.setValue("options/default_confidence", prev_val)
+
 
 if __name__ == "__main__":
     unittest.main()

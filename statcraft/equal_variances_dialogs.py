@@ -192,6 +192,8 @@ class TestEqualVariancesDialog(QDialog):
         self.setMinimumSize(560, 360)
 
         self.options = equal_variances_settings()
+        from .variable_dialogs import default_confidence_percent
+        self.options["confidence_level"] = default_confidence_percent()
         self.result_payload = None
 
         layout = QHBoxLayout(self)
@@ -381,3 +383,28 @@ class TestEqualVariancesDialog(QDialog):
             self.accept()
         except ValueError as exc:
             self.err_label.setText(str(exc))
+
+    def get_state(self):
+        import copy
+        return {
+            "mode_idx": self.combo_data.currentIndex(),
+            "resp_text": self.resp_edit.text(),
+            "fac_text": self.factors_edit.text(),
+            "unstacked_text": self.unstacked_edit.text(),
+            "options": copy.deepcopy(self.options),
+        }
+
+    def set_state(self, state):
+        import copy
+        if not isinstance(state, dict):
+            return
+        if "mode_idx" in state:
+            self.combo_data.setCurrentIndex(int(state["mode_idx"]))
+        if "resp_text" in state:
+            self.resp_edit.setText(str(state["resp_text"]))
+        if "fac_text" in state:
+            self.factors_edit.setText(str(state["fac_text"]))
+        if "unstacked_text" in state:
+            self.unstacked_edit.setText(str(state["unstacked_text"]))
+        if isinstance(state.get("options"), dict):
+            self.options.update(copy.deepcopy(state["options"]))

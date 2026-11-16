@@ -158,6 +158,8 @@ class TwoSampleTDialog(QDialog):
         self.setSizeGripEnabled(True)
 
         self.settings = two_sample_t_settings()
+        from .variable_dialogs import default_confidence_percent
+        self.settings["confidence_level"] = default_confidence_percent()
         self.result_payload: Optional[Dict[str, Any]] = None
 
         main_layout = QHBoxLayout(self)

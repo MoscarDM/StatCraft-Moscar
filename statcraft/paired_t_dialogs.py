@@ -155,6 +155,8 @@ class PairedTDialog(QDialog):
         self.result_payload: Optional[Dict[str, Any]] = None
 
         self.settings = paired_t_settings()
+        from .variable_dialogs import default_confidence_percent
+        self.settings["confidence_level"] = default_confidence_percent()
         self.setMinimumSize(560, 420)
         self.resize(560, 420)
         self.setSizeGripEnabled(True)
