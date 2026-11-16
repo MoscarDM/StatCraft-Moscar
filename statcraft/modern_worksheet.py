@@ -366,8 +366,12 @@ class WorksheetTable(QTableWidget):
                     return True
                 if key == Qt.Key.Key_Up and self.currentRow() == 0:
                     win = self.window()
-                    if hasattr(win, "column_names") and self.currentColumn() >= 0:
-                        win.column_names.setCurrentCell(0, self.currentColumn())
+                    if getattr(win, "page", 0) == 0 and hasattr(win, "column_names") and self.currentColumn() >= 0:
+                        col = self.currentColumn()
+                        win.column_names.setCurrentCell(0, col)
+                        it = win.column_names.item(0, col)
+                        if it is not None:
+                            win.column_names.scrollToItem(it)
                         win.column_names.setFocus(Qt.FocusReason.OtherFocusReason)
                         return True
                     self.navigate('up')

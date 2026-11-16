@@ -220,6 +220,45 @@ class TestMinitabParityRound4(unittest.TestCase):
         self.assertEqual(cap2.options["confidence_level"], 99.0)
         cap1.close(); cap2.close()
 
+    def test_arrow_key_navigation_into_and_across_column_names(self):
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+
+        self.win.show()
+        self.win.activateWindow()
+        self.win.table.setCurrentCell(0, 0)
+        self.win.table.setFocus()
+        QApplication.processEvents()
+
+        # Up from Row 0 moves focus to column_names C1 (0, 0)
+        up_ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Up, Qt.KeyboardModifier.NoModifier)
+        self.win.table.event(up_ev)
+        QApplication.processEvents()
+        self.assertTrue(self.win.column_names.hasFocus())
+        self.assertEqual(self.win.column_names.currentColumn(), 0)
+
+        # Right in column_names moves to C2 (0, 1) and stays in column_names
+        right_ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier)
+        self.win.column_names.event(right_ev)
+        QApplication.processEvents()
+        self.assertTrue(self.win.column_names.hasFocus())
+        self.assertEqual(self.win.column_names.currentColumn(), 1)
+
+        # Left in column_names moves back to C1 (0, 0)
+        left_ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Left, Qt.KeyboardModifier.NoModifier)
+        self.win.column_names.event(left_ev)
+        QApplication.processEvents()
+        self.assertTrue(self.win.column_names.hasFocus())
+        self.assertEqual(self.win.column_names.currentColumn(), 0)
+
+        # Down from column_names moves back to table Row 0, Col 0
+        down_ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Down, Qt.KeyboardModifier.NoModifier)
+        self.win.column_names.event(down_ev)
+        QApplication.processEvents()
+        self.assertTrue(self.win.table.hasFocus())
+        self.assertEqual(self.win.table.currentRow(), 0)
+        self.assertEqual(self.win.table.currentColumn(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

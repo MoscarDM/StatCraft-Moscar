@@ -1057,7 +1057,11 @@ class ModernWindow(QMainWindow):
         self.column_names.verticalHeader().setDefaultSectionSize(24)
         self.column_names.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.column_names.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.column_names.setEditTriggers(QAbstractItemView.EditTrigger.AllEditTriggers)
+        self.column_names.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+            | QAbstractItemView.EditTrigger.AnyKeyPressed
+        )
         self.column_names.setFixedHeight(42)
         self.column_names.itemChanged.connect(self._column_name_changed)
         self.column_names.currentCellChanged.connect(self._column_name_current_changed)
@@ -2809,8 +2813,10 @@ class ModernWindow(QMainWindow):
         if self._refreshing or column<0:return
         # Keep the active worksheet column when a menu/toolbar or another
         # window takes focus away from the separate name-row widget.
+        blocker = QSignalBlocker(self.table)
         self.table.clearSelection()
         self.table.setCurrentCell(max(0,self.table.currentRow()),column)
+        del blocker
         self._sync_selection_highlights()
 
     def _column_name_changed(self, item):
@@ -2872,6 +2878,51 @@ class ModernWindow(QMainWindow):
         columns = len(self.presenter.worksheet.columns)
         if not columns:
             return
+        focused = QApplication.focusWidget()
+        in_col_names = (
+            getattr(delegate, "is_column_names", False)
+            or self.column_names.hasFocus()
+            or (focused is not None and self.column_names.isAncestorOf(focused))
+        )
+        if in_col_names:
+            col = max(0, min(columns - 1, self.column_names.currentColumn()))
+            if editor is not None:
+                new_name = editor.text()
+                try:
+                    self.presenter.rename_column(col, new_name)
+                except (ValueError, TypeError) as exc:
+                    self.statusBar().showMessage(str(exc), 12000)
+                    return
+                if delegate is not None and hasattr(delegate, "closeEditor"):
+                    try:
+                        delegate.closeEditor.emit(editor, delegate.EndEditHint.NoHint)
+                    except Exception:
+                        pass
+            if direction == "down":
+                if self.page != 0:
+                    self.page = 0
+                    self.refresh()
+                self.table.setCurrentCell(0, col)
+                item = self.table.item(0, col)
+                if item is not None:
+                    self.table.scrollToItem(item)
+                self.table.setFocus(Qt.FocusReason.OtherFocusReason)
+                return
+            if direction == "left":
+                col = max(0, col - 1)
+            elif direction == "right":
+                col = min(columns - 1, col + 1)
+            elif direction == "ctrl_left":
+                col = 0
+            elif direction == "ctrl_right":
+                col = columns - 1
+            self.column_names.setCurrentCell(0, col)
+            name_item = self.column_names.item(0, col)
+            if name_item is not None:
+                self.column_names.scrollToItem(name_item)
+            self.column_names.setFocus(Qt.FocusReason.OtherFocusReason)
+            return
+
         local_row = max(0, self.table.currentRow())
         column = max(0, self.table.currentColumn())
         row = self.page * self.PAGE_SIZE + local_row
@@ -2895,11 +2946,17 @@ class ModernWindow(QMainWindow):
 
         if direction == 'column_name':
             self.column_names.setCurrentCell(0, column)
+            name_item = self.column_names.item(0, column)
+            if name_item is not None:
+                self.column_names.scrollToItem(name_item)
             self.column_names.setFocus(Qt.FocusReason.OtherFocusReason)
             return
         elif direction == 'ctrl_up':
             if row == 0:
                 self.column_names.setCurrentCell(0, column)
+                name_item = self.column_names.item(0, column)
+                if name_item is not None:
+                    self.column_names.scrollToItem(name_item)
                 self.column_names.setFocus(Qt.FocusReason.OtherFocusReason)
                 return
             sheet = self.presenter.worksheet
@@ -2926,6 +2983,9 @@ class ModernWindow(QMainWindow):
         elif direction == 'up':
             if local_row == 0 and self.page == 0:
                 self.column_names.setCurrentCell(0, column)
+                name_item = self.column_names.item(0, column)
+                if name_item is not None:
+                    self.column_names.scrollToItem(name_item)
                 self.column_names.setFocus(Qt.FocusReason.OtherFocusReason)
                 return
             row = max(0, row - 1)
