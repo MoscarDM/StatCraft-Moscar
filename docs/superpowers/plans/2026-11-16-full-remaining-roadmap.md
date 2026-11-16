@@ -416,3 +416,100 @@ Expected: All tests PASS (`PS_EXIT:0`).
 git add scripts/verify_built_executable.py .github/workflows/ci.yml
 git commit -m "ci(release): add built-executable smoke verification and SHA-256 gate"
 ```
+
+---
+
+## Track 6: Visual Stress Testing & Real-User GUI QA
+
+### Task 9: Automated Visual Stress Harness (`scripts/visual_stress_suite.py`)
+
+**Files:**
+- Create: `scripts/visual_stress_suite.py`
+- Test: `tests/test_visual_stress_harness.py`
+
+**Interfaces:**
+- Produces: `scripts/visual_stress_suite.py --out-dir <dir> [--exe <path-to-StatCraft.exe>]` launching the real visible GUI (no `offscreen` platform), driving real user mouse/keyboard stress scenarios, capturing PNG screenshots of the main window, dialogs, and charts, and emitting a `manifest.json` of timings, unhandled-exception checks, and screenshot paths for visual inspection.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+class VisualStressHarnessTests(unittest.TestCase):
+    def test_visual_stress_script_emits_manifest_and_screenshots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = subprocess.run(
+                [sys.executable, "scripts/visual_stress_suite.py", "--out-dir", tmp, "--quick"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue((Path(tmp) / "manifest.json").exists())
+            self.assertGreaterEqual(len(list(Path(tmp).glob("*.png"))), 4)
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `..\statcraft-build-env\Scripts\python.exe -m unittest tests.test_visual_stress_harness -v`
+Expected: FAIL (`can't open file 'scripts/visual_stress_suite.py'`).
+
+- [ ] **Step 3: Implement `scripts/visual_stress_suite.py` covering 6 real-user stress scenarios**
+
+Implement GUI-driven scenarios using real Qt event loop processing (`QApplication.processEvents()`), `QTest` clicks/keystrokes, and `window.grab().save(...)`:
+1. **Large Dataset Stress:** Load/generate 100,000 rows × 20 columns, scroll rapidly, sort, autofill, apply conditional formatting (`out_of_control` + `in_list`), verify responsive UI (< 2s per action) and capture `01_large_worksheet.png`.
+2. **Dark Mode & Font/DPI Resizing:** Switch Light ↔ Dark Mode, apply `Select Data Font…` (`Consolas 11`), resize main window from `1920x1080` down to `1024x700` and back, capture `02_dark_compact_layout.png` to visually check for clipped toolbars/labels.
+3. **Graph & Multi-Tab Thrash:** Create I-MR, Sixpack, Boxplot, Scatter, and 3D Surface plots; switch tabs rapidly, zoom/pan, open Graph Options pane, `Close Current Graph`, capture `03_charts_and_tabs.png` to visually inspect overlapping tick labels, cut-off legends, or blank canvases.
+4. **Dialog Stress & Bad-Input Torture:** Open complex dialogs (DOE Planner, Regression, ARIMA, Manage Conditional Rules, Hide/Unhide Columns), enter invalid/empty/non-numeric inputs, cancel mid-flow, reopen via `Edit Last Dialog (Ctrl+E)`, capture `04_dialogs.png`.
+5. **MPX Open + Session Command Stress:** Open a real `.mpx` project, run `MTB >` commands + `Previous`/`Next` history cycling + `StatGuide`, capture `05_mpx_and_session.png`.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `..\statcraft-build-env\Scripts\python.exe -m unittest tests.test_visual_stress_harness -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/visual_stress_suite.py tests/test_visual_stress_harness.py
+git commit -m "test(qa): add automated GUI visual stress-testing harness"
+```
+
+---
+
+### Task 10: Live Desktop Launch & Codex Visual Inspection Runbook
+
+**Files:**
+- Create: `docs/superpowers/plans/visual-stress-runbook.md`
+
+**Interfaces:**
+- Produces: A concrete visual-inspection checklist and launch procedure for running the real desktop program (`python -m statcraft` or `StatCraft.exe`) and inspecting every generated PNG screenshot for visual defects.
+
+- [ ] **Step 1: Write `docs/superpowers/plans/visual-stress-runbook.md`**
+
+Include:
+1. Exact launch command on a real Windows desktop session (`..\statcraft-build-env\Scripts\python.exe scripts/visual_stress_suite.py --out-dir artifacts/visual_qa` and live `Start-Process` launch of `StatCraft.exe`).
+2. Visual inspection checklist for every screenshot (`01`–`05`):
+   - Zero clipped/truncated dialog buttons, menu items, or status-bar badges.
+   - Chart axes, legends, and titles readable in both Light Mode and Dark Mode with zero overlapping text.
+   - Table headers (`C1`, `C2`, column names) aligned cleanly with grid columns after font changes, horizontal scrolling, and column hiding/unhiding.
+   - Zero frozen/white "Not Responding" frames or orphaned floating popups after closing tabs/dialogs.
+3. Defect logging rule: any visual flaw seen in a screenshot becomes a concrete bug fix + regression screenshot test before release sign-off.
+
+- [ ] **Step 2: Execute a live visual pass (or hand off to Codex with `scripts/visual_stress_suite.py`) and inspect every PNG**
+
+Run: `..\statcraft-build-env\Scripts\python.exe scripts/visual_stress_suite.py --out-dir artifacts/visual_qa`
+Inspect every generated `.png` in `artifacts/visual_qa/` visually and verify zero layout/rendering defects.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add docs/superpowers/plans/visual-stress-runbook.md
+git commit -m "docs(qa): add Codex visual stress-testing inspection runbook"
+```
+
