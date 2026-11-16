@@ -6767,6 +6767,42 @@ class Presenter:
         )
 
     @undoable
+    def concatenate_columns(self, indices, separator: str = "", destination: str = "", skip_missing: bool = False):
+        from .data_prep import concatenate_columns
+        values = concatenate_columns(self.worksheet, indices, separator=separator, skip_missing=skip_missing)
+        dest = destination.strip() if destination and destination.strip() else "Concatenated"
+        col = self._assign_or_append_column(dest, values, "text")
+        self.dirty = True
+        return self._record(
+            f"Concatenate Columns — {col.name}",
+            {"sources": [self.worksheet.columns[i].name for i in indices], "destination": col.name, "rows": len(values)},
+        )
+
+    @undoable
+    def extract_datetime_to_numeric(self, col_index: int, component: str = "Year", destination: str = ""):
+        from .data_prep import extract_datetime_to_numeric
+        values = extract_datetime_to_numeric(self.worksheet, col_index, component=component)
+        dest = destination.strip() if destination and destination.strip() else f"{self.worksheet.columns[col_index].name}_{component}"
+        col = self._assign_or_append_column(dest, values, "number")
+        self.dirty = True
+        return self._record(
+            f"Extract Date/Time to Numeric ({component}) — {col.name}",
+            {"source": self.worksheet.columns[col_index].name, "component": component, "destination": col.name, "rows": len(values)},
+        )
+
+    @undoable
+    def extract_datetime_to_text(self, col_index: int, component: str = "Month", destination: str = ""):
+        from .data_prep import extract_datetime_to_text
+        values = extract_datetime_to_text(self.worksheet, col_index, component=component)
+        dest = destination.strip() if destination and destination.strip() else f"{self.worksheet.columns[col_index].name}_{component}"
+        col = self._assign_or_append_column(dest, values, "text")
+        self.dirty = True
+        return self._record(
+            f"Extract Date/Time to Text ({component}) — {col.name}",
+            {"source": self.worksheet.columns[col_index].name, "component": component, "destination": col.name, "rows": len(values)},
+        )
+
+    @undoable
     def convert_text_to_datetime(self, col_index: int, date_format: str = "", destination: str = ""):
         from .data_prep import convert_text_to_datetime_column
         serials = convert_text_to_datetime_column(self.worksheet, col_index, fmt=date_format)

@@ -1358,6 +1358,9 @@ class ModernWindow(QMainWindow):
         dt_menu = data.addMenu("Date/Time")
         self._action(dt_menu, "Convert Text to Date/Time…", self.convert_text_to_datetime_dialog, None, "format_column", True)
         self._action(dt_menu, "Round Date/Time…", self.round_datetime_dialog, None, "format_column", True)
+        self._action(dt_menu, "Extract to Numeric…", self.extract_datetime_numeric_dialog, None, "format_column", True)
+        self._action(dt_menu, "Extract to Text…", self.extract_datetime_text_dialog, None, "format_column", True)
+        self._action(data, "Concatenate…", self.concatenate_columns_dialog, None, "table", True)
         col_prop_menu = data.addMenu("Column Properties")
         self._action(col_prop_menu, "Value Order…", self.column_value_order_dialog, None, "sort", True)
         self._action(col_prop_menu, "Description…", self.column_description_dialog, None, "worksheet", True)
@@ -6771,6 +6774,43 @@ class ModernWindow(QMainWindow):
             "Rounds dates or timestamps down to the start of the selected calendar/clock unit.",
         )
 
+    def concatenate_columns_dialog(self):
+        self._dialog(
+            "Concatenate Columns",
+            [selector("indices", "Columns to concatenate", True, 1, None, ("text", "number", "date"))],
+            [
+                {"key": "separator", "label": "Separator (optional)", "default": "", "optional": True},
+                {"key": "destination", "label": "Store in column", "default": "Concatenated"},
+                {"key": "skip_missing", "text": "Omit missing/blank cells instead of empty string", "boolean": True, "default": False},
+            ],
+            lambda p: self.presenter.concatenate_columns(p["indices"], p.get("separator", ""), p.get("destination", ""), p.get("skip_missing", False)),
+            "Combines values from two or more columns row-by-row into a single text column.",
+        )
+
+    def extract_datetime_numeric_dialog(self):
+        self._dialog(
+            "Extract Date/Time to Numeric",
+            [selector("col_index", "Date/Time column", False, 1, 1, ("date", "text"))],
+            [
+                {"key": "component", "label": "Extract component", "choices": ["Year", "Quarter", "Month", "Day", "Day of Week", "Day of Year", "Week of Year", "Hour", "Minute", "Second"], "default": "Year"},
+                {"key": "destination", "label": "Store in column (optional)", "default": "", "optional": True},
+            ],
+            lambda p: self.presenter.extract_datetime_to_numeric(p["col_index"], p["component"], p.get("destination", "")),
+            "Extracts a numeric date/time part (e.g., Year, Quarter, Month, Day of Week) into a numeric column.",
+        )
+
+    def extract_datetime_text_dialog(self):
+        self._dialog(
+            "Extract Date/Time to Text",
+            [selector("col_index", "Date/Time column", False, 1, 1, ("date", "text"))],
+            [
+                {"key": "component", "label": "Extract component", "choices": ["Month", "Day of Week", "Quarter", "Year"], "default": "Month"},
+                {"key": "destination", "label": "Store in column (optional)", "default": "", "optional": True},
+            ],
+            lambda p: self.presenter.extract_datetime_to_text(p["col_index"], p["component"], p.get("destination", "")),
+            "Extracts a text date part (Month name, Weekday name, Quarter, or Year) into a text column.",
+        )
+
     def convert_text_to_datetime_dialog(self):
         self._dialog(
             "Convert Text to Date/Time",
@@ -8814,8 +8854,8 @@ class ModernWindow(QMainWindow):
             "test_equal_variances": self.test_equal_variances_dialog,
             "one_variance": self.one_sample_variance_dialog,
             "two_variances": self.two_sample_variances_dialog,
-            "one_proportion": self.one_proportion,
-            "two_proportions": self.two_proportions,
+            "one_proportion": self.one_sample_proportion_dialog,
+            "two_proportions": self.two_sample_proportion_dialog,
             "describe_columns": self.describe,
             "descriptive_statistics": self.describe,
             "describe_column": self.describe,
