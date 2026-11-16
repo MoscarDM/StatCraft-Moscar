@@ -1,6 +1,12 @@
 """Test package setup with safe Qt top-level widget cleanup on exit."""
 import atexit
 import gc
+import os
+import sys
+
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _TESTS_DIR not in sys.path:
+    sys.path.insert(0, _TESTS_DIR)
 
 try:
     from PySide6.QtCore import QCoreApplication, QEvent  # noqa: F401

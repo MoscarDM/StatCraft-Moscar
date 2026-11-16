@@ -4967,7 +4967,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.one_sample_proportion_dialog
         dlg = OneSampleProportionDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("one_sample_proportion", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("one_sample_proportion", dlg)
             p = dlg.result_payload
             if p:
                 entry = self._call(lambda: self.presenter.one_sample_proportion(settings=p), result=True)
@@ -5031,7 +5033,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.two_sample_proportion_dialog
         dlg = TwoSampleProportionDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("two_sample_proportion", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("two_sample_proportion", dlg)
             p = dlg.result_payload
             if p:
                 entry = self._call(lambda: self.presenter.two_sample_proportion(settings=p), result=True)
@@ -5043,7 +5047,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.one_sample_z_dialog
         dlg = OneSampleZDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("one_sample_z", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("one_sample_z", dlg)
             p = dlg.result_payload
             if p:
                 entry = self._call(lambda: self.presenter.one_sample_z(settings=p), result=True)
@@ -5055,7 +5061,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.one_sample_t_dialog
         dlg = OneSampleTDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("one_sample_t", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("one_sample_t", dlg)
             p = dlg.result_payload
             if p:
                 entry = self._call(lambda: self.presenter.one_sample_t(settings=p), result=True)
@@ -5067,7 +5075,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.paired_t_dialog
         dlg = PairedTDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("paired_t", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("paired_t", dlg)
             p = dlg.result_payload
             if p:
                 entry = self._call(lambda: self.presenter.paired_t(settings=p), result=True)
@@ -5079,7 +5089,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.two_sample_t_dialog
         dlg = TwoSampleTDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("two_sample_t", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("two_sample_t", dlg)
             p = dlg.result_payload
             if p:
                 entry = self._call(lambda: self.presenter.two_sample_t(settings=p), result=True)
@@ -7522,6 +7534,13 @@ class ModernWindow(QMainWindow):
         self.rerun_button.setEnabled(self.selected_entry.get("origin") == "statcraft" and "recipe" in self.selected_entry)
 
     def _format_table_float(self, value, decimals):
+        if decimals is None:
+            raw_dec = QSettings("StatCraft", "Desktop").value("options/decimal_places", None)
+            if raw_dec not in (None, "", "auto"):
+                try:
+                    decimals = max(0, min(12, int(raw_dec)))
+                except (TypeError, ValueError):
+                    decimals = None
         if decimals is None:
             return display(value)
         try:
@@ -11594,7 +11613,16 @@ class ModernWindow(QMainWindow):
         dir_combo.setCurrentIndex(0 if cur_dir == "down" else 1)
         auto_formula_chk = QCheckBox("Calculate all worksheet formulas automatically")
         auto_formula_chk.setChecked(bool(getattr(self.presenter, "auto_calculate_formulas", True)))
+        dec_combo = QComboBox()
+        dec_combo.addItem("Auto (Minitab default)", "auto")
+        for d in range(1, 9):
+            dec_combo.addItem(f"{d} decimal place{'s' if d != 1 else ''}", str(d))
+        cur_dec = str(settings.value("options/decimal_places", "auto"))
+        dec_idx = dec_combo.findData(cur_dec)
+        if dec_idx >= 0:
+            dec_combo.setCurrentIndex(dec_idx)
         form.addRow("Default Confidence Level:", conf_spin)
+        form.addRow("Session Output Decimal Places:", dec_combo)
         form.addRow("Worksheet Entry Direction:", dir_combo)
         layout.addLayout(form)
         layout.addWidget(auto_formula_chk)
@@ -11604,6 +11632,7 @@ class ModernWindow(QMainWindow):
         layout.addWidget(buttons)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             settings.setValue("options/default_confidence", conf_spin.value())
+            settings.setValue("options/decimal_places", dec_combo.currentData())
             chosen_dir = dir_combo.currentData()
             if chosen_dir != getattr(self, "_entry_direction", "down"):
                 self.toggle_entry_direction()

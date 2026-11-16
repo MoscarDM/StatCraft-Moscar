@@ -298,6 +298,59 @@ class TestMinitabParityRound4(unittest.TestCase):
             else:
                 settings.setValue("options/default_confidence", prev_val)
 
+    def test_hypothesis_dialogs_state_roundtrip_and_decimal_places(self):
+        from PySide6.QtCore import QSettings
+        from statcraft.one_sample_t_dialogs import OneSampleTDialog
+        from statcraft.two_sample_t_dialogs import TwoSampleTDialog
+        from statcraft.paired_t_dialogs import PairedTDialog
+        from statcraft.one_sample_z_dialogs import OneSampleZDialog
+        from statcraft.one_sample_proportion_dialogs import OneSampleProportionDialog
+        from statcraft.two_sample_proportion_dialogs import TwoSampleProportionDialog
+
+        self.win.presenter.paste(0, 0, "10\t20\n12\t22\n")
+        ws = self.win.presenter.worksheet
+
+        t1 = OneSampleTDialog(ws, self.win); t1.sample_cols_edit.setText("C1")
+        self.win._save_custom_dialog_state("one_sample_t", t1)
+        t2 = OneSampleTDialog(ws, self.win); self.win._restore_custom_dialog_state("one_sample_t", t2)
+        self.assertEqual(t2.sample_cols_edit.text(), "C1"); t1.close(); t2.close()
+
+        tt1 = TwoSampleTDialog(ws, self.win); tt1.sample1_edit.setText("C1"); tt1.sample2_edit.setText("C2")
+        self.win._save_custom_dialog_state("two_sample_t", tt1)
+        tt2 = TwoSampleTDialog(ws, self.win); self.win._restore_custom_dialog_state("two_sample_t", tt2)
+        self.assertEqual(tt2.sample1_edit.text(), "C1"); self.assertEqual(tt2.sample2_edit.text(), "C2"); tt1.close(); tt2.close()
+
+        pt1 = PairedTDialog(ws, self.win); pt1.sample1_edit.setText("C1"); pt1.sample2_edit.setText("C2")
+        self.win._save_custom_dialog_state("paired_t", pt1)
+        pt2 = PairedTDialog(ws, self.win); self.win._restore_custom_dialog_state("paired_t", pt2)
+        self.assertEqual(pt2.sample1_edit.text(), "C1"); pt1.close(); pt2.close()
+
+        z1 = OneSampleZDialog(ws, self.win); z1.sample_cols_edit.setText("C1"); z1.sigma_edit.setText("2.5")
+        self.win._save_custom_dialog_state("one_sample_z", z1)
+        z2 = OneSampleZDialog(ws, self.win); self.win._restore_custom_dialog_state("one_sample_z", z2)
+        self.assertEqual(z2.sigma_edit.text(), "2.5"); z1.close(); z2.close()
+
+        p1 = OneSampleProportionDialog(ws, self.win); p1.events_edit.setText("14")
+        self.win._save_custom_dialog_state("one_sample_proportion", p1)
+        p2 = OneSampleProportionDialog(ws, self.win); self.win._restore_custom_dialog_state("one_sample_proportion", p2)
+        self.assertEqual(p2.events_edit.text(), "14"); p1.close(); p2.close()
+
+        tp1 = TwoSampleProportionDialog(ws, self.win); tp1.sample1_edit.setText("C1")
+        self.win._save_custom_dialog_state("two_sample_proportion", tp1)
+        tp2 = TwoSampleProportionDialog(ws, self.win); self.win._restore_custom_dialog_state("two_sample_proportion", tp2)
+        self.assertEqual(tp2.sample1_edit.text(), "C1"); tp1.close(); tp2.close()
+
+        settings = QSettings("StatCraft", "Desktop")
+        prev_dec = settings.value("options/decimal_places")
+        try:
+            settings.setValue("options/decimal_places", "3")
+            self.assertEqual(self.win._format_table_float(1.23456, None), "1.235")
+        finally:
+            if prev_dec is None:
+                settings.remove("options/decimal_places")
+            else:
+                settings.setValue("options/decimal_places", prev_dec)
+
     def test_change_data_type_with_date_format_and_target_column(self):
         self.win.presenter.set_column_type(0, "text")
         self.win.presenter.worksheet.columns[0].values = ["03/15/2025", "04/20/2025"]
@@ -403,6 +456,59 @@ class TestMinitabParityRound4(unittest.TestCase):
                 settings.remove("options/default_confidence")
             else:
                 settings.setValue("options/default_confidence", prev_val)
+
+    def test_hypothesis_dialogs_state_roundtrip_and_decimal_places(self):
+        from PySide6.QtCore import QSettings
+        from statcraft.one_sample_t_dialogs import OneSampleTDialog
+        from statcraft.two_sample_t_dialogs import TwoSampleTDialog
+        from statcraft.paired_t_dialogs import PairedTDialog
+        from statcraft.one_sample_z_dialogs import OneSampleZDialog
+        from statcraft.one_sample_proportion_dialogs import OneSampleProportionDialog
+        from statcraft.two_sample_proportion_dialogs import TwoSampleProportionDialog
+
+        self.win.presenter.paste(0, 0, "10\t20\n12\t22\n")
+        ws = self.win.presenter.worksheet
+
+        t1 = OneSampleTDialog(ws, self.win); t1.sample_cols_edit.setText("C1")
+        self.win._save_custom_dialog_state("one_sample_t", t1)
+        t2 = OneSampleTDialog(ws, self.win); self.win._restore_custom_dialog_state("one_sample_t", t2)
+        self.assertEqual(t2.sample_cols_edit.text(), "C1"); t1.close(); t2.close()
+
+        tt1 = TwoSampleTDialog(ws, self.win); tt1.sample1_edit.setText("C1"); tt1.sample2_edit.setText("C2")
+        self.win._save_custom_dialog_state("two_sample_t", tt1)
+        tt2 = TwoSampleTDialog(ws, self.win); self.win._restore_custom_dialog_state("two_sample_t", tt2)
+        self.assertEqual(tt2.sample1_edit.text(), "C1"); self.assertEqual(tt2.sample2_edit.text(), "C2"); tt1.close(); tt2.close()
+
+        pt1 = PairedTDialog(ws, self.win); pt1.sample1_edit.setText("C1"); pt1.sample2_edit.setText("C2")
+        self.win._save_custom_dialog_state("paired_t", pt1)
+        pt2 = PairedTDialog(ws, self.win); self.win._restore_custom_dialog_state("paired_t", pt2)
+        self.assertEqual(pt2.sample1_edit.text(), "C1"); pt1.close(); pt2.close()
+
+        z1 = OneSampleZDialog(ws, self.win); z1.sample_cols_edit.setText("C1"); z1.sigma_edit.setText("2.5")
+        self.win._save_custom_dialog_state("one_sample_z", z1)
+        z2 = OneSampleZDialog(ws, self.win); self.win._restore_custom_dialog_state("one_sample_z", z2)
+        self.assertEqual(z2.sigma_edit.text(), "2.5"); z1.close(); z2.close()
+
+        p1 = OneSampleProportionDialog(ws, self.win); p1.events_edit.setText("14")
+        self.win._save_custom_dialog_state("one_sample_proportion", p1)
+        p2 = OneSampleProportionDialog(ws, self.win); self.win._restore_custom_dialog_state("one_sample_proportion", p2)
+        self.assertEqual(p2.events_edit.text(), "14"); p1.close(); p2.close()
+
+        tp1 = TwoSampleProportionDialog(ws, self.win); tp1.sample1_edit.setText("C1")
+        self.win._save_custom_dialog_state("two_sample_proportion", tp1)
+        tp2 = TwoSampleProportionDialog(ws, self.win); self.win._restore_custom_dialog_state("two_sample_proportion", tp2)
+        self.assertEqual(tp2.sample1_edit.text(), "C1"); tp1.close(); tp2.close()
+
+        settings = QSettings("StatCraft", "Desktop")
+        prev_dec = settings.value("options/decimal_places")
+        try:
+            settings.setValue("options/decimal_places", "3")
+            self.assertEqual(self.win._format_table_float(1.23456, None), "1.235")
+        finally:
+            if prev_dec is None:
+                settings.remove("options/decimal_places")
+            else:
+                settings.setValue("options/decimal_places", prev_dec)
 
 
 if __name__ == "__main__":

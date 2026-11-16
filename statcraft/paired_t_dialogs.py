@@ -345,3 +345,27 @@ class PairedTDialog(QDialog):
 
         self.result_payload = dict(self.settings)
         self.accept()
+
+    def get_state(self) -> dict:
+        import copy
+        return {
+            "data_idx": self.combo_data.currentIndex(),
+            "sample1": self.sample1_edit.text(),
+            "sample2": self.sample2_edit.text(),
+            "size": self.size_edit.text(),
+            "mean": self.mean_edit.text(),
+            "sd": self.sd_edit.text(),
+            "settings": copy.deepcopy(self.settings),
+        }
+
+    def set_state(self, state: dict) -> None:
+        import copy
+        if not isinstance(state, dict):
+            return
+        if "data_idx" in state:
+            self.combo_data.setCurrentIndex(int(state["data_idx"]))
+        for attr, key in (("sample1_edit", "sample1"), ("sample2_edit", "sample2"), ("size_edit", "size"), ("mean_edit", "mean"), ("sd_edit", "sd")):
+            if key in state:
+                getattr(self, attr).setText(str(state[key]))
+        if isinstance(state.get("settings"), dict):
+            self.settings.update(copy.deepcopy(state["settings"]))
