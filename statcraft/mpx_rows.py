@@ -3,23 +3,40 @@ from . import io
 import re
 
 
-def prepare_numeric_resize(document,wrapper,count):
+_COLUMN_STORAGE = {
+    'number': (1, 1, True, False),
+    'date': (2, 1, True, False),
+    'text': (3, 2, False, True),
+}
+
+
+def prepare_column_resize(document, wrapper, kind, count):
+    """Validate bounded resize metadata for typed MPX columns and update CellCt."""
     from .mpx_append import validate_plain
     validate_plain(document)
-    var=wrapper['VarData'];body=var['VarDataBody'];fmt=wrapper['Format']
-    if var.get('Locked',False) is not False:
+    var = wrapper['VarData']
+    body = var['VarDataBody']
+    fmt = wrapper['Format']
+    if var.get('Locked', False) is not False:
         raise io.UnsupportedFormatError('Resizing locked native variables is unsupported.')
-    if fmt.get('Key')!=1 or var.get('Data')!=1 or body.get('ColCt')!=1 or body.get('HasNumericData') is not True or body.get('HasTextData') is not False:
-        raise io.UnsupportedFormatError('Only typed numeric columns support MPX length changes.')
-    order=wrapper.get('Ordering')
-    if order is not None and order!={'ClassId':0,'DefinedSortOrder':0,'NumericOrder':[],'TextOrder':[]}:
+    expected = _COLUMN_STORAGE.get(kind)
+    if (expected is None or
+            (fmt.get('Key'), var.get('Data'), body.get('HasNumericData'), body.get('HasTextData')) != expected or
+            body.get('ColCt') != 1):
+        raise io.UnsupportedFormatError('Only typed columns support MPX length changes.')
+    order = wrapper.get('Ordering')
+    if order is not None and order != {'ClassId': 0, 'DefinedSortOrder': 0, 'NumericOrder': [], 'TextOrder': []}:
         raise io.UnsupportedFormatError('Resizing columns with native ordering metadata is unverified.')
-    value=fmt.get('Value',{})
-    if not isinstance(value,dict) or value.get('DataToStr',[])!=[] or value.get('StrToStr',[])!=[]:
+    value = fmt.get('Value', {})
+    if not isinstance(value, dict) or value.get('DataToStr', []) != [] or value.get('StrToStr', []) != []:
         raise io.UnsupportedFormatError('Resizing columns with native value-label conversions is unverified.')
-    if count>io.MAX_CELLS:
-        raise io.FormatError('Numeric column exceeds the cell limit.')
-    body['CellCt']=count
+    if count > io.MAX_CELLS:
+        raise io.FormatError('Column exceeds the cell limit.')
+    body['CellCt'] = count
+
+
+def prepare_numeric_resize(document, wrapper, count):
+    prepare_column_resize(document, wrapper, 'number', count)
 
 
 def update_numeric_bounds(wrapper,values):

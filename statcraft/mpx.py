@@ -312,24 +312,24 @@ def save_mpx(project, path, session_records=None):
             resized=len(column.values)!=len(baseline.values)
             if column.kind != baseline.kind or column.metadata != baseline.metadata:
                 raise io.UnsupportedFormatError("Native column type and metadata changes are unverified.")
-            if resized and column.kind!='number':
-                raise io.UnsupportedFormatError('Only typed numeric columns support MPX length changes.')
             if column.name == baseline.name and column.values == baseline.values:
                 continue
             if baseline.metadata.get("unsupported_native_storage"):
                 raise io.UnsupportedFormatError("Native edits to an untyped empty placeholder column require unverified storage initialization.")
-            if column.kind not in ("number", "text"):
-                raise io.UnsupportedFormatError("Native date edits are unverified.")
+            if column.kind not in ("number", "date", "text"):
+                raise io.UnsupportedFormatError("Unsupported native column type.")
             wrapper = document["Data"]["Columns"][position]["WorksheetVarBody"]
             if column.name != baseline.name:
                 wrapper["Name"] = column.name
             body = wrapper["VarData"]["VarDataBody"]
             if resized:
-                from .mpx_rows import prepare_numeric_resize
-                prepare_numeric_resize(document,wrapper,len(column.values))
+                from .mpx_rows import prepare_column_resize
+                prepare_column_resize(document,wrapper,column.kind,len(column.values))
                 resized_sheet=True
-            if column.kind == "number":
+            if column.kind in ("number", "date"):
                 if column.values != baseline.values:
+                    if column.kind == "date" and any(value is None for value in column.values):
+                        raise io.UnsupportedFormatError("Missing-date sentinel semantics have not been verified.")
                     if any(value is not None and finite_number(value)==io.MISSING_SENTINEL for value in column.values):
                         raise io.UnsupportedFormatError('This numeric value is reserved for native missing cells.')
                     values=[io.MISSING_SENTINEL if value is None else finite_number(value) for value in column.values]
@@ -347,15 +347,19 @@ def save_mpx(project, path, session_records=None):
             else:
                 if any(value is None for value in column.values):
                     raise io.UnsupportedFormatError("Native text missing-value encoding is unverified; literal empty strings are supported.")
-                # Do not guess CharCt or cached-format changes: same-or-shorter strings only.
                 capacity = body.get("CharCt")
                 if any(any(ord(char) > 0xffff or 0xd800 <= ord(char) <= 0xdfff for char in value) for value in column.values):
                     raise io.UnsupportedFormatError("Native text editing beyond verified BMP Unicode is unsupported.")
+                required = max(map(len, column.values), default=0)
                 if capacity is None:
-                    if max(map(len, column.values), default=0) > max(map(len, baseline.values), default=0):
+                    if required > max(map(len, baseline.values), default=0):
                         raise io.UnsupportedFormatError("Native text width metadata is absent; growing text is unverified.")
-                elif any(len(value) > io._count(capacity, "CharCt") for value in column.values):
-                    raise io.UnsupportedFormatError("Text edits beyond the original character width require unverified metadata changes.")
+                else:
+                    new_capacity = max(io._count(capacity, "CharCt"), required)
+                    body["CharCt"] = new_capacity
+                    fmt_value = wrapper.get("Format", {}).get("Value")
+                    if isinstance(fmt_value, dict) and "CharCt" in fmt_value:
+                        fmt_value["CharCt"] = max(io._count(fmt_value["CharCt"], "CharCt"), new_capacity)
                 body["TextData"] = list(column.values)
             changed = True
         if changed:

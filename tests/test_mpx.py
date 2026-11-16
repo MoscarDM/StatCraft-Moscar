@@ -134,17 +134,14 @@ class MpxTests(unittest.TestCase):
                 for name in a.namelist():
                     if name != "/project_metadata_20.json": self.assertEqual(a.read(name), b.read(name))
 
-    def test_reject_unverified_structure_type_length_dates_models_and_history_edits(self):
+    def test_reject_unverified_structure_type_models_and_history_edits(self):
         with scratch() as tmp:
             path = Path(tmp) / "original.mpx"; fixture(path)
             changes = [lambda p: p.active_worksheet.columns.append(Column("New",'date')),
-                       lambda p: p.active_worksheet.columns[1].values.append('a'),
                        lambda p: setattr(p.active_worksheet.columns[0], "kind", "date"),
-                       lambda p: p.worksheets[0].columns[1].values.__setitem__(0, 43833),
                        lambda p: p.active_worksheet.constants[0].values.__setitem__(0, 10),
                        lambda p: p.history.append("new analysis"),
-                       lambda p: p.metadata.__setitem__("Models", {}),
-                       lambda p: p.active_worksheet.columns[1].values.__setitem__(0, "too long")]
+                       lambda p: p.metadata.__setitem__("Models", {})]
             for index, change in enumerate(changes):
                 project = load_mpx(path); change(project)
                 target = Path(tmp) / ("invalid" + str(index) + ".mpx")
