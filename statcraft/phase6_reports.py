@@ -35,7 +35,12 @@ PHASE6_REPORT_ANALYSES = {
     "two_poisson_rates_power",
     "equivalence_tost_power",
     "sample_size_estimation",
+    "estimation_planning",
+    "general_factorial_power",
+    "plackett_burman_power",
+    "equivalence_difference_power",
     "sample_size_tolerance_interval",
+    "tolerance_interval_planning",
 }
 
 
@@ -53,6 +58,14 @@ def sections(result: Dict[str, Any]) -> List[Section]:
     """Convert structured Phase 3-7 analysis dictionaries into Qt report tables."""
     kind = result.get("analysis", "")
     out: List[Section] = []
+
+    if kind == "estimation_planning":
+        from .power_extended import estimation_planning_sections
+        return estimation_planning_sections(result)
+
+    if kind == "tolerance_interval_planning":
+        from .power_extended import tolerance_planning_sections
+        return tolerance_planning_sections(result)
 
     if kind == "random_forest":
         out.append(("Model Configuration", ["Setting", "Value"], [

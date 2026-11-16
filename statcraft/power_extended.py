@@ -299,6 +299,266 @@ def sample_size_estimation(
     }
 
 
+EQUIVALENCE_DESIGNS = ("1-Sample", "2-Sample", "Paired", "2x2 Crossover Design")
+
+
+def equivalence_difference_power(*, design="1-Sample", lower_limit=-1.0, upper_limit=1.0,
+                                 difference=None, stdev=1.0, sample_size=None, target_power=None,
+                                 alpha=.05, difference_side="Upper"):
+    """Integrate the probability of passing both tests over the estimated variance."""
+    from scipy.integrate import quad
+    from scipy.optimize import brentq
+
+    if design not in EQUIVALENCE_DESIGNS or difference_side not in ("Lower", "Upper"):
+        raise ValueError("Choose a valid equivalence design and direction.")
+    if not all(math.isfinite(v) for v in (lower_limit, upper_limit, stdev)) or lower_limit >= upper_limit or stdev <= 0:
+        raise ValueError("Enter ordered finite equivalence limits and a positive standard deviation.")
+    if not 0 < alpha < .5:
+        raise ValueError("Significance level must be between 0 and 0.5.")
+    if sum(v is not None for v in (difference, sample_size, target_power)) != 2:
+        raise ValueError("Enter two of difference, sample size, and target power.")
+    if difference is not None and not lower_limit < difference < upper_limit:
+        raise ValueError("The assumed difference must be within the equivalence limits.")
+    if sample_size is not None and (type(sample_size) is not int or not 2 <= sample_size <= 100_000):
+        raise ValueError("Enter a whole sample size from 2 to 100,000.")
+    if target_power is not None and not alpha < target_power < 1:
+        raise ValueError("Target power must exceed significance level and be below 1.")
+
+    def achieved(n, delta):
+        df = 2 * n - 2 if design in ("2-Sample", "2x2 Crossover Design") else n - 1
+        se = stdev * math.sqrt((2 if design == "2-Sample" else 1) / n)
+        cutoff = stats.t.isf(alpha, df)
+        lower = (lower_limit - delta) / se
+        upper = (upper_limit - delta) / se
+        end = stats.chi2.cdf(df * ((upper - lower) / (2 * cutoff)) ** 2, df)
+
+        def conditional(p):
+            margin = cutoff * math.sqrt(stats.chi2.ppf(p, df) / df)
+            return max(0.0, stats.norm.cdf(upper - margin) - stats.norm.cdf(lower + margin))
+
+        return float(quad(conditional, 0, end, epsabs=2e-9)[0])
+
+    if difference is None:
+        midpoint = (lower_limit + upper_limit) / 2
+        if achieved(sample_size, midpoint) < target_power:
+            raise ValueError("Target power is unattainable at this sample size.")
+        edge = upper_limit if difference_side == "Upper" else lower_limit
+        difference = brentq(lambda d: achieved(sample_size, d) - target_power, *sorted((edge, midpoint)))
+    elif sample_size is None:
+        low, high = 2, 2
+        while high < 100_000 and achieved(high, difference) < target_power:
+            high = min(100_000, high * 2)
+        if achieved(high, difference) < target_power:
+            raise ValueError("Required sample size exceeds 100,000.")
+        sample_size, _ = _binary_search_n(lambda n: achieved(n, difference), target_power, low, high)
+
+    units = {"2-Sample": "per group", "Paired": "pairs", "2x2 Crossover Design": "per sequence"}
+    return dict(analysis="equivalence_difference_power", design=design, lower_limit=lower_limit,
+                upper_limit=upper_limit, difference=difference, stdev=stdev, alpha=alpha,
+                sample_size=sample_size, sample_size_units=units.get(design, "observations"),
+                target_power=target_power, actual_power=achieved(sample_size, difference))
+
+
+ESTIMATION_PARAMETERS = (
+    "Mean (Normal)", "Standard Deviation (Normal)", "Variance (Normal)",
+    "Proportion (Binomial)", "Poisson Rate", "Poisson Mean",
+)
+
+
+def estimation_planning(*, parameter="Mean (Normal)", planning_value=1.0,
+                        confidence=.95, interval_type="Two-sided", known_stdev=False,
+                        exposure=1.0, margins=None, sample_sizes=None):
+    """Plan sample size or interval precision using the specified interval method."""
+    if parameter not in ESTIMATION_PARAMETERS:
+        raise ValueError("Choose a supported estimation parameter.")
+    if not .5 < confidence < 1 or interval_type not in ("Two-sided", "Lower bound", "Upper bound"):
+        raise ValueError("Choose a valid confidence level and interval type.")
+    if not math.isfinite(planning_value) or planning_value <= 0:
+        raise ValueError("Planning value must be finite and positive.")
+    if parameter == "Proportion (Binomial)" and planning_value >= 1:
+        raise ValueError("Planning proportion must be below 1.")
+    if not math.isfinite(exposure) or exposure <= 0:
+        raise ValueError("Length of observation must be finite and positive.")
+    if (margins is None) == (sample_sizes is None):
+        raise ValueError("Enter either margins of error or sample sizes.")
+    tail = (1 - confidence) / (2 if interval_type == "Two-sided" else 1)
+    minimum = 2 if parameter.endswith("(Normal)") and not (
+        parameter == "Mean (Normal)" and known_stdev
+    ) else 1
+    cap = 1_000_000
+
+    def errors(n):
+        value = planning_value
+        if parameter == "Mean (Normal)":
+            critical = stats.norm.isf(tail) if known_stdev else stats.t.isf(tail, n - 1)
+            error = float(critical * value / math.sqrt(n))
+            lower_error, upper_error = error, error
+        else:
+            if parameter == "Proportion (Binomial)":
+                events = n * value
+                lo = stats.beta.ppf(tail, events, n - events + 1)
+                hi = stats.beta.isf(tail, events + 1, n - events)
+            elif parameter.startswith("Poisson"):
+                time = n * (exposure if parameter == "Poisson Rate" else 1)
+                events = value * time
+                lo = stats.chi2.ppf(tail, 2 * events) / (2 * time)
+                hi = stats.chi2.isf(tail, 2 * (events + 1)) / (2 * time)
+            else:
+                variance = value ** 2 if parameter.startswith("Standard Deviation") else value
+                lo = (n - 1) * variance / stats.chi2.isf(tail, n - 1)
+                hi = (n - 1) * variance / stats.chi2.ppf(tail, n - 1)
+                if parameter.startswith("Standard Deviation"):
+                    lo, hi = math.sqrt(lo), math.sqrt(hi)
+            lower_error, upper_error = float(value - lo), float(hi - value)
+        if interval_type == "Lower bound":
+            upper_error = None
+        if interval_type == "Upper bound":
+            lower_error = None
+        return lower_error, upper_error, max(v for v in (lower_error, upper_error) if v is not None)
+
+    def row(n, target=None):
+        lower, upper, margin = errors(n)
+        return dict(sample_size=n, lower_margin=lower, upper_margin=upper, margin=margin,
+                    target_margin=target)
+
+    rows = []
+    if margins is not None:
+        if not margins or any(not math.isfinite(m) or m <= 0 for m in margins):
+            raise ValueError("Enter positive, finite margins of error.")
+        for margin in margins:
+            lo, hi = minimum, minimum
+            while hi < cap and errors(hi)[2] > margin:
+                hi = min(cap, hi * 2)
+            if errors(hi)[2] > margin:
+                raise ValueError("The required sample size exceeds 1,000,000.")
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if errors(mid)[2] <= margin:
+                    hi = mid
+                else:
+                    lo = mid + 1
+            rows.append(row(lo, margin))
+    else:
+        if not sample_sizes or any(type(n) is not int or not minimum <= n <= cap for n in sample_sizes):
+            raise ValueError(f"Enter whole sample sizes from {minimum} to 1,000,000.")
+        rows = [row(n) for n in sample_sizes]
+    return dict(analysis="estimation_planning", parameter=parameter, planning_value=planning_value,
+                confidence=confidence, interval_type=interval_type,
+                known_stdev=known_stdev if parameter == "Mean (Normal)" else None,
+                exposure=exposure if parameter == "Poisson Rate" else None, rows=rows)
+
+
+def _design_power(dfs, *, effect, replicates, target_power, stdev, alpha, center_points=0):
+    from scipy.optimize import brentq
+
+    if not math.isfinite(stdev) or stdev <= 0 or not 0 < alpha < 1:
+        raise ValueError("Enter a positive standard deviation and significance level between 0 and 1.")
+    if effect is not None and (not math.isfinite(effect) or effect <= 0):
+        raise ValueError("Enter a finite positive effect.")
+    if replicates is not None and (type(replicates) is not int or not 1 <= replicates <= 100_000):
+        raise ValueError("Enter whole replicates from 1 to 100,000.")
+    if target_power is not None and not alpha < target_power < 1:
+        raise ValueError("Target power must exceed significance level and be below 1.")
+    if sum(value is not None for value in (effect, replicates, target_power, center_points)) != 3:
+        raise ValueError("Supply all settings except the quantity to calculate.")
+
+    def achieved(r, e, c):
+        numerator, denominator, multiplier, _ = dfs(r, c)
+        if denominator <= 0:
+            return 0.0
+        if e == 0:
+            return alpha
+        critical = stats.f.isf(alpha, numerator, denominator)
+        return float(stats.ncf.sf(critical, numerator, denominator, multiplier * (e / stdev) ** 2))
+
+    if effect is None:
+        if dfs(replicates, center_points)[1] <= 0:
+            raise ValueError("The design has no error degrees of freedom.")
+        high = stdev
+        while achieved(replicates, high, center_points) < target_power:
+            high *= 2
+            if not math.isfinite(high):
+                raise ValueError("The requested effect could not be calculated.")
+        effect = brentq(lambda e: achieved(replicates, e, center_points) - target_power, 0, high)
+    elif replicates is None or center_points is None:
+        solving_replicates = replicates is None
+        evaluate = (
+            (lambda n: achieved(n, effect, center_points)) if solving_replicates
+            else (lambda n: achieved(replicates, effect, n))
+        )
+        low, high = (1 if solving_replicates else 0), 100_000
+        if evaluate(high) < target_power:
+            raise ValueError("The target power is outside the supported search range.")
+        while low < high:
+            mid = (low + high) // 2
+            if evaluate(mid) >= target_power:
+                high = mid
+            else:
+                low = mid + 1
+        if solving_replicates:
+            replicates = low
+        else:
+            center_points = low
+    _, error_df, _, runs = dfs(replicates, center_points)
+    if error_df <= 0:
+        raise ValueError("The design has no error degrees of freedom.")
+    return dict(effect=effect, replicates=replicates, center_points=center_points, stdev=stdev,
+                alpha=alpha, target_power=target_power,
+                actual_power=achieved(replicates, effect, center_points),
+                error_df=error_df, total_runs=runs)
+
+
+def general_factorial_power(*, levels, stdev, effect=None, replicates=None, target_power=None,
+                            order=None, blocked=False, alpha=.05):
+    """Plan power for the factor with the most levels in a full factorial design."""
+    from itertools import combinations
+
+    if not 2 <= len(levels) <= 15 or any(type(k) is not int or not 2 <= k <= 100 for k in levels):
+        raise ValueError("Enter 2 to 15 factors with 2 to 100 levels each.")
+    order = len(levels) if order is None else order
+    if type(order) is not int or not 1 <= order <= len(levels):
+        raise ValueError("Model order must be between 1 and the number of factors.")
+    runs = math.prod(levels)
+    k = max(levels)
+    df_model = sum(math.prod(term) for d in range(1, order + 1)
+                   for term in combinations([v - 1 for v in levels], d))
+
+    def dfs(r, _):
+        n = runs * r
+        return k - 1, n - 1 - df_model - (r - 1 if blocked else 0), n / (2 * k), n
+
+    result = _design_power(dfs, effect=effect, replicates=replicates, target_power=target_power,
+                           stdev=stdev, alpha=alpha)
+    result.pop("center_points")
+    return dict(analysis="general_factorial_power", levels=list(levels), order=order,
+                blocked=blocked, **result)
+
+
+def plackett_burman_power(*, factors, corner_points, stdev, effect=None, replicates=None,
+                          target_power=None, center_points=0, include_center_term=True,
+                          omitted_effects=0, alpha=.05, solve_center_points=False):
+    """Plan power for a main effect in a Plackett–Burman design."""
+    if solve_center_points:
+        center_points = None
+    if (type(corner_points) is not int or not 8 <= corner_points <= 48 or corner_points % 4
+            or type(factors) is not int or not 2 <= factors < corner_points):
+        raise ValueError("Choose 8 to 48 corner points in multiples of four and fewer factors than points.")
+    if center_points is not None and (type(center_points) is not int or not 0 <= center_points <= 100_000):
+        raise ValueError("Enter whole center points from 0 to 100,000.")
+    if type(omitted_effects) is not int or not 0 <= omitted_effects < factors:
+        raise ValueError("At least one main effect must remain in the model.")
+
+    def dfs(r, c):
+        corners = corner_points * r
+        n = corners + c
+        return 1, n - 1 - factors + omitted_effects - int(include_center_term and c > 0), corners / 4, n
+
+    result = _design_power(dfs, effect=effect, replicates=replicates, target_power=target_power,
+                           stdev=stdev, alpha=alpha, center_points=center_points)
+    return dict(analysis="plackett_burman_power", factors=factors, corner_points=corner_points,
+                include_center_term=include_center_term, omitted_effects=omitted_effects, **result)
+
+
 def sample_size_tolerance_interval(
     coverage: float = 0.95,
     confidence: float = 0.95,
@@ -332,7 +592,153 @@ def sample_size_tolerance_interval(
     }
 
 
+def tolerance_interval_planning(*, coverage=.95, confidence=.95, excess_probability=.05,
+                                maximum_coverages=None, sample_sizes=None, interval_type="Two-sided"):
+    """Solve tolerance-interval precision for normal and distribution-free methods."""
+    from scipy.optimize import brentq
+
+    if not all(0 < value < 1 for value in (coverage, confidence, excess_probability)):
+        raise ValueError("Coverage, confidence, and excess probability must be between 0 and 1.")
+    if not 0 < excess_probability < confidence:
+        raise ValueError("Excess probability must be less than confidence.")
+    if interval_type not in ("Two-sided", "Lower bound", "Upper bound"):
+        raise ValueError("Choose two-sided, lower bound, or upper bound.")
+    if (maximum_coverages is None) == (sample_sizes is None):
+        raise ValueError("Enter maximum coverages or sample sizes.")
+    limit = 100_000
+    two_sided = interval_type == "Two-sided"
+    nodes, weights = np.polynomial.hermite.hermgauss(32)
+    weights = weights / math.sqrt(math.pi)
+
+    def normal_parameters(n):
+        if not two_sided:
+            return stats.nct.ppf(confidence, n - 1, math.sqrt(n) * stats.norm.ppf(coverage))
+        shifts = 2 * nodes ** 2 / n
+        target_width_sq = stats.ncx2.ppf(coverage, 1, shifts)
+        return brentq(
+            lambda k: np.dot(weights, stats.chi2.sf((n - 1) * target_width_sq / k ** 2, n - 1)) - confidence,
+            1e-10, math.sqrt(target_width_sq.max() * (n - 1) / stats.chi2.ppf(1 - confidence, n - 1)) * 2,
+        )
+
+    def normal_excess(n, factor, maximum):
+        if maximum == 1:
+            return 0.0
+        if not two_sided:
+            return stats.nct.cdf(factor, n - 1, math.sqrt(n) * stats.norm.ppf(maximum))
+        width_sq = stats.ncx2.ppf(maximum, 1, 2 * nodes ** 2 / n)
+        return np.dot(weights, stats.chi2.sf((n - 1) * width_sq / factor ** 2, n - 1))
+
+    def spacing(n):
+        # F(X_s)-F(X_r) has a beta distribution with shape parameters s-r and n+1-(s-r).
+        required = stats.binom.ppf(confidence, n, coverage) + 1
+        return np.minimum(required, n - int(two_sided))
+
+    rows = []
+    if maximum_coverages is not None:
+        maximums = list(maximum_coverages)
+        if not maximums or any(not coverage < value < 1 for value in maximums):
+            raise ValueError("Maximum coverages must exceed minimum coverage and be below 1.")
+        candidates = np.arange(2, limit + 1)
+        distances = spacing(candidates)
+        actual_confidences = stats.beta.sf(coverage, distances, candidates + 1 - distances)
+        for maximum in maximums:
+            errors = stats.beta.sf(maximum, distances, candidates + 1 - distances)
+            qualified = np.flatnonzero(
+                (actual_confidences >= confidence) & (errors <= excess_probability)
+            )
+            low, high = 2, limit
+            while low < high:
+                mid = (low + high) // 2
+                if normal_excess(mid, normal_parameters(mid), maximum) <= excess_probability:
+                    high = mid
+                else:
+                    low = mid + 1
+            normal = low if normal_excess(low, normal_parameters(low), maximum) <= excess_probability else None
+            index = qualified[0] if qualified.size else None
+            rows.append(dict(input=float(maximum), normal=normal,
+                             nonparametric=int(candidates[index]) if index is not None else None,
+                             achieved_confidence=float(actual_confidences[index]) if index is not None else None,
+                             achieved_error=float(errors[index]) if index is not None else None))
+        mode = "sample_size"
+    else:
+        sizes = list(sample_sizes)
+        if not sizes or any(type(n) is not int or not 2 <= n <= limit for n in sizes):
+            raise ValueError("Sample sizes must be whole numbers from 2 to 100,000.")
+        for n in sizes:
+            factor = normal_parameters(n)
+            maximum = brentq(lambda p: normal_excess(n, factor, p) - excess_probability, coverage, 1)
+            distance = spacing(n)
+            achieved = stats.beta.sf(coverage, distance, n + 1 - distance)
+            nonparametric = stats.beta.isf(excess_probability, distance, n + 1 - distance)
+            rows.append(dict(input=n, normal=float(maximum), nonparametric=float(nonparametric),
+                             achieved_confidence=float(achieved), achieved_error=float(excess_probability)))
+        mode = "maximum_coverage"
+    return dict(analysis="tolerance_interval_planning", mode=mode, coverage=coverage,
+                confidence=confidence, excess_probability=excess_probability,
+                interval_type=interval_type, rows=rows)
+
+
+def tolerance_planning_sections(result):
+    solving_size = result["mode"] == "sample_size"
+
+    def percent(value):
+        return f"{value:.4%}" if value is not None else "—"
+
+    def size(value):
+        return value if value is not None else "Over 100,000"
+
+    inputs = [
+        ["Minimum population coverage", percent(result["coverage"])],
+        ["Confidence level", percent(result["confidence"])],
+        ["Excess coverage probability", percent(result["excess_probability"])],
+        ["Interval", result["interval_type"]],
+    ]
+    format_result = size if solving_size else percent
+    rows = [
+        [percent(row["input"]) if solving_size else row["input"],
+         format_result(row["normal"]), format_result(row["nonparametric"]),
+         percent(row["achieved_confidence"]), percent(row["achieved_error"])]
+        for row in result["rows"]
+    ]
+    return [
+        ("Method", ["Setting", "Value"], inputs),
+        ("Required Sample Sizes" if solving_size else "Maximum Population Coverage",
+         ["Maximum coverage" if solving_size else "Sample size", "Normal", "Nonparametric",
+          "Nonparametric confidence", "Nonparametric excess probability"], rows),
+    ]
+
+
+def estimation_planning_sections(result):
+    method = [
+        ["Parameter", result["parameter"]],
+        ["Planning value", result["planning_value"]],
+        ["Confidence", f"{result['confidence']:.2%}"],
+        ["Interval", result["interval_type"]],
+    ]
+    if result["known_stdev"] is not None:
+        method.append(["Population standard deviation", "Known" if result["known_stdev"] else "Estimated"])
+    if result["exposure"] is not None:
+        method.append(["Length of observation", result["exposure"]])
+    keys = ("sample_size", "target_margin", "lower_margin", "upper_margin", "margin")
+    return [
+        ("Method", ["Setting", "Value"], method),
+        ("Results", ["Sample size", "Target margin", "Lower margin", "Upper margin", "Margin of error"],
+         [[row[key] if row[key] is not None else "—" for key in keys] for row in result["rows"]]),
+    ]
+
+
 def format_power_extended_report(result: Dict[str, Any]) -> str:
+    planning_reports = {
+        "estimation_planning": ("Sample Size for Estimation", estimation_planning_sections),
+        "tolerance_interval_planning": ("Sample Size for Tolerance Intervals", tolerance_planning_sections),
+    }
+    if result.get("analysis") in planning_reports:
+        title, sections = planning_reports[result["analysis"]]
+        lines = [title]
+        for heading, headers, rows in sections(result):
+            lines.extend(["", heading, "\t".join(headers)])
+            lines.extend("\t".join(map(str, row)) for row in rows)
+        return "\n".join(lines)
     kind = result.get("analysis", "")
     lines = [f"Power and Sample Size: {kind.replace('_', ' ').title()}", "─" * 56]
     for k, v in result.items():

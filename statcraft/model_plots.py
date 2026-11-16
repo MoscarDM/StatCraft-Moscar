@@ -287,8 +287,12 @@ def _model_term_sets(bundle):
     """Return (active_main_positions, active_pair_positions) in the fitted model."""
     k = len(bundle['predictors'])
     if bundle['action'] == 'multiple_regression':
-        return set(range(k)), set()
-    raw_terms = bundle['result'].get('terms', [])
+        raw_mr_terms = bundle['result'].get('model_terms')
+        if not raw_mr_terms:
+            return set(range(k)), set()
+        raw_terms = raw_mr_terms
+    else:
+        raw_terms = bundle['result'].get('terms', [])
     main_pos = set()
     pair_pos = set()
     for term in raw_terms:

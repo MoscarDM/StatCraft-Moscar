@@ -226,4 +226,26 @@ class NativeModelRecoveryTests(unittest.TestCase):
         self.assertEqual(res_opt['origin'], 'statcraft')
         self.assertIn('solutions', res_opt['result'])
 
+    def test_response_surface_verification_keeps_native_save_copy_writable(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from statcraft.app import Presenter
+        from tests.test_mpx import documents, fixture as write_mpx, variable
+
+        project, _, descriptor = self.decode(blocked=False)
+        meta, first, _ = documents()
+        first['Data']['Columns'] = [variable(c.name, c.values) for c in project.worksheets[0].columns]
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / 'source.mpx'
+            destination = Path(directory) / 'refit.mpx'
+            write_mpx(source, metadata=meta, first=first)
+            presenter = Presenter()
+            presenter.load(source)
+            entry = presenter.analyze_response_surface(**descriptor['recipe']['parameters'])
+            self.assertTrue(entry['connected_analysis']['r_script'])
+            presenter.save(destination)
+            reopened = Presenter()
+            reopened.load(destination)
+            self.assertTrue(any(e['entry_id'] == entry['entry_id'] for e in reopened.history))
+
 if __name__=='__main__':unittest.main()

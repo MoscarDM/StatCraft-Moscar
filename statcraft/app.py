@@ -3298,21 +3298,32 @@ class Presenter:
             raise ValueError("ARIMA requires a valid series column.")
         col = self.worksheet.columns[idx]
         var_name = col.name or f"C{idx+1}"
-        res = fit_arima(
-            values=col.values,
-            p=st.get("p", 1),
-            d=st.get("d", 0),
-            q=st.get("q", 0),
-            P=st.get("P", 0),
-            D=st.get("D", 0),
-            Q=st.get("Q", 0),
-            S=st.get("S", 1),
-            include_constant=st.get("include_constant", True),
-            forecasts=st.get("forecasts", 0),
-            conf_level=st.get("conf_level", 95.0),
-            variable_name=var_name,
-            title=st.get("title", ""),
-        )
+        if st.get("search"):
+            from .arima import forecast_best_arima
+            res = forecast_best_arima(
+                col.values, d=st.get("d", 0), D=st.get("D", 0), S=st.get("S", 1),
+                max_p=st.get("max_p", 2), max_q=st.get("max_q", 2),
+                max_P=st.get("max_P", 0), max_Q=st.get("max_Q", 0),
+                include_constant=st.get("include_constant", True), forecasts=st.get("forecasts", 5),
+                conf_level=st.get("conf_level", 95), criterion=st.get("criterion", "AICc"),
+                variable_name=var_name,
+            )
+        else:
+            res = fit_arima(
+                values=col.values,
+                p=st.get("p", 1),
+                d=st.get("d", 0),
+                q=st.get("q", 0),
+                P=st.get("P", 0),
+                D=st.get("D", 0),
+                Q=st.get("Q", 0),
+                S=st.get("S", 1),
+                include_constant=st.get("include_constant", True),
+                forecasts=st.get("forecasts", 0),
+                conf_level=st.get("conf_level", 95.0),
+                variable_name=var_name,
+                title=st.get("title", ""),
+            )
         res["analysis"] = "arima"
         res["graph"] = "arima"
         title = res["title"]
@@ -4364,7 +4375,12 @@ class Presenter:
             "two_poisson_rates": (_pe.two_poisson_rates_power, "Power and Sample Size: 2-Sample Poisson Rates", "two_poisson_rates_power"),
             "equivalence_tost": (_pe.equivalence_tost_power, "Power and Sample Size: Equivalence (TOST)", "equivalence_tost_power"),
             "estimation": (_pe.sample_size_estimation, "Sample Size for Estimation", "sample_size_estimation"),
+            "estimation_planning": (_pe.estimation_planning, "Sample Size for Estimation", "estimation_planning"),
+            "general_factorial_power": (_pe.general_factorial_power, "Power and Sample Size: General Full Factorial Design", "general_factorial_power"),
+            "plackett_burman_power": (_pe.plackett_burman_power, "Power and Sample Size: Plackett-Burman Design", "plackett_burman_power"),
+            "equivalence_difference_power": (_pe.equivalence_difference_power, "Power and Sample Size: Equivalence", "equivalence_difference_power"),
             "tolerance_interval": (_pe.sample_size_tolerance_interval, "Sample Size for Tolerance Intervals", "sample_size_tolerance_interval"),
+            "tolerance_planning": (_pe.tolerance_interval_planning, "Sample Size for Tolerance Intervals", "tolerance_interval_planning"),
         }
         if kind not in table:
             raise ValueError(f"Unsupported extended power calculation kind: {kind}")
@@ -5766,7 +5782,15 @@ class Presenter:
         try:
             from .connect import create_connected_response_surface
             conf = options.get('confidence', 0.95) if isinstance(options, dict) else 0.95
-            conn = create_connected_response_surface(self.worksheet, response_index, factor_indices, result, conf, coding=parameters['coding'], terms=parameters['terms'], options=options)
+            source = self.worksheet
+            if self.native_project is not None and not getattr(self.native_project, 'statcraft_owned', False):
+                # R verification assigns local identities. Keep native worksheet metadata intact.
+                source = copy.copy(source)
+                source.metadata = copy.deepcopy(source.metadata)
+                source.columns = [copy.copy(column) for column in source.columns]
+                for column in source.columns:
+                    column.metadata = copy.deepcopy(column.metadata)
+            conn = create_connected_response_surface(source, response_index, factor_indices, result, conf, coding=parameters['coding'], terms=parameters['terms'], options=options)
             entry['connected_analysis'] = conn.to_dict()
         except Exception:
             pass
@@ -7991,7 +8015,12 @@ def format_entry(entry):
             'two_poisson_rates_power': ('.power_extended', 'format_power_extended_report'),
             'equivalence_tost_power': ('.power_extended', 'format_power_extended_report'),
             'sample_size_estimation': ('.power_extended', 'format_power_extended_report'),
+            'estimation_planning': ('.power_extended', 'format_power_extended_report'),
+            'general_factorial_power': ('.power_extended', 'format_power_extended_report'),
+            'plackett_burman_power': ('.power_extended', 'format_power_extended_report'),
+            'equivalence_difference_power': ('.power_extended', 'format_power_extended_report'),
             'sample_size_tolerance_interval': ('.power_extended', 'format_power_extended_report'),
+            'tolerance_interval_planning': ('.power_extended', 'format_power_extended_report'),
             'balanced_anova': ('.advanced_anova', 'format_advanced_anova_report'),
             'fully_nested_anova': ('.advanced_anova', 'format_advanced_anova_report'),
             'oneway_manova': ('.advanced_anova', 'format_advanced_anova_report'),

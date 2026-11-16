@@ -55,6 +55,17 @@ def selector(key, title, multiple=False, minimum=1, maximum=None, kinds=("number
     return {"key": key, "label": title, "multiple": multiple, "minimum": minimum, "maximum": maximum, "kinds": kinds}
 
 
+def initial_native_output(outputs):
+    """Return the newest imported output that can open as a visible chart, else the newest output."""
+    if not outputs:
+        return None
+    from .modern_charts import supported as chart_supported
+    for entry in reversed(outputs):
+        if chart_supported(entry):
+            return entry
+    return outputs[-1]
+
+
 class WelcomeWatermarkWidget(QWidget):
     """Centered Quick-Start welcome card with interactive starter datasets, guided tour, and shortcuts."""
     def __init__(self, on_open, on_new_project, on_new_worksheet, on_try_connect=None, on_overview=None, on_sample_library=None, on_guided_tour=None, parent=None):
@@ -1626,6 +1637,7 @@ class ModernWindow(QMainWindow):
         self._action(time_series, "&Double Exp Smoothing…", self.double_exp_smoothing_dialog, None, None, True)
         self._action(time_series, "&Winters' Method…", self.winters_method_dialog, None, None, True)
         self._action(time_series, "&ARIMA…", self.arima_dialog, None, None, True)
+        self._action(time_series, "Forecast with &Best ARIMA Model…", self.best_arima_dialog, None, None, True)
         time_series.addSeparator()
         self._action(time_series, "&Autocorrelation…", self.autocorrelation_dialog, None, None, True)
         self._action(time_series, "&Partial Autocorrelation…", self.partial_autocorrelation_dialog, None, None, True)
@@ -1694,7 +1706,13 @@ class ModernWindow(QMainWindow):
         self._action(power_menu, "&2 Variances…", self.two_variances_power_dialog, None, None, True)
         self._action(power_menu, "1-Sample &Poisson Rate…", self.one_poisson_rate_power_dialog, None, None, True)
         self._action(power_menu, "2-Sample Poisson &Rates…", self.two_poisson_rates_power_dialog, None, None, True)
-        self._action(power_menu, "&Equivalence Tests (TOST)…", self.equivalence_tost_power_dialog, None, None, True)
+        from .power_extended import EQUIVALENCE_DESIGNS
+        equivalence_power_menu = power_menu.addMenu("&Equivalence Tests")
+        for design in EQUIVALENCE_DESIGNS:
+            self._action(equivalence_power_menu, design + "…",
+                         lambda d=design: self.equivalence_difference_power_dialog(d), None, None, True)
+        self._action(power_menu, "Plackett-&Burman Design…", self.plackett_burman_power_dialog, None, None, True)
+        self._action(power_menu, "General Full &Factorial Design…", self.general_factorial_power_dialog, None, None, True)
         self._action(power_menu, "Sample Size for &Estimation…", self.sample_size_estimation_dialog, None, None, True)
         self._action(power_menu, "Sample Size for &Tolerance Intervals…", self.sample_size_tolerance_dialog, None, None, True)
         resampling_menu = stat.addMenu("Resam&pling")
@@ -3746,7 +3764,8 @@ class ModernWindow(QMainWindow):
             project = self.presenter.native_project
             active_id = project.worksheet_ids[project.active_index]
             outputs = [e for e in self.presenter.history if e.get('result',{}).get('analysis')=='native_saved_output' and e.get('worksheet_id')==active_id]
-            if outputs:self.show_result(outputs[-1])
+            initial_output=initial_native_output(outputs)
+            if initial_output is not None:self.show_result(initial_output)
         return notices
 
     def save_path(self, path):
@@ -4258,10 +4277,13 @@ class ModernWindow(QMainWindow):
         self._last_dialog_action = self.create_factorial
         from .doe_dialogs import CreateFactorialDialog
         dialog = CreateFactorialDialog(self)
-        if dialog.exec() != QDialog.DialogCode.Accepted or not self._confirm_leave(): return
-        entry = self._call(lambda: self.presenter.create_factorial(**dialog.parameters), result=True)
+        if dialog.exec() != QDialog.DialogCode.Accepted: return
+        catalog = dialog.catalog_kind()
+        if not catalog and not self._confirm_leave(): return
+        create = self.presenter.create_doe_plan if catalog else self.presenter.create_factorial
+        entry = self._call(lambda: create(**dialog.parameters), result=True)
         self.page = 0; self.refresh()
-        if entry is not None and not dialog.summary:
+        if entry is not None and not dialog.summary and not catalog:
             self.presenter.history = []; self._show_welcome(); self.refresh()
 
     def analyze_factorial(self):
@@ -5133,6 +5155,35 @@ class ModernWindow(QMainWindow):
                 if entry:
                     self.show_result(entry)
 
+    def best_arima_dialog(self):
+        self._dialog(
+            "Forecast with Best ARIMA Model",
+            [selector("series_index", "Series")],
+            [
+                numeric("d", "Nonseasonal differencing", 0, integer=True),
+                numeric("D", "Seasonal differencing", 0, integer=True),
+                numeric("S", "Seasonal period (1 for none)", 1, integer=True),
+                numeric("max_p", "Maximum nonseasonal AR order", 2, integer=True),
+                numeric("max_q", "Maximum nonseasonal MA order", 2, integer=True),
+                numeric("max_P", "Maximum seasonal AR order", 0, integer=True),
+                numeric("max_Q", "Maximum seasonal MA order", 0, integer=True),
+                {"key": "include_constant", "label": "Include constant if estimable", "boolean": True,
+                 "default": True},
+                {"key": "criterion", "label": "Selection criterion", "choices": ["AICc", "AIC", "BIC"]},
+                numeric("forecasts", "Number of forecasts", 5, integer=True),
+                numeric("conf_level", "Confidence level (%)", 95),
+                {"key": "store_fits", "label": "Storage", "boolean": True,
+                 "text": "Store fits in worksheet"},
+                {"key": "store_residuals", "label": "Storage", "boolean": True,
+                 "text": "Store residuals in worksheet"},
+                {"key": "store_forecasts", "label": "Storage", "boolean": True,
+                 "text": "Store forecasts in worksheet"},
+            ],
+            lambda settings: self.presenter.arima(settings={**settings, "search": True}),
+            "Compares candidate models at the specified differencing orders using conditional likelihood. "
+            "Choose any fitted, residual, and forecast columns to add to the worksheet.",
+        )
+
     def arima_dialog(self):
         from .arima_dialogs import ARIMADialog
         self._commit_editor()
@@ -5808,31 +5859,141 @@ class ModernWindow(QMainWindow):
             "Provide either Sample size OR Target power for TOST equivalence.",
         )
 
-    def sample_size_estimation_dialog(self):
+    def equivalence_difference_power_dialog(self, design):
+        stdev_label = {
+            "Paired": "Standard deviation of paired differences",
+            "2x2 Crossover Design": "Within-subject standard deviation",
+        }.get(design, "Standard deviation")
         self._dialog(
-            "Sample Size for Estimation",
+            "Power and Sample Size: " + design + " Equivalence",
             [],
             [
-                {"key": "parameter", "label": "Parameter", "choices": ["Mean (Normal)", "Proportion (Binomial)", "Poisson Rate"], "default": "Mean (Normal)"},
-                numeric("planning_value", "Planning value (StDev, Proportion, or Rate)", 1.0),
-                numeric("margin_of_error", "Desired margin of error", 0.2),
-                numeric("confidence", "Confidence level (0–1)", 0.95),
+                numeric("lower_limit", "Lower equivalence limit", -1),
+                numeric("upper_limit", "Upper equivalence limit", 1),
+                numeric("stdev", stdev_label, 1),
+                numeric("difference", "Expected difference", 0, optional=True),
+                numeric("sample_size", "Sample size", "", optional=True, integer=True),
+                numeric("target_power", "Target power", .8, optional=True),
+                numeric("alpha", "Significance level", .05),
+                {"key": "difference_side", "label": "Solve for difference near", "choices": ["Upper", "Lower"]},
             ],
-            lambda p: self.presenter.extended_power("estimation", **p),
-            "Computes minimum sample size to bound confidence interval half-width.",
+            lambda p: self.presenter.extended_power("equivalence_difference_power", design=design, **p),
+            "Enter two of difference, sample size, and target power. Uses two one-sided tests of a mean difference.",
+        )
+
+    def _doe_power_dialog(self, title, kind, fields, transform=None):
+        def calculate(parameters):
+            if transform is not None:
+                transform(parameters)
+            # None is meaningful for the center point solve. The Presenter drops it
+            # for legacy calculators, so the explicit flag restores it for this one.
+            if kind == "plackett_burman_power" and parameters["center_points"] is None:
+                parameters["solve_center_points"] = True
+            return self.presenter.extended_power(kind, **parameters)
+
+        self._dialog(
+            title, [],
+            fields + [
+                numeric("stdev", "Standard deviation", 1),
+                numeric("effect", "Effect or maximum difference", 1, optional=True),
+                numeric("replicates", "Replicates", "", optional=True, integer=True),
+                numeric("target_power", "Target power", .8, optional=True),
+                numeric("alpha", "Significance level", .05),
+            ],
+            calculate,
+            "Leave one of effect, replicates, or target power blank. For Plackett-Burman, "
+            "you can instead leave center points blank to solve for them.",
+        )
+
+    def general_factorial_power_dialog(self):
+        def parse(parameters):
+            parameters["levels"] = [int(v) for v in parameters["levels"].replace(",", " ").split()]
+
+        self._doe_power_dialog(
+            "Power and Sample Size: General Full Factorial Design", "general_factorial_power",
+            [
+                {"key": "levels", "label": "Levels for each factor", "default": "3 3"},
+                numeric("order", "Highest interaction order", "", optional=True, integer=True),
+                {"key": "blocked", "label": "Include blocks for replicates", "boolean": True},
+            ],
+            parse,
+        )
+
+    def plackett_burman_power_dialog(self):
+        self._doe_power_dialog(
+            "Power and Sample Size: Plackett-Burman Design", "plackett_burman_power",
+            [
+                numeric("factors", "Number of factors", 10, integer=True),
+                numeric("corner_points", "Corner points per replicate", 12, integer=True),
+                numeric("center_points", "Total center points", 0, optional=True, integer=True),
+                numeric("omitted_effects", "Main effects omitted from model", 0, integer=True),
+                {"key": "include_center_term", "label": "Include a center point term", "boolean": True,
+                 "default": True},
+            ],
+        )
+
+    def sample_size_estimation_dialog(self):
+        from .power_extended import ESTIMATION_PARAMETERS
+
+        def calculate(parameters):
+            mode = parameters.pop("mode")
+            values = parameters.pop("values").replace(",", " ").split()
+            if mode == "Estimate sample sizes":
+                parameters["margins"] = [float(value) for value in values]
+            else:
+                parameters["sample_sizes"] = [int(value) for value in values]
+            parameters["confidence"] /= 100
+            return self.presenter.extended_power("estimation_planning", **parameters)
+
+        self._dialog(
+            "Sample Size for Estimation", [],
+            [
+                {"key": "parameter", "label": "Parameter", "choices": list(ESTIMATION_PARAMETERS)},
+                numeric("planning_value", "Planning value", 1),
+                {"key": "mode", "label": "Calculate",
+                 "choices": ["Estimate sample sizes", "Estimate margins of error"]},
+                {"key": "values", "label": "Margins of error or sample sizes", "default": ".2"},
+                numeric("confidence", "Confidence level (%)", 95),
+                {"key": "interval_type", "label": "Confidence interval",
+                 "choices": ["Two-sided", "Lower bound", "Upper bound"]},
+                {"key": "known_stdev", "label": "Population standard deviation is known", "boolean": True},
+                numeric("exposure", "Length of observation (Poisson rate)", 1),
+            ],
+            calculate,
+            "Enter one or more margins of error or whole sample sizes, separated by spaces.",
         )
 
     def sample_size_tolerance_dialog(self):
+        def calculate(parameters):
+            items = parameters["values"].replace(",", " ").split()
+            if parameters["mode"] == "Calculate sample sizes":
+                inputs = {"maximum_coverages": [float(item) / 100 for item in items]}
+            else:
+                inputs = {"sample_sizes": [int(item) for item in items]}
+            return self.presenter.extended_power(
+                "tolerance_planning", coverage=parameters["coverage"] / 100,
+                confidence=parameters["confidence"] / 100,
+                excess_probability=parameters["excess_probability"],
+                interval_type=parameters["interval_type"], **inputs,
+            )
+
         self._dialog(
             "Sample Size for Tolerance Intervals",
             [],
             [
-                numeric("coverage", "Minimum % of population (0–1)", 0.95),
-                numeric("confidence", "Confidence level (0–1)", 0.95),
-                numeric("margin_ratio", "Precision margin factor (> 1)", 1.25),
+                {"key": "mode", "label": "Calculate",
+                 "choices": ["Calculate sample sizes", "Calculate maximum acceptable percentages"]},
+                numeric("coverage", "Minimum population coverage (%)", 95),
+                {"key": "values", "label": "Maximum percentages or sample sizes",
+                 "placeholder": "96 97 (percentages) or 50 100 (sample sizes)"},
+                numeric("confidence", "Confidence level (%)", 95),
+                numeric("excess_probability", "Probability that coverage exceeds the maximum", 0.05),
+                {"key": "interval_type", "label": "Tolerance interval",
+                 "choices": ["Two-sided", "Lower bound", "Upper bound"]},
             ],
-            lambda p: self.presenter.extended_power("tolerance_interval", **p),
-            "Computes minimum N for normal two-sided tolerance intervals.",
+            calculate,
+            "Enter one or more maximum percentages to find sample sizes, or enter sample sizes "
+            "to find their maximum coverage. Results include normal and nonparametric methods.",
         )
 
     def random_forest_dialog(self):
@@ -7295,6 +7456,11 @@ class ModernWindow(QMainWindow):
             ("variables_table", "Worksheet Columns"),
             ("design_table", "Design Table"),
         ]
+        if result.get("analysis") == "arima" and result.get("model_selection"):
+            from .arima_report import best_model_sections
+            for heading, headers, rows in best_model_sections(result):
+                layout.addWidget(label(heading, "sectionHeading"))
+                layout.addWidget(self._result_table(headers, rows))
         from .phase6_reports import PHASE6_REPORT_ANALYSES, sections as phase6_sections
         if result.get('analysis') in PHASE6_REPORT_ANALYSES:
             for heading, headers, rows in phase6_sections(result):

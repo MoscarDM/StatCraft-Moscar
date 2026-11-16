@@ -81,8 +81,8 @@ def find_r_executable(*, refresh=False) -> Optional[str]:
 def _discover_r_executable() -> Optional[str]:
     # 0. User configured path in QSettings
     try:
-        from PySide6.QtCore import QSettings
-        settings = QSettings("StatCraft", "StatCraft")
+        from .settings_scope import settings_for_process
+        settings = settings_for_process()
         cust = settings.value("custom_r_path")
         if cust and Path(str(cust)).is_file():
             return str(cust)

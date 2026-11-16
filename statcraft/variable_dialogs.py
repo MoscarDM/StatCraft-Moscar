@@ -23,6 +23,10 @@ _RANGE_RE = re.compile(r'^[cC]([1-9][0-9]*)\s*[-–]\s*[cC]([1-9][0-9]*)$')
 _TOKENS = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[^\s\'\"]+')
 
 
+def _column_has_data(column) -> bool:
+    return any(v is not None and (not isinstance(v, str) or v.strip() != "") for v in getattr(column, "values", ()))
+
+
 def format_variable_reference(index, worksheet):
     """Readable positional identity; the quoted label never selects by name."""
     column = worksheet.columns[index]
@@ -458,7 +462,10 @@ class ProcedureDialog(QDialog):
         self.active_key=key; self.available.clear()
         if hasattr(self, 'error'): self.error.setVisible(False)
         spec=next(s for s in self.selectors if s['key']==key)
+        any_populated = any(_column_has_data(c) for c in self.worksheet.columns)
         for i,column in enumerate(self.worksheet.columns):
+            if any_populated and not _column_has_data(column) and column.name == f"C{i + 1}":
+                continue
             if column.kind in spec.get('kinds',('number',)):
                 label=format_variable_reference(i,self.worksheet)
                 item=QListWidgetItem(label); item.setToolTip(label); item.setData(Qt.ItemDataRole.UserRole,i); self.available.addItem(item)
@@ -777,7 +784,10 @@ class ScatterDialog(QDialog):
     def activate(self,role):
         if self.active==role: return
         self.active=role; self.available.clear()
+        any_populated = any(_column_has_data(c) for c in self.worksheet.columns)
         for i,column in enumerate(self.worksheet.columns):
+            if any_populated and not _column_has_data(column) and column.name == f"C{i + 1}":
+                continue
             if column.kind=='number' or role=='group' and column.kind=='text':
                 label=format_variable_reference(i,self.worksheet); item=QListWidgetItem(label); item.setToolTip(label)
                 item.setData(Qt.ItemDataRole.UserRole,i); self.available.addItem(item)

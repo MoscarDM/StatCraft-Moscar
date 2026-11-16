@@ -39,6 +39,11 @@ def generate_arima_report(result: Dict[str, Any]) -> str:
     lines.append("=" * len(spec_str))
     lines.append("")
 
+    for heading, headers, rows in best_model_sections(result):
+        lines.extend([heading, " | ".join(headers)])
+        lines.extend(" | ".join(str(cell) for cell in row) for row in rows)
+        lines.append("")
+
     estimates = result.get("estimates", [])
     if estimates:
         lines.append("Final Estimates of Parameters")
@@ -78,3 +83,26 @@ def generate_arima_report(result: Dict[str, Any]) -> str:
         lines.append("")
 
     return "\n" + "\n".join(lines)
+
+
+
+def best_model_sections(result):
+    if not result.get("model_selection"):
+        return []
+    ranked = result["model_selection"]
+    def model_name(row):
+        model = f"({row['p']},{row['d']},{row['q']})"
+        if row["S"] > 1:
+            model += f" × ({row['P']},{row['D']},{row['Q']})[{row['S']}]"
+        return model
+    return [
+        ("Method", ["Setting", "Value"],
+         [["Criterion", result["criterion"]], ["Likelihood", result["likelihood_method"]],
+          ["Candidates excluded", result["candidate_failures"]]]),
+        ("Model Selection", ["Model", "Constant", "AICc", "AIC", "BIC"],
+         [[model_name(row), "Yes" if row["include_constant"] else "No",
+           *(f"{row[key]:.4f}" for key in ("AICc", "AIC", "BIC"))] for row in ranked]),
+        ("Residual Diagnostics", ["Lag", "ACF", "PACF", "Ljung–Box P"],
+         [[row["lag"], _fmt(row["acf"], 4), _fmt(row["pacf"], 4), _fmt(row["p_value"], 4)]
+          for row in result["residual_diagnostics"]]),
+    ]

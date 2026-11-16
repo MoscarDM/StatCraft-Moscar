@@ -165,7 +165,9 @@ class RegressionResidualChartWidget(GraphInteractionMixin, QWidget):
             sy = plot_rect.bottom() - (y_val - y_min) / (y_max - y_min) * plot_rect.height()
             return QPointF(sx, sy)
 
-        # Grid and axes
+        # Grid, reference line, and points clipped strictly to plot_rect
+        p.save()
+        p.setClipRect(plot_rect)
         p.setPen(QPen(grid_c, 0.8, Qt.PenStyle.DashLine))
         zero_x = to_screen(0.0, 0.0).x()
         if plot_rect.left() <= zero_x <= plot_rect.right():
@@ -188,8 +190,8 @@ class RegressionResidualChartWidget(GraphInteractionMixin, QWidget):
         p.setBrush(QColor("#3b82f6"))
         for x_val, y_val in zip(sorted_res, z_scores):
             pt = to_screen(x_val, y_val)
-            if plot_rect.contains(pt):
-                p.drawEllipse(pt, 3.0, 3.0)
+            p.drawEllipse(pt, 3.0, 3.0)
+        p.restore()
 
         # Axis labels
         p.setFont(QFont("Segoe UI", 7))
@@ -310,6 +312,8 @@ class RegressionResidualChartWidget(GraphInteractionMixin, QWidget):
             freq_equiv = pdf_val * len(res_arr) * bin_width
             curve_pts.append(to_screen(x_val, freq_equiv))
 
+        p.save()
+        p.setClipRect(plot_rect)
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(QColor("#dc2626"), 1.4))
         path = QPainterPath()
@@ -318,6 +322,7 @@ class RegressionResidualChartWidget(GraphInteractionMixin, QWidget):
             for pt in curve_pts[1:]:
                 path.lineTo(pt)
             p.drawPath(path)
+        p.restore()
 
         # Axis label
         p.setFont(QFont("Segoe UI", 7))

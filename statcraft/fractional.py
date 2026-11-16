@@ -12,6 +12,31 @@ import re
 from .doe import _integer, _coding
 from .model import Column, Worksheet
 
+# Published principal-fraction generators for the supported base designs.
+# https://support.minitab.com/en-us/minitab/help-and-how-to/statistical-modeling/doe/supporting-topics/factorial-and-screening-designs/design-generators-for-2-level-designs/
+_DEFAULT_PRODUCTS = {
+    3: {4: ('AB',)},
+    4: {8: ('ABC',)},
+    5: {8: ('AB', 'AC'), 16: ('ABCD',)},
+    6: {8: ('AB', 'AC', 'BC'), 16: ('ABC', 'BCD'), 32: ('ABCDE',)},
+    7: {8: ('AB', 'AC', 'BC', 'ABC'), 16: ('ABC', 'BCD', 'ACD'),
+        32: ('ABCD', 'ABDE'), 64: ('ABCDEF',)},
+    8: {16: ('BCD', 'ACD', 'ABC', 'ABD'), 32: ('ABC', 'ABD', 'BCDE'),
+        64: ('ABCD', 'ABEF'), 128: ('ABCDEFG',)},
+}
+
+
+def default_designs(factor_count):
+    """Return corner runs, unblocked resolution and generators for each base design."""
+    _integer(factor_count, 2, 8, 'Factor count')
+    designs = [(2**factor_count, None, {})]
+    for runs, products in sorted(_DEFAULT_PRODUCTS.get(factor_count, {}).items(), reverse=True):
+        base_count = factor_count - len(products)
+        generators = {chr(65 + base_count + i): product for i, product in enumerate(products)}
+        resolution = alias_structure(generators, factor_count)['resolution']
+        designs.append((runs, resolution, generators))
+    return designs
+
 
 def _term(mask,factor_count):
     return ''.join(chr(65+i) for i in range(factor_count) if mask&(1<<i)) or 'I'
