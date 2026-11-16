@@ -692,6 +692,7 @@ class ModernWindow(QMainWindow):
         self.selected_entry = None
         self._refreshing = False
         self._last_dialog_action = None
+        self._custom_dialog_state = {}
         from .micro_innovations import (
             ConditionalFormatCache,
             PinnedProceduresManager,
@@ -1303,6 +1304,7 @@ class ModernWindow(QMainWindow):
         self.save_action = self._action(file, "Save Project", self.save_document, QKeySequence.StandardKey.Save, "save")
         self._action(file, "Save Project As…", lambda: self.save_document(True), QKeySequence.StandardKey.SaveAs, "save_copy")
         self._action(file, "Save Current Worksheet As…", self.export_data, None, "export")
+        self._action(file, "Close Worksheet", self.close_worksheet)
         self._action(file, "Export All Graphs in Project…", self.export_all_graphs_dialog, None, "export")
         self._action(file, "Export Output to Modern &Tidyverse / ggplot2 (.R)…", self.export_active_r_file, None, "save")
         self._action(file, "Export Output to Pure &Base R Script (.R)…", self.export_active_base_r_file, None, "save")
@@ -1336,7 +1338,7 @@ class ModernWindow(QMainWindow):
         self.redo_action = self._action(edit, "Redo", self.redo, QKeySequence.StandardKey.Redo, "redo")
         edit.addSeparator()
         self.clear_action = self._action(edit, "Clear Cells", self.clear_cells, QKeySequence("Delete"), "erase")
-        self.delete_action = self._action(edit, "Delete Cells", self.delete_selected_rows, None, "delete")
+        self.delete_action = self._action(edit, "Delete Cells", self.delete_selected_rows, QKeySequence("Ctrl+-"), "delete")
         self.cut_action = self._action(edit, "Cut Cells", self.cut_cells, QKeySequence.StandardKey.Cut, "cut")
         self.copy_action = self._action(edit, "Copy Cells", self.copy_cells, QKeySequence.StandardKey.Copy, "copy")
         self.copy_with_headers_action = self._action(edit, "Copy with Column Names", self.copy_with_column_names, QKeySequence("Ctrl+Shift+C"), "copy")
@@ -1353,6 +1355,7 @@ class ModernWindow(QMainWindow):
         self.replace_action = self._action(edit, "Replace…", self.replace_dialog, QKeySequence("Ctrl+H"), "replace", False)
         self._action(edit, "Go To…", self.goto_dialog, QKeySequence("Ctrl+G"), "goto", False)
         self._action(edit, "Move to Active Cell", self.move_to_active_cell, QKeySequence("Ctrl+Backspace"))
+        self._action(edit, "Edit Command Line…", self.open_command_line, QKeySequence("Ctrl+L"))
         edit.addSeparator()
         self._action(edit, "Worksheet Description…", self.worksheet_description_dialog, None, "worksheet", False)
         self._action(edit, "Project Description…", self.project_description_dialog, None, "worksheet", False)
@@ -1787,6 +1790,8 @@ class ModernWindow(QMainWindow):
             if item is None: graph.addSeparator(); continue
             title, method = item
             self.graph_actions[method] = self._action(graph, title + "…", lambda checked=False, m=method: self.graph(m), None, method, True)
+        graph.addSeparator()
+        self.update_all_graphs_action = self._action(graph, "Update All Graphs", self.update_all_graphs, None, "refresh")
 
         # 8. View menu (`RT_MENU 8445`: Navigator, Command Line/History, Data and Output, Data Only, Output Only, Zoom)
         view = bar.addMenu("&View")
@@ -1802,7 +1807,6 @@ class ModernWindow(QMainWindow):
         self.view_cmd_action.setShortcut(QKeySequence("Ctrl+M"))
         self.view_cmd_action.triggered.connect(self.toggle_command_line)
         view.addAction(self.view_cmd_action)
-        self._action(view, "Edit Command Line…", self.open_command_line, QKeySequence("Ctrl+L"))
         self.view_formula_bar_action = QAction("Formula Bar", self, checkable=True, checked=False)
         self.view_formula_bar_action.triggered.connect(lambda checked: self.formula_bar.setVisible(bool(checked)))
         view.addAction(self.view_formula_bar_action)
@@ -1828,7 +1832,6 @@ class ModernWindow(QMainWindow):
         self._action(zoom_menu, "Specify…", self.specify_zoom)
         for percent in (50,75,150,200):
             self._action(zoom_menu,str(percent)+"%",lambda checked=False,p=percent:self.set_zoom(p))
-        view.addSeparator()
         view.addSeparator()
         self._action(view,"Show ReportPad",lambda:self._workspace.show_pad())
         self._action(view, "Next Output Tab", self.next_output_tab, QKeySequence("Ctrl+Tab"))
@@ -1858,9 +1861,15 @@ class ModernWindow(QMainWindow):
         self._action(assistant, "&Compare Two Analyses (Model Diff)…", self.compare_runs_dialog, None, None, True)
         self._action(assistant, "&Monte Carlo Process Simulation…", self.monte_carlo_dialog, None, "chart", True)
 
-        # 10. Help menu (Always final menu on desktop menubar)
+        # 10. Tools & Help menus (Always final menu on desktop menubar)
+        tools_menu = bar.addMenu("&Tools")
+        self._action(tools_menu, "&Options…", self.options_dialog)
+        self._action(tools_menu, "Manage &Profiles…", self.manage_profiles_dialog)
+        self._action(tools_menu, "&Customize…", self.customize_dialog)
+
         help_menu = bar.addMenu("&Help")
         self.help_action = self._action(help_menu, "Help", self.context_help, QKeySequence.StandardKey.HelpContents, "help")
+        self._action(help_menu, "&Keyboard Map…", self.keyboard_map_dialog)
         self._action(help_menu, "&Interactive Quick Tour…", self.open_guided_tour, None, "workflow")
         help_menu.addSeparator()
         self._action(help_menu, "Verify &Air-Gapped & Offline Integrity…", self.verify_airgap_dialog, None, "shield")
@@ -2436,6 +2445,14 @@ class ModernWindow(QMainWindow):
         if hasattr(self,"_workspace"):
             self._workspace.sync_document()
             if not self._workspace.busy:self._workspace.rebuild()
+        if (
+            self.selected_entry is None
+            and self.presenter.worksheet.row_count > 0
+            and hasattr(self, "result_tabs")
+            and self.result_tabs.count() == 1
+            and isinstance(self.result_tabs.widget(0), WelcomeWatermarkWidget)
+        ):
+            self._show_welcome()
         self._refreshing = True
         sheet = self.presenter.worksheet
         prev_sheet_id = getattr(self, "_last_sheet_id", None)
@@ -2956,6 +2973,26 @@ class ModernWindow(QMainWindow):
         name, accepted = QInputDialog.getText(self, 'Duplicate Worksheet', 'Name:', text=self.presenter.worksheet.name + ' Copy')
         if accepted: self._call(lambda: self.presenter.duplicate_worksheet(name))
 
+    def close_worksheet(self):
+        self._commit_editor()
+        project = self.presenter.native_project
+        if project is not None and len(project.worksheets) >= 2:
+            self.delete_worksheet()
+            return
+        if self.presenter.dirty:
+            answer = QMessageBox.question(
+                self,
+                "Close Worksheet",
+                f"Clear and close '{self.presenter.worksheet.name}'? Unsaved worksheet data will be lost.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self.page = 0
+        self._call(self.presenter.new_worksheet if hasattr(self.presenter, "new_worksheet") else self.presenter.add_worksheet)
+        self.refresh()
+
     def delete_worksheet(self):
         self._commit_editor()
         project = self.presenter.native_project
@@ -3059,12 +3096,25 @@ class ModernWindow(QMainWindow):
 
     def cut_cells(self):
         focused = QApplication.focusWidget()
-        if isinstance(focused, (QLineEdit, QPlainTextEdit)) and not self.table.isAncestorOf(focused):
+        if isinstance(focused, (QLineEdit, QPlainTextEdit, QTextEdit)) and not self.table.isAncestorOf(focused) and not self.column_names.isAncestorOf(focused):
             focused.cut(); return
+        if self.column_names.hasFocus() or (focused is not None and self.column_names.isAncestorOf(focused)):
+            self._commit_editor()
+            selected = self.column_names.selectedRanges()
+            if len(selected) == 1:
+                area = selected[0]
+                left_c, right_c = area.leftColumn(), area.rightColumn()
+                QApplication.clipboard().setText("\t".join(self.column_names.item(0, c).text() for c in range(left_c, right_c + 1)))
+                self._call(lambda: self.presenter.rename_columns(left_c, [""] * (right_c - left_c + 1)))
+            return
         self._commit_editor()
         self._call(lambda: QApplication.clipboard().setText(self.presenter.cut_block(*self._range())))
 
     def select_all_dataset(self):
+        focused = QApplication.focusWidget()
+        if isinstance(focused, (QLineEdit, QPlainTextEdit, QTextEdit)) and not self.table.isAncestorOf(focused) and not self.column_names.isAncestorOf(focused):
+            focused.selectAll()
+            return
         self._commit_editor()
         num_cols = len(self.presenter.worksheet.columns)
         self._selected_columns = set(range(num_cols))
@@ -4047,6 +4097,12 @@ class ModernWindow(QMainWindow):
             self.refresh()
             if new_idx is not None:
                 self.table.setCurrentCell(0, new_idx)
+                item = self.table.item(0, new_idx)
+                if item is not None:
+                    self.table.scrollToItem(item)
+                name_item = self.column_names.item(0, new_idx)
+                if name_item is not None:
+                    self.column_names.scrollToItem(name_item)
                 self.statusBar().showMessage(f"Duplicated column C{c+1} -> C{new_idx+1}", 4000)
 
     def next_output_tab(self):
@@ -4323,14 +4379,52 @@ class ModernWindow(QMainWindow):
 
     def rename_column(self, col_index=None):
         index = self._current_column() if col_index is None else int(col_index)
+        if 0 <= index < self.column_names.columnCount():
+            item = self.column_names.item(0, index)
+            if item is not None:
+                self.column_names.setFocus()
+                self.column_names.setCurrentCell(0, index)
+                self.column_names.scrollToItem(item)
+                self.column_names.editItem(item)
+                return
         old = self.presenter.worksheet.columns[index].name
-        name, accepted = QInputDialog.getText(self, "Rename column", "Name", text=old)
+        name, accepted = QInputDialog.getText(self, "Rename Column", "Name:", text=old)
         if accepted: self._call(lambda: self.presenter.rename_column(index, name))
 
     def change_type(self):
-        index = self._current_column(); types = ["number", "text", "date"]
-        kind, accepted = QInputDialog.getItem(self, "Change column type", "All existing values must convert successfully.", types, types.index(self.presenter.worksheet.columns[index].kind), False)
-        if accepted: self._call(lambda: self.presenter.set_column_type(index, kind))
+        self._commit_editor()
+        index = self._current_column()
+        col = self.presenter.worksheet.columns[index]
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Change Data Type")
+        dlg.setMinimumWidth(360)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel(f"Column: C{index + 1} ({col.name})"))
+        type_combo = QComboBox()
+        for label, code in (("Numeric", "number"), ("Text", "text"), ("Date/Time", "date")):
+            type_combo.addItem(label, code)
+        cur_idx = type_combo.findData(col.kind)
+        if cur_idx >= 0:
+            type_combo.setCurrentIndex(cur_idx)
+        form = QFormLayout()
+        form.addRow("Target Data Type:", type_combo)
+        layout.addLayout(form)
+        note = QLabel("All existing non-missing values must convert to the target type.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #64748b; font-size: 8.5pt;")
+        layout.addWidget(note)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+            | QDialogButtonBox.StandardButton.Help
+        )
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        buttons.helpRequested.connect(lambda: self.context_help("Change Data Type"))
+        layout.addWidget(buttons)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            kind = type_combo.currentData()
+            self._call(lambda: self.presenter.set_column_type(index, kind))
 
     def stored_constants(self):
         from .modern_stored_data import ConstantsDialog
@@ -5131,7 +5225,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.imr_dialog
         dlg = IMRChartDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("imr_dialog", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("imr_dialog", dlg)
             p = dlg.selected_params
             if p:
                 entry = self._call(lambda: self.presenter.imr_chart(settings=p), result=True)
@@ -6548,7 +6644,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.capability
         dlg = CapabilityDialog(self.presenter.worksheet, self, analysis_mode="normal")
+        self._restore_custom_dialog_state("capability_normal", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("capability_normal", dlg)
             p = dlg.selected_params
             if p:
                 entry = self._call(lambda: self.presenter.normal_capability(settings=p), result=True)
@@ -7267,16 +7365,28 @@ class ModernWindow(QMainWindow):
         self.result_tabs.tabBar().setVisible(False)
         if hasattr(self, "tab_corner_widget"):
             self.tab_corner_widget.setVisible(False)
-        welcome = WelcomeWatermarkWidget(
-            self.open_document,
-            self.new_document,
-            self.new_worksheet,
-            on_try_connect=self.load_connect_sample,
-            on_overview=self.show_connect_overview,
-            on_sample_library=self.open_sample_library,
-            on_guided_tour=self.open_guided_tour,
-        )
-        self.result_tabs.addTab(welcome, "Session")
+        if self.presenter.worksheet.row_count > 0:
+            empty_session = QWidget()
+            empty_layout = QVBoxLayout(empty_session)
+            empty_layout.setContentsMargins(24, 24, 24, 24)
+            hint = QLabel("Session Output\n\nRun an analysis from Stat, Graph, or Calc to display results here.")
+            hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            hint.setStyleSheet("color: #64748b; font-size: 10pt;")
+            empty_layout.addStretch(1)
+            empty_layout.addWidget(hint)
+            empty_layout.addStretch(1)
+            self.result_tabs.addTab(empty_session, "Session")
+        else:
+            welcome = WelcomeWatermarkWidget(
+                self.open_document,
+                self.new_document,
+                self.new_worksheet,
+                on_try_connect=self.load_connect_sample,
+                on_overview=self.show_connect_overview,
+                on_sample_library=self.open_sample_library,
+                on_guided_tour=self.open_guided_tour,
+            )
+            self.result_tabs.addTab(welcome, "Session")
         if hasattr(self,"_workspace"):self._workspace.rebuild()
         self.result_title.setText("Session output")
         self.result_state.setText("")
@@ -8615,19 +8725,35 @@ class ModernWindow(QMainWindow):
         hl_sub.addAction("Greater Than...", lambda: self.conditional_formatting_dialog("greater_than", "Greater Than"))
         hl_sub.addAction("Less Than...", lambda: self.conditional_formatting_dialog("less_than", "Less Than"))
         hl_sub.addAction("Between...", lambda: self.conditional_formatting_dialog("between", "Between"))
+        hl_sub.addAction("Not Between...", lambda: self.conditional_formatting_dialog("not_between", "Not Between"))
         hl_sub.addAction("Equal To...", lambda: self.conditional_formatting_dialog("equal_to", "Equal To"))
+        hl_sub.addAction("Not Equal To...", lambda: self.conditional_formatting_dialog("not_equal_to", "Not Equal To"))
         hl_sub.addAction("Text that Contains...", lambda: self.conditional_formatting_dialog("contains", "Text that Contains"))
         hi_lo_sub = cond_sub.addMenu("High/Low")
         hi_lo_sub.addAction("Highest Values...", lambda: self.conditional_formatting_dialog("highest", "Highest Values (Count)"))
         hi_lo_sub.addAction("Lowest Values...", lambda: self.conditional_formatting_dialog("lowest", "Lowest Values (Count)"))
         hi_lo_sub.addAction("Top %...", lambda: self.conditional_formatting_dialog("top_percent", "Top Percentage"))
         hi_lo_sub.addAction("Bottom %...", lambda: self.conditional_formatting_dialog("bottom_percent", "Bottom Percentage"))
+        hi_lo_sub.addSeparator()
+        hi_lo_sub.addAction("Most Frequent Values...", lambda: self.conditional_formatting_dialog("most_frequent", "Most Frequent Values (Count)"))
+        hi_lo_sub.addAction("Least Frequent Values...", lambda: self.conditional_formatting_dialog("least_frequent", "Least Frequent Values (Count)"))
+        hi_lo_sub.addAction("Most Frequent %...", lambda: self.conditional_formatting_dialog("most_frequent_percent", "Most Frequent (%)"))
+        hi_lo_sub.addAction("Least Frequent %...", lambda: self.conditional_formatting_dialog("least_frequent_percent", "Least Frequent (%)"))
         stat_sub = cond_sub.addMenu("Statistical")
         stat_sub.addAction("Outlier...", lambda: self._call(lambda: self.presenter.apply_conditional_formatting(cur_col, "outlier", color="#f8d7da")))
         stat_sub.addAction("Outside ±3 StDev (3σ)...", lambda: self._call(lambda: self.presenter.apply_conditional_formatting(cur_col, "outside_3sigma", color="#f8d7da")))
         stat_sub.addAction("Outside Spec Limits (LSL/USL)...", lambda: self.conditional_formatting_dialog("outside_specs", "Outside Spec Limits"))
         stat_sub.addAction("Above Mean", lambda: self._call(lambda: self.presenter.apply_conditional_formatting(cur_col, "above_mean", color="#d4edda")))
         stat_sub.addAction("Below Mean", lambda: self._call(lambda: self.presenter.apply_conditional_formatting(cur_col, "below_mean", color="#fff3cd")))
+        stat_sub.addSeparator()
+        stat_sub.addAction("Large Residuals", lambda: self._call(lambda: self.presenter.apply_conditional_formatting(cur_col, "large_residuals", color="#f8d7da")))
+        stat_sub.addAction("Unusual X", lambda: self._call(lambda: self.presenter.apply_conditional_formatting(cur_col, "unusual_x", color="#fff3cd")))
+        quick_sub = cond_sub.addMenu("Quick Highlight")
+        quick_sub.addAction("Color Selected Red", lambda: self._call(lambda: self.presenter.set_cell_highlight(sel_r_range, sel_c_range, "#f8d7da")))
+        quick_sub.addAction("Color Selected Green", lambda: self._call(lambda: self.presenter.set_cell_highlight(sel_r_range, sel_c_range, "#d4edda")))
+        quick_sub.addAction("Color Selected Yellow", lambda: self._call(lambda: self.presenter.set_cell_highlight(sel_r_range, sel_c_range, "#fff3cd")))
+        quick_sub.addSeparator()
+        quick_sub.addAction("Clear Cell Formats", lambda: self._call(lambda: self.presenter.clear_cell_formats(sel_r_range, sel_c_range)))
         clear_rules_sub = cond_sub.addMenu("Clear Rules")
         clear_rules_sub.addAction("Clear Rules from Selected Columns", lambda: self._call(lambda: self.presenter.clear_conditional_formatting(sel_c_range)))
         clear_rules_sub.addAction("Clear Rules from Entire Worksheet", lambda: self._call(lambda: self.presenter.clear_conditional_formatting(None)))
@@ -10285,11 +10411,17 @@ class ModernWindow(QMainWindow):
             ("Lowest N Values", "lowest"),
             ("Top %", "top_percent"),
             ("Bottom %", "bottom_percent"),
+            ("Most Frequent (Count)", "most_frequent"),
+            ("Least Frequent (Count)", "least_frequent"),
+            ("Most Frequent (%)", "most_frequent_percent"),
+            ("Least Frequent (%)", "least_frequent_percent"),
             ("Outside Spec Limits (LSL/USL)", "outside_specs"),
             ("Outside ±3 StDev (3σ)", "outside_3sigma"),
             ("Above Mean", "above_mean"),
             ("Below Mean", "below_mean"),
             ("Statistical Outlier", "outlier"),
+            ("Large Residuals", "large_residuals"),
+            ("Unusual X", "unusual_x"),
             ("Missing Values", "missing"),
         ]
         resolved_title = title or next((lbl for lbl, code in rule_catalog if code == rule_type), "Column Rule")
@@ -10314,19 +10446,19 @@ class ModernWindow(QMainWindow):
 
         def _sync_fields():
             rtype = rule_type or rule_combo.currentData()
-            no_param = rtype in ("missing", "outlier", "outside_3sigma", "above_mean", "below_mean")
-            two_param = rtype in ("between", "outside_specs")
+            no_param = rtype in ("missing", "outlier", "outside_3sigma", "above_mean", "below_mean", "large_residuals", "unusual_x")
+            two_param = rtype in ("between", "not_between", "outside_specs")
             p1_label.setVisible(not no_param)
             p1_edit.setVisible(not no_param)
             p2_label.setVisible(two_param)
             p2_edit.setVisible(two_param)
-            if rtype == "between":
+            if rtype in ("between", "not_between"):
                 p1_label.setText("Minimum:"); p2_label.setText("Maximum:")
             elif rtype == "outside_specs":
                 p1_label.setText("Lower Spec (LSL):"); p2_label.setText("Upper Spec (USL):")
-            elif rtype in ("top_percent", "bottom_percent"):
+            elif rtype in ("top_percent", "bottom_percent", "most_frequent_percent", "least_frequent_percent"):
                 p1_label.setText("Percent (%):"); p1_edit.setText("10")
-            elif rtype in ("highest", "lowest"):
+            elif rtype in ("highest", "lowest", "most_frequent", "least_frequent"):
                 p1_label.setText("Count (N):"); p1_edit.setText("3")
             else:
                 p1_label.setText("Value:")
@@ -11238,6 +11370,167 @@ class ModernWindow(QMainWindow):
         if chart is not None and hasattr(chart, "brushed_rows"):
             chart.brushed_rows = set(row_numbers)
             chart.update()
+
+    def _restore_custom_dialog_state(self, key: str, dlg):
+        state = self._custom_dialog_state.get(key)
+        if not state:
+            return
+        if hasattr(dlg, "set_state") and callable(dlg.set_state):
+            dlg.set_state(state)
+        elif hasattr(dlg, "selected_params") and isinstance(state, dict):
+            dlg.selected_params = dict(state)
+
+    def _save_custom_dialog_state(self, key: str, dlg):
+        if hasattr(dlg, "get_state") and callable(dlg.get_state):
+            self._custom_dialog_state[key] = dlg.get_state()
+        elif getattr(dlg, "selected_params", None):
+            self._custom_dialog_state[key] = dict(dlg.selected_params)
+
+    def update_all_graphs(self):
+        self._commit_editor()
+        entries = list(getattr(self.presenter, "history", []) or [])
+        updated = 0
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            has_graph = bool(entry.get("plots") or entry.get("chart") or entry.get("figures") or entry.get("graph_only"))
+            if not has_graph:
+                continue
+            if self.presenter.result_stale(entry) is True:
+                rerun = entry.get("_rerun_action")
+                if callable(rerun):
+                    rerun()
+                    updated += 1
+        self.refresh()
+        self.statusBar().showMessage(
+            f"Updated {updated} outdated graph(s) with current worksheet data" if updated else "All graphs are already up to date",
+            4000,
+        )
+        return updated
+
+    def keyboard_map_dialog(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Keyboard Map")
+        dlg.resize(620, 460)
+        layout = QVBoxLayout(dlg)
+        search = QLineEdit()
+        search.setPlaceholderText("Filter commands or shortcuts...")
+        layout.addWidget(search)
+        table = QTableWidget(0, 2)
+        table.setHorizontalHeaderLabels(["Command", "Shortcut"])
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        rows = []
+        seen = set()
+        for act in self.findChildren(QAction):
+            sc = act.shortcut().toString()
+            txt = act.text().replace("&", "").strip()
+            if sc and txt and (txt, sc) not in seen:
+                seen.add((txt, sc))
+                rows.append((txt, sc))
+        rows.extend([
+            ("Move to First / Last Column", "Home / End"),
+            ("Edit Active Cell", "F2"),
+            ("Repeat Last Action / Edit Last Dialog", "F4 / Ctrl+E"),
+            ("Toggle Entry Direction (Down / Right)", "Ctrl+D"),
+            ("Open Command Line Editor", "Ctrl+L"),
+            ("Show/Hide Command Line/History", "Ctrl+M"),
+        ])
+        def _populate(query=""):
+            q = query.strip().casefold()
+            filtered = [(c, s) for c, s in rows if not q or q in c.casefold() or q in s.casefold()]
+            table.setRowCount(len(filtered))
+            for idx, (cmd, sc) in enumerate(filtered):
+                table.setItem(idx, 0, QTableWidgetItem(cmd))
+                table.setItem(idx, 1, QTableWidgetItem(sc))
+        _populate()
+        search.textChanged.connect(_populate)
+        layout.addWidget(table)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dlg.reject)
+        buttons.clicked.connect(dlg.accept)
+        layout.addWidget(buttons)
+        dlg.exec()
+
+    def options_dialog(self):
+        settings = QSettings("StatCraft", "Desktop")
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Options")
+        dlg.setMinimumWidth(420)
+        layout = QVBoxLayout(dlg)
+        form = QFormLayout()
+        conf_spin = QDoubleSpinBox()
+        conf_spin.setRange(50.0, 99.99)
+        conf_spin.setDecimals(2)
+        conf_spin.setSuffix(" %")
+        conf_spin.setValue(float(settings.value("options/default_confidence", 95.0)))
+        dir_combo = QComboBox()
+        dir_combo.addItem("Down (Column-wise)", "down")
+        dir_combo.addItem("Right (Row-wise)", "right")
+        cur_dir = getattr(self, "_entry_direction", "down")
+        dir_combo.setCurrentIndex(0 if cur_dir == "down" else 1)
+        auto_formula_chk = QCheckBox("Calculate all worksheet formulas automatically")
+        auto_formula_chk.setChecked(bool(getattr(self.presenter, "auto_calculate_formulas", True)))
+        form.addRow("Default Confidence Level:", conf_spin)
+        form.addRow("Worksheet Entry Direction:", dir_combo)
+        layout.addLayout(form)
+        layout.addWidget(auto_formula_chk)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            settings.setValue("options/default_confidence", conf_spin.value())
+            chosen_dir = dir_combo.currentData()
+            if chosen_dir != getattr(self, "_entry_direction", "down"):
+                self.toggle_entry_direction()
+            if auto_formula_chk.isChecked() != getattr(self.presenter, "auto_calculate_formulas", True):
+                self._call(lambda: self.presenter.set_automatic_formulas(auto_formula_chk.isChecked()))
+
+    def manage_profiles_dialog(self):
+        settings = QSettings("StatCraft", "Desktop")
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Manage Profiles")
+        dlg.setMinimumWidth(380)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel("Active Profile: Default (Minitab 22 Parity)"))
+        reset_btn = QPushButton("Reset All Preferences to Minitab Defaults")
+        def _reset():
+            settings.clear()
+            self.statusBar().showMessage("Preferences reset to Minitab defaults", 4000)
+            dlg.accept()
+        reset_btn.clicked.connect(_reset)
+        layout.addWidget(reset_btn)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dlg.reject)
+        buttons.clicked.connect(dlg.accept)
+        layout.addWidget(buttons)
+        dlg.exec()
+
+    def customize_dialog(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Customize")
+        dlg.setMinimumWidth(380)
+        layout = QVBoxLayout(dlg)
+        tb_chk = QCheckBox("Show Main Toolbar")
+        tb_visible = any(tb.isVisible() for tb in self.findChildren(QToolBar))
+        tb_chk.setChecked(tb_visible)
+        fb_chk = QCheckBox("Show Formula Bar")
+        fb_chk.setChecked(bool(hasattr(self, "formula_bar") and self.formula_bar.isVisible()))
+        layout.addWidget(tb_chk)
+        layout.addWidget(fb_chk)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            for tb in self.findChildren(QToolBar):
+                tb.setVisible(tb_chk.isChecked())
+            if hasattr(self, "formula_bar"):
+                self.formula_bar.setVisible(fb_chk.isChecked())
+            if hasattr(self, "view_formula_bar_action"):
+                self.view_formula_bar_action.setChecked(fb_chk.isChecked())
 
 def main():
     sandbox_mode = "--sandbox" in sys.argv

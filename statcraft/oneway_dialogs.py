@@ -35,11 +35,26 @@ from .oneway import oneway_settings
 from .variable_dialogs import format_variable_reference, resolve_variables
 
 
-def _footer(dialog: QDialog, layout: QVBoxLayout, callback) -> QDialogButtonBox:
+def _show_subdialog_help(dialog: QDialog, title: str, text: str) -> None:
+    target = dialog.parent()
+    while target is not None and not hasattr(target, "context_help"):
+        target = target.parent() if callable(getattr(target, "parent", None)) else None
+    if target is not None and hasattr(target, "context_help"):
+        target.context_help(title)
+        return
+    QMessageBox.information(dialog, title, text)
+
+
+def _footer(dialog: QDialog, layout: QVBoxLayout, callback, help_title: str = "One-Way ANOVA Help") -> QDialogButtonBox:
     dialog.setSizeGripEnabled(True)
-    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok
+        | QDialogButtonBox.StandardButton.Cancel
+        | QDialogButtonBox.StandardButton.Help
+    )
     buttons.accepted.connect(callback)
     buttons.rejected.connect(dialog.reject)
+    buttons.helpRequested.connect(lambda: _show_subdialog_help(dialog, dialog.windowTitle() or help_title, "Configure options and click OK to apply."))
     layout.addWidget(buttons)
     return buttons
 

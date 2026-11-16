@@ -12,6 +12,7 @@ alone and render this module's overlay above the independent manual mapping.
 """
 import math
 import re
+from collections import Counter
 
 
 RULE_TYPES = frozenset((
@@ -19,6 +20,9 @@ RULE_TYPES = frozenset((
     "between", "not_between", "contains", "highest", "lowest", "outlier",
     "above_mean", "below_mean", "outside_3sigma", "outside_specs",
     "top_percent", "bottom_percent",
+    "most_frequent", "least_frequent",
+    "most_frequent_percent", "least_frequent_percent",
+    "large_residuals", "unusual_x",
 ))
 _FIELDS = frozenset(("type", "param1", "param2", "color"))
 
@@ -53,12 +57,12 @@ def validate_rule(rule):
             first, second = min(first, second), max(first, second)
         else:
             second = None
-    elif kind in ("highest", "lowest"):
+    elif kind in ("highest", "lowest", "most_frequent", "least_frequent"):
         first = _number(3 if first is None else first, "Count")
         if first < 1 or not first.is_integer():
             raise ValueError("Count must be a positive whole number.")
         first, second = int(first), None
-    elif kind in ("top_percent", "bottom_percent"):
+    elif kind in ("top_percent", "bottom_percent", "most_frequent_percent", "least_frequent_percent"):
         first = _number(10 if first is None else first, "Percent")
         if not 0 < first <= 100:
             raise ValueError("Percent must be between 0 (exclusive) and 100.")
@@ -113,21 +117,39 @@ def effective_highlights(column, row_count=None, rules=None):
                      if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value))
     col_mean = sum(ordered) / len(ordered) if ordered else None
     sigma_fences = None
+    col_stdev = None
     if len(ordered) >= 2 and col_mean is not None:
         s = math.sqrt(sum((v - col_mean) ** 2 for v in ordered) / (len(ordered) - 1))
         if s > 0:
+            col_stdev = s
             sigma_fences = (col_mean - 3.0 * s, col_mean + 3.0 * s)
+
+    freq_counts = Counter(
+        v for v in column.values
+        if v is not None and not (column.kind == "text" and v == "")
+    )
+    large_residual_rows = {int(r) for r in column.metadata.get("large_residual_rows", ()) if isinstance(r, int) or str(r).isdigit()}
+    unusual_x_rows = {int(r) for r in column.metadata.get("unusual_x_rows", ()) if isinstance(r, int) or str(r).isdigit()}
 
     result = {}
     for rule in checked:
         kind, first, second = rule["type"], rule["param1"], rule["param2"]
         cutoff = None
+        freq_targets = None
         if kind in ("highest", "lowest") and ordered:
             position = min(first, len(ordered))
             cutoff = ordered[-position] if kind == "highest" else ordered[position - 1]
         elif kind in ("top_percent", "bottom_percent") and ordered:
             position = max(1, int((first / 100.0) * len(ordered)))
             cutoff = ordered[-position] if kind == "top_percent" else ordered[position - 1]
+        elif kind in ("most_frequent", "least_frequent", "most_frequent_percent", "least_frequent_percent") and freq_counts:
+            descending = kind.startswith("most_frequent")
+            ranked = sorted(freq_counts.items(), key=lambda kv: (-kv[1] if descending else kv[1], str(kv[0])))
+            if kind.endswith("_percent"):
+                take = max(1, math.ceil((first / 100.0) * len(ranked)))
+            else:
+                take = min(first, len(ranked))
+            freq_targets = {val for val, _ in ranked[:take]}
         fences = None
         if kind == "outlier" and len(ordered) >= 4:
             q1, q3 = ordered[len(ordered) // 4], ordered[(3 * len(ordered)) // 4]
@@ -169,6 +191,18 @@ def effective_highlights(column, row_count=None, rules=None):
                     match = value < sigma_fences[0] or value > sigma_fences[1]
                 elif kind == "outside_specs" and number:
                     match = (first is not None and value < first) or (second is not None and value > second)
+                elif freq_targets is not None:
+                    match = value in freq_targets
+                elif kind == "large_residuals":
+                    if large_residual_rows:
+                        match = row in large_residual_rows
+                    elif number and col_mean is not None and col_stdev is not None:
+                        match = abs((value - col_mean) / col_stdev) > 2.0
+                elif kind == "unusual_x":
+                    if unusual_x_rows:
+                        match = row in unusual_x_rows
+                    elif number and col_mean is not None and col_stdev is not None:
+                        match = abs((value - col_mean) / col_stdev) > 2.5
             if match:
                 result[str(row)] = rule["color"]
     return result

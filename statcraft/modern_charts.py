@@ -1082,18 +1082,16 @@ class ChartWidget(GraphInteractionMixin,QWidget):
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event):
-        if self._has_3d_panel():
-            steps = event.angleDelta().y() / 120.0
-            if steps:
-                self.zoom_cad_view(steps)
+        steps = event.angleDelta().y() / 120.0
+        if self._has_3d_panel() and steps:
+            self.zoom_cad_view(steps)
+            event.accept()
+            return
+        if (event.modifiers() & Qt.KeyboardModifier.ControlModifier) and self._has_2d_zoomable_panel() and steps:
+            if self._apply_2d_wheel_zoom(event.position(), steps):
                 event.accept()
                 return
-        elif self._has_2d_zoomable_panel() and not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
-            steps = event.angleDelta().y() / 120.0
-            if steps and self._apply_2d_wheel_zoom(event.position(), steps):
-                event.accept()
-                return
-        super().wheelEvent(event)
+        event.ignore()
 
     def contextMenuEvent(self, event):
         if self._has_3d_panel():

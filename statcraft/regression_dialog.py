@@ -7,9 +7,30 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
-    QPushButton, QDialogButtonBox, QComboBox, QCheckBox, QDoubleSpinBox
+    QPushButton, QDialogButtonBox, QComboBox, QCheckBox, QDoubleSpinBox, QMessageBox
 )
 from .variable_dialogs import ProcedureDialog, format_variable_reference, format_variable_list
+
+
+def _subdialog_footer(dialog: QDialog, layout: QVBoxLayout, callback, help_title: str = "Regression Help") -> QDialogButtonBox:
+    footer = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok
+        | QDialogButtonBox.StandardButton.Cancel
+        | QDialogButtonBox.StandardButton.Help
+    )
+    footer.accepted.connect(callback)
+    footer.rejected.connect(dialog.reject)
+    def _on_help():
+        target = dialog.parent()
+        while target is not None and not hasattr(target, "context_help"):
+            target = target.parent() if callable(getattr(target, "parent", None)) else None
+        if target is not None and hasattr(target, "context_help"):
+            target.context_help(dialog.windowTitle() or help_title)
+        else:
+            QMessageBox.information(dialog, dialog.windowTitle() or help_title, "Configure regression options and click OK to apply.")
+    footer.helpRequested.connect(_on_help)
+    layout.addWidget(footer)
+    return footer
 
 
 def default_regression_options() -> dict[str, Any]:
@@ -52,10 +73,7 @@ class RegressionOptionsDialog(QDialog):
         layout.addWidget(self.spin_conf)
 
         layout.addStretch()
-        footer = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        footer.accepted.connect(self.validate)
-        footer.rejected.connect(self.reject)
-        layout.addWidget(footer)
+        _subdialog_footer(self, layout, self.validate, "Regression: Options")
 
     def validate(self):
         self.options["confidence"] = self.spin_conf.value() / 100.0
@@ -98,10 +116,7 @@ class RegressionGraphsDialog(QDialog):
         layout.addWidget(note)
 
         layout.addStretch()
-        footer = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        footer.accepted.connect(self.validate)
-        footer.rejected.connect(self.reject)
-        layout.addWidget(footer)
+        _subdialog_footer(self, layout, self.validate, "Regression: Options")
 
     def validate(self):
         self.options["graphs"] = self.combo_graphs.currentData()
@@ -139,10 +154,7 @@ class RegressionResultsDialog(QDialog):
         layout.addWidget(self.chk_unusual)
 
         layout.addStretch()
-        footer = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        footer.accepted.connect(self.validate)
-        footer.rejected.connect(self.reject)
-        layout.addWidget(footer)
+        _subdialog_footer(self, layout, self.validate, "Regression: Options")
 
     def validate(self):
         self.options["results"] = {
@@ -185,10 +197,7 @@ class RegressionStorageDialog(QDialog):
         layout.addWidget(self.chk_leverages)
 
         layout.addStretch()
-        footer = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        footer.accepted.connect(self.validate)
-        footer.rejected.connect(self.reject)
-        layout.addWidget(footer)
+        _subdialog_footer(self, layout, self.validate, "Regression: Options")
 
     def validate(self):
         self.options["storage"] = {
@@ -255,10 +264,7 @@ class RegressionModelTermsDialog(QDialog):
         preset_row.addStretch(1)
         layout.addLayout(preset_row)
 
-        footer = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        footer.accepted.connect(self.accept)
-        footer.rejected.connect(self.reject)
-        layout.addWidget(footer)
+        _subdialog_footer(self, layout, self.accept, "Regression: Model")
 
     def _apply_preset(self, preset: str):
         for pair, chk in self.term_checks.items():

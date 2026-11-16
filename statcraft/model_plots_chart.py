@@ -386,7 +386,7 @@ def _draw_interaction(chart, p, area, panel):
         if cell.width() <= 40 or cell.height() <= 24:
             continue
 
-        legend_w = min(105.0, max(72.0, cell.width() * 0.27))
+        legend_w = min(90.0, max(64.0, cell.width() * 0.18))
         hdr = QRectF(cell.left(), cell.top(), cell.width() - legend_w - 4.0, 20.0)
         p.fillRect(hdr, QColor('#eef3f7'))
         p.setBrush(Qt.BrushStyle.NoBrush)
@@ -601,7 +601,7 @@ def _draw_contour(chart, p, area, panel):
     panel['max_pt'] = max_pt
     panel['min_pt'] = min_pt
 
-    legend_w = min(165.0, max(125.0, area.width() * 0.25))
+    legend_w = min(115.0, max(80.0, area.width() * 0.17))
     plot = QRectF(
         area.left() + 62.0,
         area.top() + 28.0,
@@ -1220,7 +1220,7 @@ def _draw_surface(chart, p, area, panel):
     panel['max_pt'] = max_pt
     panel['min_pt'] = min_pt
 
-    legend_w = min(160.0, max(120.0, area.width() * 0.24))
+    legend_w = min(110.0, max(76.0, area.width() * 0.16))
     cube_rect = QRectF(
         area.left() + 44.0,
         area.top() + 46.0,
