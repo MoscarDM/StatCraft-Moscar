@@ -23,8 +23,40 @@ RULE_TYPES = frozenset((
     "most_frequent", "least_frequent",
     "most_frequent_percent", "least_frequent_percent",
     "large_residuals", "unusual_x",
+    "out_of_control", "in_list", "not_in_list",
+    "date_before", "date_after", "date_between",
 ))
 _FIELDS = frozenset(("type", "param1", "param2", "color"))
+
+
+def _date_serial(value, label):
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise ValueError(f"{label} must be a valid date or date serial.")
+    if isinstance(value, (int, float)):
+        return _number(value, label)
+    text = value.strip()
+    if not text:
+        raise ValueError(f"{label} must be a valid date.")
+    try:
+        return _number(text, label)
+    except ValueError:
+        from .app import Presenter
+        parsed = Presenter.parse_cell(text, "date")
+        if parsed is None:
+            raise ValueError(f"{label} must be a valid date (e.g., YYYY-MM-DD).")
+        return float(parsed)
+
+
+def _list_items(raw):
+    if isinstance(raw, (list, tuple)):
+        items = [str(item).strip() for item in raw if str(item).strip()]
+    elif isinstance(raw, str):
+        items = [part.strip() for part in raw.split(",") if part.strip()]
+    elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        items = [str(raw)]
+    else:
+        items = []
+    return items
 
 
 def _number(value, label):
@@ -86,6 +118,19 @@ def validate_rule(rule):
             if not first:
                 raise ValueError("Enter text to search for.")
         second = None
+    elif kind in ("in_list", "not_in_list"):
+        items = _list_items(first)
+        if not items:
+            raise ValueError("Enter one or more comma-separated values.")
+        first = ", ".join(items)
+        second = None
+    elif kind in ("date_before", "date_after", "date_between"):
+        first = _date_serial(first, "Date" if kind != "date_between" else "Start Date")
+        if kind == "date_between":
+            second = _date_serial(second, "End Date")
+            first, second = min(first, second), max(first, second)
+        else:
+            second = None
     else:
         first = second = None
     return {"type": kind, "param1": first, "param2": second, "color": color.lower()}
@@ -130,6 +175,16 @@ def effective_highlights(column, row_count=None, rules=None):
     )
     large_residual_rows = {int(r) for r in column.metadata.get("large_residual_rows", ()) if isinstance(r, int) or str(r).isdigit()}
     unusual_x_rows = {int(r) for r in column.metadata.get("unusual_x_rows", ()) if isinstance(r, int) or str(r).isdigit()}
+    out_of_control_rows = {int(r) for r in column.metadata.get("out_of_control_rows", ()) if isinstance(r, int) or str(r).isdigit()}
+    numeric_seq = [float(value) for value in column.values
+                   if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)]
+    imr_fences = None
+    if len(numeric_seq) >= 2 and col_mean is not None:
+        mrs = [abs(numeric_seq[i] - numeric_seq[i - 1]) for i in range(1, len(numeric_seq))]
+        mr_bar = sum(mrs) / len(mrs)
+        if mr_bar > 0:
+            sigma_imr = mr_bar / 1.128
+            imr_fences = (col_mean - 3.0 * sigma_imr, col_mean + 3.0 * sigma_imr)
 
     result = {}
     for rule in checked:
@@ -203,6 +258,30 @@ def effective_highlights(column, row_count=None, rules=None):
                         match = row in unusual_x_rows
                     elif number and col_mean is not None and col_stdev is not None:
                         match = abs((value - col_mean) / col_stdev) > 2.5
+                elif kind == "out_of_control":
+                    if out_of_control_rows:
+                        match = row in out_of_control_rows
+                    elif number and imr_fences is not None:
+                        match = value < imr_fences[0] or value > imr_fences[1]
+                elif kind in ("in_list", "not_in_list"):
+                    list_vals = _list_items(first)
+                    if number:
+                        num_targets = set()
+                        for item in list_vals:
+                            try:
+                                num_targets.add(float(item))
+                            except ValueError:
+                                pass
+                        in_set = value in num_targets or str(value).casefold() in {x.casefold() for x in list_vals}
+                    else:
+                        in_set = str(value).strip().casefold() in {x.casefold() for x in list_vals}
+                    match = in_set if kind == "in_list" else not in_set
+                elif kind == "date_before" and number:
+                    match = value < first
+                elif kind == "date_after" and number:
+                    match = value > first
+                elif kind == "date_between" and number:
+                    match = first <= value <= second
             if match:
                 result[str(row)] = rule["color"]
     return result

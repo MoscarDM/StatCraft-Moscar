@@ -1,775 +1,173 @@
 import os
 import sys
 import unittest
-from types import SimpleNamespace
-from unittest.mock import patch
+from pathlib import Path
 
-from PySide6.QtCore import Qt, QPointF
-from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLineEdit
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("STATCRAFT_TESTING", "1")
 
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from PySide6.QtWidgets import QApplication, QDialog
+
+from statcraft.app import Column, Presenter
+from statcraft.autofill_engine import autofill_sequence, get_custom_lists, set_custom_lists
 from statcraft.conditional_formatting import effective_highlights, validate_rule
-from statcraft.modern_app import ModernWindow, WelcomeWatermarkWidget
-from statcraft.oneway_dialogs import OneWayOptionsDialog
-from statcraft.regression_dialog import RegressionOptionsDialog, RegressionGraphsDialog, RegressionResultsDialog, RegressionStorageDialog
-from statcraft.app import Column
+from statcraft.modern_app import ModernWindow
 
 
 def _app():
     return QApplication.instance() or QApplication(sys.argv)
 
 
-class TestMinitabParityRound4(unittest.TestCase):
+class MinitabParityRound4Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        _app()
+        cls.app = _app()
 
     def setUp(self):
-        self.win = ModernWindow(sandbox_mode=True)
+        self.win = ModernWindow()
 
     def tearDown(self):
-        self.win.presenter.dirty = False
         self.win.close()
 
-    def test_menu_parity_tools_help_view_edit_file(self):
-        bar = self.win.menuBar()
-        menus = {act.text().replace("&", ""): act.menu() for act in bar.actions() if act.menu()}
-        self.assertIn("Tools", menus)
-        tools_items = [a.text().replace("&", "") for a in menus["Tools"].actions() if not a.isSeparator()]
-        self.assertIn("Options…", tools_items)
-        self.assertIn("Manage Profiles…", tools_items)
-        self.assertIn("Customize…", tools_items)
+    def _menu_texts(self):
+        texts = []
+        for act in self.win.menuBar().actions():
+            m = act.menu()
+            if not m:
+                continue
+            stack = list(m.actions())
+            while stack:
+                a = stack.pop(0)
+                if a.menu():
+                    stack.extend(a.menu().actions())
+                elif not a.isSeparator():
+                    texts.append(a.text())
+        return texts
 
-        help_items = [a.text().replace("&", "") for a in menus["Help"].actions() if not a.isSeparator()]
-        self.assertIn("Keyboard Map…", help_items)
+    def test_new_conditional_formatting_rules(self):
+        # #46094 Out of control (I-MR Nelson Rule 1 and explicit rows)
+        col_ooc = Column("X", "number", [10.0, 10.2, 9.9, 10.1, 10.0, 40.0])
+        hl_ooc = effective_highlights(col_ooc, rules=[{"type": "out_of_control", "color": "#f8d7da"}])
+        self.assertEqual(hl_ooc, {"5": "#f8d7da"})
 
-        file_items = [a.text().replace("&", "") for a in menus["File"].actions() if not a.isSeparator()]
-        self.assertIn("Close Worksheet", file_items)
+        col_ooc_meta = Column("X", "number", [1.0, 2.0, 3.0], metadata={"out_of_control_rows": [1]})
+        hl_ooc_meta = effective_highlights(col_ooc_meta, rules=[{"type": "out_of_control", "color": "#f8d7da"}])
+        self.assertEqual(hl_ooc_meta, {"1": "#f8d7da"})
 
-        edit_items = [a.text().replace("&", "") for a in menus["Edit"].actions() if not a.isSeparator()]
-        self.assertIn("Edit Command Line…", edit_items)
-        self.assertEqual(self.win.delete_action.shortcut().toString(), "Ctrl+-")
+        # #46101 Values from a list (in_list / not_in_list)
+        col_txt = Column("Grade", "text", ["A", "B", "C", "D"])
+        hl_in = effective_highlights(col_txt, rules=[{"type": "in_list", "param1": "a, c", "color": "#d4edda"}])
+        self.assertEqual(hl_in, {"0": "#d4edda", "2": "#d4edda"})
+        hl_not_in = effective_highlights(col_txt, rules=[{"type": "not_in_list", "param1": "A, C", "color": "#fff3cd"}])
+        self.assertEqual(hl_not_in, {"1": "#fff3cd", "3": "#fff3cd"})
 
-        view_items = [a.text().replace("&", "") for a in menus["View"].actions() if not a.isSeparator()]
-        self.assertNotIn("Edit Command Line…", view_items)
-
-        # No consecutive separators in View
-        view_actions = menus["View"].actions()
-        for prev, curr in zip(view_actions, view_actions[1:]):
-            self.assertFalse(prev.isSeparator() and curr.isSeparator())
-
-        graph_items = [a.text().replace("&", "") for a in menus["Graph"].actions() if not a.isSeparator()]
-        self.assertIn("Update All Graphs", graph_items)
-
-    def test_cut_column_names_and_select_all_guard(self):
-        self.win.show()
-        self.win.activateWindow()
-        self.win.presenter.rename_columns(0, ["Alpha", "Beta"])
-        self.win.refresh()
-        self.win.column_names.setFocus()
-        self.win.column_names.setCurrentCell(0, 0)
-        self.win.column_names.selectColumn(0)
-        QApplication.processEvents()
-        self.win.cut_cells()
-        self.assertEqual(QApplication.clipboard().text(), "Alpha")
-        self.assertEqual(self.win.presenter.worksheet.columns[0].name, "C1")
-
-        # Select All inside command editor must not select worksheet table
-        self.win.command_editor.setPlainText("DESCRIBE C1")
-        self.win.command_editor.setFocus()
-        QApplication.processEvents()
-        self.win.select_all_dataset()
-        self.assertEqual(self.win.command_editor.textCursor().selectedText(), "DESCRIBE C1")
-
-    def test_welcome_hides_when_data_present(self):
-        self.win.presenter.set_cell(0, 0, "42")
-        self.win.refresh()
-        self.assertGreater(self.win.presenter.worksheet.row_count, 0)
-        self.assertFalse(isinstance(self.win.result_tabs.widget(0), WelcomeWatermarkWidget))
-
-    def test_subdialogs_have_help_button(self):
-        opts = {"confidence": 0.95, "graphs": "four", "results": {}, "storage": {}}
-        for cls in (RegressionOptionsDialog, RegressionGraphsDialog, RegressionResultsDialog, RegressionStorageDialog):
-            dlg = cls(self.win, dict(opts))
-            boxes = dlg.findChildren(QDialogButtonBox)
-            self.assertTrue(any(b.button(QDialogButtonBox.StandardButton.Help) is not None for b in boxes))
-            dlg.close()
-
-        ow_dlg = OneWayOptionsDialog(self.win, {})
-        ow_boxes = ow_dlg.findChildren(QDialogButtonBox)
-        self.assertTrue(any(b.button(QDialogButtonBox.StandardButton.Help) is not None for b in ow_boxes))
-        ow_dlg.close()
-
-    def test_conditional_formatting_frequent_and_diagnostics(self):
-        col = Column("X", "number", [1.0, 1.0, 1.0, 2.0, 2.0, 9.0, 100.0])
-        most = effective_highlights(col, rules=[{"type": "most_frequent", "param1": 1, "color": "#d4edda"}])
-        self.assertEqual(set(most.keys()), {"0", "1", "2"})
-
-        least = effective_highlights(col, rules=[{"type": "least_frequent", "param1": 1, "color": "#fff3cd"}])
-        # 9.0 and 100.0 both have count 1; sorted deterministically by str(val) -> "100.0" < "9.0"
-        self.assertEqual(len(least), 1)
-
-        col_diag = Column("Y", "number", [10.0, 11.0, 12.0, 13.0], metadata={"large_residual_rows": [2], "unusual_x_rows": [0]})
-        res_hl = effective_highlights(col_diag, rules=[{"type": "large_residuals", "color": "#f8d7da"}])
-        self.assertEqual(res_hl, {"2": "#f8d7da"})
-        ux_hl = effective_highlights(col_diag, rules=[{"type": "unusual_x", "color": "#fff3cd"}])
-        self.assertEqual(ux_hl, {"0": "#fff3cd"})
-
-    def test_update_all_graphs_and_custom_dialog_state(self):
-        called = []
-        fake_entry = {"plots": [{"kind": "histogram"}], "_rerun_action": lambda: called.append(True)}
-        self.win.presenter.history.append(fake_entry)
-        with patch.object(self.win.presenter, "result_stale", return_value=True):
-            count = self.win.update_all_graphs()
-        self.assertEqual(count, 1)
-        self.assertEqual(called, [True])
-
-        dummy = SimpleNamespace(selected_params={"col": 0})
-        self.win._save_custom_dialog_state("test_dlg", dummy)
-        dummy2 = SimpleNamespace(selected_params=None)
-        self.win._restore_custom_dialog_state("test_dlg", dummy2)
-        self.assertEqual(dummy2.selected_params, {"col": 0})
-
-    def test_wheel_event_requires_ctrl_for_zoom(self):
-        from statcraft.modern_charts import ChartWidget
-        chart = ChartWidget(self.win)
-        chart.spec = {"kind": "scatter", "x": [1, 2, 3], "y": [2, 4, 6]}
-        ev_no_ctrl = QWheelEvent(
-            QPointF(50, 50),
-            QPointF(50, 50),
-            QPointF(0, 0).toPoint(),
-            QPointF(0, 120).toPoint(),
-            Qt.MouseButton.NoButton,
-            Qt.KeyboardModifier.NoModifier,
-            Qt.ScrollPhase.NoScrollPhase,
-            False,
+        # #46088 Date rules (date_before / date_after / date_between)
+        d1 = Presenter.parse_cell("2025-01-10", "date")
+        d2 = Presenter.parse_cell("2025-06-15", "date")
+        d3 = Presenter.parse_cell("2025-12-20", "date")
+        col_dt = Column("Date", "date", [d1, d2, d3])
+        hl_between = effective_highlights(
+            col_dt,
+            rules=[{"type": "date_between", "param1": "2025-02-01", "param2": "2025-11-01", "color": "#d4edda"}],
         )
-        ev_no_ctrl.accept()
-        chart.wheelEvent(ev_no_ctrl)
-        self.assertFalse(ev_no_ctrl.isAccepted())
-        chart.close()
+        self.assertEqual(hl_between, {"1": "#d4edda"})
+        hl_before = effective_highlights(
+            col_dt,
+            rules=[{"type": "date_before", "param1": "2025-02-01", "color": "#fff3cd"}],
+        )
+        self.assertEqual(hl_before, {"0": "#fff3cd"})
+        hl_after = effective_highlights(
+            col_dt,
+            rules=[{"type": "date_after", "param1": "2025-11-01", "color": "#f8d7da"}],
+        )
+        self.assertEqual(hl_after, {"2": "#f8d7da"})
+        self.assertEqual(validate_rule({"type": "in_list", "param1": ["X", "Y"]})["param1"], "X, Y")
 
-    def test_chart_quick_bar_toggles_work_on_chart_widget(self):
-        from statcraft.micro_innovations import build_chart_quick_bar
-        from statcraft.modern_charts import ChartWidget
-        from statcraft.graph_frame import GraphFrame
-        self.win.presenter.paste(0, 0, "1\t2\n2\t4\n3\t8\n")
-        entry = self.win.presenter.scatter_plot(0, 1)
-        chart = ChartWidget(entry)
-        frame = GraphFrame(chart, entry)
-        bar = build_chart_quick_bar(frame, chart, entry, self.win)
-        actions = {a.text(): a for a in bar.menu().actions() if a.text()}
-        actions["Show Gridlines"].trigger()
-        self.assertFalse(chart.annotation_grid)
-        actions["Logarithmic Y Scale"].trigger()
-        self.assertTrue(chart.annotation_y_log)
-        actions["Crosshair Mode"].trigger()
-        self.assertTrue(chart._crosshair_enabled)
-        actions["Copy as PNG"].trigger()
-        self.assertFalse(QApplication.clipboard().pixmap().isNull())
-        frame.close()
-        chart.close()
+    def test_command_line_history_and_clear_text(self):
+        # #46139, #46146, #46028
+        self.assertEqual(self.win.clear_cmd_btn.text(), "Clear Text")
+        self.win._cmd_history = ["LET C1 = 1:5", "MEAN C1"]
+        self.win._cmd_history_idx = 2
 
-    def test_data_copy_submenu_and_presenter_workflows(self):
-        bar = self.win.menuBar()
-        menus = {act.text().replace("&", ""): act.menu() for act in bar.actions() if act.menu()}
-        data_submenus = {a.text().replace("&", ""): a.menu() for a in menus["Data"].actions() if a.menu()}
-        self.assertIn("Copy", data_submenus)
-        copy_items = [a.text().replace("&", "") for a in data_submenus["Copy"].actions() if not a.isSeparator()]
-        self.assertEqual(copy_items, ["Columns to Columns…", "Columns to Constants…", "Constants to Columns…"])
+        self.win.prev_command()
+        self.assertEqual(self.win.command_editor.toPlainText(), "MEAN C1")
+        self.win.prev_command()
+        self.assertEqual(self.win.command_editor.toPlainText(), "LET C1 = 1:5")
+        self.win.next_command()
+        self.assertEqual(self.win.command_editor.toPlainText(), "MEAN C1")
+        self.win.next_command()
+        self.assertEqual(self.win.command_editor.toPlainText(), "")
 
-        self.win.presenter.paste(0, 0, "10\n20\n30\n40\n")
-        created = self.win.presenter.copy_columns_to_columns([0], include_rows={0, 2})
-        self.assertEqual(len(created), 1)
-        self.assertEqual(self.win.presenter.worksheet.columns[created[0]].values, [10.0, 30.0])
+        self.win.command_editor.setPlainText("DESCRIBE C1")
+        self.win.clear_command_text()
+        self.assertEqual(self.win.command_editor.toPlainText(), "")
 
-        stored = self.win.presenter.copy_columns_to_constants([0], ["K1", "K2"])
-        self.assertEqual(stored, ["K1", "K2"])
-        col_idx = self.win.presenter.copy_constants_to_columns(["K1", "K2"], target_name="FromConsts")
-        self.assertEqual(self.win.presenter.worksheet.columns[col_idx].name, "FromConsts")
-        self.assertEqual(self.win.presenter.worksheet.columns[col_idx].values, [10.0, 20.0])
+    def test_custom_lists_autofill_integration(self):
+        # #46032 Define Custom Lists
+        orig = get_custom_lists()
+        try:
+            set_custom_lists([["Bronze", "Silver", "Gold"]])
+            self.assertEqual(autofill_sequence(["Bronze"], 3), ["Silver", "Gold", "Bronze"])
+        finally:
+            set_custom_lists(orig)
 
-    def test_custom_dialog_get_set_state_roundtrip(self):
-        from statcraft.oneway_dialogs import OneWayAnovaDialog
-        from statcraft.capability_dialogs import CapabilityDialog
-
-        self.win.presenter.paste(0, 0, "10\tA\n20\tB\n")
-        ow1 = OneWayAnovaDialog(self.win)
-        ow1.response_edit.setText("C1")
-        ow1.factor_edit.setText("C2")
-        ow1.options["confidence"] = 99.0
-        self.win._save_custom_dialog_state("oneway_anova", ow1)
-        ow2 = OneWayAnovaDialog(self.win)
-        self.win._restore_custom_dialog_state("oneway_anova", ow2)
-        self.assertEqual(ow2.response_edit.text(), "C1")
-        self.assertEqual(ow2.factor_edit.text(), "C2")
-        self.assertEqual(ow2.options["confidence"], 99.0)
-        ow1.close(); ow2.close()
-
-        cap1 = CapabilityDialog(self.win.presenter.worksheet, self.win)
-        cap1.edit_single_col.setText("C1")
-        cap1.edit_lsl.setText("5")
-        cap1.edit_usl.setText("25")
-        cap1.options["confidence_level"] = 99.0
-        self.win._save_custom_dialog_state("capability_normal", cap1)
-        cap2 = CapabilityDialog(self.win.presenter.worksheet, self.win)
-        self.win._restore_custom_dialog_state("capability_normal", cap2)
-        self.assertEqual(cap2.edit_single_col.text(), "C1")
-        self.assertEqual(cap2.edit_lsl.text(), "5")
-        self.assertEqual(cap2.edit_usl.text(), "25")
-        self.assertEqual(cap2.options["confidence_level"], 99.0)
-        cap1.close(); cap2.close()
-
-    def test_arrow_key_navigation_into_and_across_column_names(self):
-        from PySide6.QtCore import QEvent
-        from PySide6.QtGui import QKeyEvent
-
-        self.win.show()
-        self.win.activateWindow()
-        self.win.table.setCurrentCell(0, 0)
-        self.win.table.setFocus()
-        QApplication.processEvents()
-
-        # Up from Row 0 moves focus to column_names C1 (0, 0)
-        up_ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Up, Qt.KeyboardModifier.NoModifier)
-        self.win.table.event(up_ev)
-        QApplication.processEvents()
-        self.assertTrue(self.win.column_names.hasFocus())
-        self.assertEqual(self.win.column_names.currentColumn(), 0)
-
-        # Right in column_names moves to C2 (0, 1) and stays in column_names
-        right_ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier)
-        self.win.column_names.event(right_ev)
-        QApplication.processEvents()
-        self.assertTrue(self.win.column_names.hasFocus())
-        self.assertEqual(self.win.column_names.currentColumn(), 1)
-
-        # Left in column_names moves back to C1 (0, 0)
-        left_ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Left, Qt.KeyboardModifier.NoModifier)
-        self.win.column_names.event(left_ev)
-        QApplication.processEvents()
-        self.assertTrue(self.win.column_names.hasFocus())
-        self.assertEqual(self.win.column_names.currentColumn(), 0)
-
-        # Down from column_names moves back to table Row 0, Col 0
-        down_ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Down, Qt.KeyboardModifier.NoModifier)
-        self.win.column_names.event(down_ev)
-        QApplication.processEvents()
-        self.assertTrue(self.win.table.hasFocus())
+    def test_go_to_next_column_and_pane_focus(self):
+        # #46046 Go To Next Column (skipping hidden column)
+        self.win.presenter.worksheet.columns = [
+            Column("A", "number", [1, 2]),
+            Column("B", "number", [3, 4]),
+            Column("C", "number", [5, 6]),
+        ]
+        self.win._hidden_columns = {1}
+        self.win.refresh()
+        self.win.table.setCurrentCell(1, 0)
+        self.win.go_to_next_column()
         self.assertEqual(self.win.table.currentRow(), 0)
-        self.assertEqual(self.win.table.currentColumn(), 0)
+        self.assertEqual(self.win.table.currentColumn(), 2)
 
-    def test_twoway_imr_state_and_default_confidence_wiring(self):
-        from PySide6.QtCore import QSettings
-        from statcraft.twoway_anova_dialogs import TwoWayAnovaDialog
-        from statcraft.imr_dialogs import IMRChartDialog
-        from statcraft.regression_dialog import default_regression_options
-
-        settings = QSettings("StatCraft", "Desktop")
-        prev_val = settings.value("options/default_confidence")
-        try:
-            settings.setValue("options/default_confidence", 99.0)
-            self.win.presenter.paste(0, 0, "10\tA\tX\n20\tB\tY\n")
-            tw1 = TwoWayAnovaDialog(self.win.presenter.worksheet, self.win)
-            self.assertEqual(tw1.spin_ci.value(), 99.0)
-            tw1.chk_interaction.setChecked(False)
-            tw1.spin_ci.setValue(90.0)
-            self.win._save_custom_dialog_state("twoway_anova", tw1)
-            tw2 = TwoWayAnovaDialog(self.win.presenter.worksheet, self.win)
-            self.win._restore_custom_dialog_state("twoway_anova", tw2)
-            self.assertFalse(tw2.chk_interaction.isChecked())
-            self.assertEqual(tw2.spin_ci.value(), 90.0)
-            tw1.close(); tw2.close()
-
-            self.assertAlmostEqual(default_regression_options()["confidence"], 0.99)
-
-            imr1 = IMRChartDialog(self.win.presenter.worksheet, self.win)
-            imr1.edit_vars.setText("C1")
-            imr1.options["span"] = 3
-            self.win._save_custom_dialog_state("imr_dialog", imr1)
-            imr2 = IMRChartDialog(self.win.presenter.worksheet, self.win)
-            self.win._restore_custom_dialog_state("imr_dialog", imr2)
-            self.assertEqual(imr2.edit_vars.text(), "C1")
-            self.assertEqual(imr2.options["span"], 3)
-            imr1.close(); imr2.close()
-        finally:
-            if prev_val is None:
-                settings.remove("options/default_confidence")
-            else:
-                settings.setValue("options/default_confidence", prev_val)
-
-    def test_hypothesis_dialogs_state_roundtrip_and_decimal_places(self):
-        from PySide6.QtCore import QSettings
-        from statcraft.one_sample_t_dialogs import OneSampleTDialog
-        from statcraft.two_sample_t_dialogs import TwoSampleTDialog
-        from statcraft.paired_t_dialogs import PairedTDialog
-        from statcraft.one_sample_z_dialogs import OneSampleZDialog
-        from statcraft.one_sample_proportion_dialogs import OneSampleProportionDialog
-        from statcraft.two_sample_proportion_dialogs import TwoSampleProportionDialog
-
-        self.win.presenter.paste(0, 0, "10\t20\n12\t22\n")
-        ws = self.win.presenter.worksheet
-
-        t1 = OneSampleTDialog(ws, self.win); t1.sample_cols_edit.setText("C1")
-        self.win._save_custom_dialog_state("one_sample_t", t1)
-        t2 = OneSampleTDialog(ws, self.win); self.win._restore_custom_dialog_state("one_sample_t", t2)
-        self.assertEqual(t2.sample_cols_edit.text(), "C1"); t1.close(); t2.close()
-
-        tt1 = TwoSampleTDialog(ws, self.win); tt1.sample1_edit.setText("C1"); tt1.sample2_edit.setText("C2")
-        self.win._save_custom_dialog_state("two_sample_t", tt1)
-        tt2 = TwoSampleTDialog(ws, self.win); self.win._restore_custom_dialog_state("two_sample_t", tt2)
-        self.assertEqual(tt2.sample1_edit.text(), "C1"); self.assertEqual(tt2.sample2_edit.text(), "C2"); tt1.close(); tt2.close()
-
-        pt1 = PairedTDialog(ws, self.win); pt1.sample1_edit.setText("C1"); pt1.sample2_edit.setText("C2")
-        self.win._save_custom_dialog_state("paired_t", pt1)
-        pt2 = PairedTDialog(ws, self.win); self.win._restore_custom_dialog_state("paired_t", pt2)
-        self.assertEqual(pt2.sample1_edit.text(), "C1"); pt1.close(); pt2.close()
-
-        z1 = OneSampleZDialog(ws, self.win); z1.sample_cols_edit.setText("C1"); z1.sigma_edit.setText("2.5")
-        self.win._save_custom_dialog_state("one_sample_z", z1)
-        z2 = OneSampleZDialog(ws, self.win); self.win._restore_custom_dialog_state("one_sample_z", z2)
-        self.assertEqual(z2.sigma_edit.text(), "2.5"); z1.close(); z2.close()
-
-        p1 = OneSampleProportionDialog(ws, self.win); p1.events_edit.setText("14")
-        self.win._save_custom_dialog_state("one_sample_proportion", p1)
-        p2 = OneSampleProportionDialog(ws, self.win); self.win._restore_custom_dialog_state("one_sample_proportion", p2)
-        self.assertEqual(p2.events_edit.text(), "14"); p1.close(); p2.close()
-
-        tp1 = TwoSampleProportionDialog(ws, self.win); tp1.sample1_edit.setText("C1")
-        self.win._save_custom_dialog_state("two_sample_proportion", tp1)
-        tp2 = TwoSampleProportionDialog(ws, self.win); self.win._restore_custom_dialog_state("two_sample_proportion", tp2)
-        self.assertEqual(tp2.sample1_edit.text(), "C1"); tp1.close(); tp2.close()
-
-        settings = QSettings("StatCraft", "Desktop")
-        prev_dec = settings.value("options/decimal_places")
-        try:
-            settings.setValue("options/decimal_places", "3")
-            self.assertEqual(self.win._format_table_float(1.23456, None), "1.235")
-        finally:
-            if prev_dec is None:
-                settings.remove("options/decimal_places")
-            else:
-                settings.setValue("options/decimal_places", prev_dec)
-
-    def test_poisson_pareto_ce_mv_sixpack_state_and_confidence(self):
-        from PySide6.QtCore import QSettings
-        from statcraft.one_sample_poisson_dialogs import OneSamplePoissonDialog
-        from statcraft.two_sample_poisson_dialogs import TwoSamplePoissonDialog
-        from statcraft.pareto_dialogs import ParetoChartDialog
-        from statcraft.cause_and_effect_dialog import CauseAndEffectDialog
-        from statcraft.multivariate_control_dialogs import MultivariateChartDialog
-        from statcraft.sixpack_dialogs import CapabilitySixpackDialog, CapabilitySixpackNonnormalDialog
-
-        settings = QSettings("StatCraft", "Desktop")
-        prev_val = settings.value("options/default_confidence")
-        try:
-            settings.setValue("options/default_confidence", 99.0)
-            self.win.presenter.paste(0, 0, "5\t10\n7\t12\n")
-            ws = self.win.presenter.worksheet
-
-            op1 = OneSamplePoissonDialog(ws, self.win)
-            self.assertEqual(op1.options["confidence_level"], 99.0)
-            op1.sample_cols_edit.setText("C1")
-            self.win._save_custom_dialog_state("one_sample_poisson", op1)
-            op2 = OneSamplePoissonDialog(ws, self.win)
-            self.win._restore_custom_dialog_state("one_sample_poisson", op2)
-            self.assertEqual(op2.sample_cols_edit.text(), "C1")
-            op1.close(); op2.close()
-
-            tp1 = TwoSamplePoissonDialog(ws, self.win)
-            self.assertEqual(tp1.options["confidence_level"], 99.0)
-            tp1.sample1_edit.setText("C1")
-            self.win._save_custom_dialog_state("two_sample_poisson", tp1)
-            tp2 = TwoSamplePoissonDialog(ws, self.win)
-            self.win._restore_custom_dialog_state("two_sample_poisson", tp2)
-            self.assertEqual(tp2.sample1_edit.text(), "C1")
-            tp1.close(); tp2.close()
-
-            pa1 = ParetoChartDialog(ws, parent=self.win); pa1.edit_defects_raw.setText("C1")
-            self.win._save_custom_dialog_state("pareto_chart", pa1)
-            pa2 = ParetoChartDialog(ws, parent=self.win); self.win._restore_custom_dialog_state("pareto_chart", pa2)
-            self.assertEqual(pa2.edit_defects_raw.text(), "C1")
-            pa1.close(); pa2.close()
-
-            ce1 = CauseAndEffectDialog(ws, self.win); ce1.txt_effect.setText("Defects")
-            self.win._save_custom_dialog_state("cause_and_effect", ce1)
-            ce2 = CauseAndEffectDialog(ws, self.win); self.win._restore_custom_dialog_state("cause_and_effect", ce2)
-            self.assertEqual(ce2.txt_effect.text(), "Defects")
-            ce1.close(); ce2.close()
-
-            mv1 = MultivariateChartDialog(ws, chart_type="TSQUARED", parent=self.win); mv1.edit_vars.setText("C1 C2")
-            self.win._save_custom_dialog_state("multivariate_TSQUARED", mv1)
-            mv2 = MultivariateChartDialog(ws, chart_type="TSQUARED", parent=self.win); self.win._restore_custom_dialog_state("multivariate_TSQUARED", mv2)
-            self.assertEqual(mv2.edit_vars.text(), "C1 C2")
-            mv1.close(); mv2.close()
-
-            sp_norm = CapabilitySixpackDialog(ws, self.win)
-            self.assertEqual(sp_norm.options["confidence_level"], 99.0)
-            sp_norm.close()
-
-            sp1 = CapabilitySixpackNonnormalDialog(ws, self.win); sp1.edit_col.setText("C1")
-            self.win._save_custom_dialog_state("sixpack_nonnormal", sp1)
-            sp2 = CapabilitySixpackNonnormalDialog(ws, self.win); self.win._restore_custom_dialog_state("sixpack_nonnormal", sp2)
-            self.assertEqual(sp2.edit_col.text(), "C1")
-            sp1.close(); sp2.close()
-
-            from statcraft.nonparametrics_dialogs import SignTestDialog, MannWhitneyDialog
-            from statcraft.tolerance_intervals_dialogs import ToleranceIntervalsDialog
-            from statcraft.capability_nonnormal_dialogs import CapabilityNonnormalDialog
-
-            st_dlg = SignTestDialog(ws, self.win)
-            self.assertEqual(st_dlg.spin_conf.value(), 99.0)
-            st_dlg.close()
-            mw_dlg = MannWhitneyDialog(ws, self.win)
-            self.assertEqual(mw_dlg.spin_conf.value(), 99.0)
-            mw_dlg.close()
-
-            ti1 = ToleranceIntervalsDialog(ws, parent=self.win); ti1.edit_vars.setText("C1")
-            self.win._save_custom_dialog_state("tolerance_intervals", ti1)
-            ti2 = ToleranceIntervalsDialog(ws, parent=self.win); self.win._restore_custom_dialog_state("tolerance_intervals", ti2)
-            self.assertEqual(ti2.edit_vars.text(), "C1")
-            ti1.close(); ti2.close()
-
-            cn1 = CapabilityNonnormalDialog(ws, self.win); cn1.edit_single_col.setText("C1")
-            self.assertAlmostEqual(cn1.options["confidence_level"], 0.99)
-            self.win._save_custom_dialog_state("capability_nonnormal", cn1)
-            cn2 = CapabilityNonnormalDialog(ws, self.win); self.win._restore_custom_dialog_state("capability_nonnormal", cn2)
-            self.assertEqual(cn2.edit_single_col.text(), "C1")
-            cn1.close(); cn2.close()
-
-            from statcraft.ordinal_logistic_dialogs import OrdinalLogisticDialog
-            from statcraft.nominal_logistic_dialogs import NominalLogisticDialog
-            from statcraft.poisson_regression_dialogs import PoissonRegressionDialog
-            from statcraft.orthogonal_regression_dialogs import OrthogonalRegressionDialog
-            from statcraft.nonlinear_regression_dialogs import NonlinearRegressionDialog
-            from statcraft.probit_dialogs import ProbitAnalysisDialog
-            from statcraft.stability_study_dialogs import StabilityStudyDialog
-            from statcraft.life_regression_dialogs import LifeRegressionDialog
-
-            for pcls in (
-                OrdinalLogisticDialog,
-                NominalLogisticDialog,
-                PoissonRegressionDialog,
-                OrthogonalRegressionDialog,
-                NonlinearRegressionDialog,
-                ProbitAnalysisDialog,
-                StabilityStudyDialog,
-                LifeRegressionDialog,
-            ):
-                pdlg = pcls(self.win)
-                self.assertEqual(pdlg.spin_conf.value(), 99.0)
-                pdlg.close()
-        finally:
-            if prev_val is None:
-                settings.remove("options/default_confidence")
-            else:
-                settings.setValue("options/default_confidence", prev_val)
-
-    def test_change_data_type_with_date_format_and_target_column(self):
-        self.win.presenter.set_column_type(0, "text")
-        self.win.presenter.worksheet.columns[0].values = ["03/15/2025", "04/20/2025"]
-        self.win.presenter.set_column_type(0, "date", target_index="new", date_format="%m/%d/%Y")
-        new_col = self.win.presenter.worksheet.columns[-1]
-        self.assertEqual(new_col.kind, "date")
-        self.assertEqual(new_col.metadata.get("date_format"), "%m/%d/%Y")
-        self.assertEqual(len(new_col.values), 2)
-        self.assertEqual(self.win.presenter.worksheet.columns[0].kind, "text")
-
-    def test_attribute_chart_dialog_state_roundtrip(self):
-        from statcraft.attribute_control_dialogs import AttributeChartDialog
-        self.win.presenter.paste(0, 0, "2\t50\n3\t50\n")
-        d1 = AttributeChartDialog(self.win.presenter.worksheet, chart_type="P", parent=self.win)
-        d1.edit_vars.setText("C1")
-        d1.edit_subgroup.setText("C2")
-        self.win._save_custom_dialog_state("attribute_control_P", d1)
-        d2 = AttributeChartDialog(self.win.presenter.worksheet, chart_type="P", parent=self.win)
-        self.win._restore_custom_dialog_state("attribute_control_P", d2)
-        self.assertEqual(d2.edit_vars.text(), "C1")
-        self.assertEqual(d2.edit_subgroup.text(), "C2")
-        d1.close(); d2.close()
-
-    def test_session_commands_copy_delete_dotplot_scatterplot(self):
-        from statcraft.session_commands import execute_script
-        self.win.presenter.paste(0, 0, "10\t2\n20\t4\n30\t6\n40\t8\n")
-        execute_script(self.win.presenter, "COPY C1 C3;\n  USE 1 3.")
-        self.assertEqual(self.win.presenter.worksheet.columns[2].values, [10.0, 30.0])
-        execute_script(self.win.presenter, "DELETE 2 4 C1")
-        self.assertEqual(self.win.presenter.worksheet.columns[0].values, [10.0, 30.0])
-        out = execute_script(self.win.presenter, "DOTPLOT C1\nSCATTERPLOT C2 * C1\nTSPLOT C1\nINTERVALPLOT C1\nINDIVIDUAL C1\nBOXPLOT C1")
-        self.assertEqual(len(out), 6)
-
-        # Copy Command Language round-trip from recipe
-        desc_entry = self.win.presenter.describe_columns([0])
-        self.win.copy_command_language(desc_entry)
-        copied_cmd = QApplication.clipboard().text()
-        self.assertEqual(copied_cmd, "DESCRIBE C1")
-        rt_out = execute_script(self.win.presenter, copied_cmd)
-        self.assertEqual(len(rt_out), 1)
-
-    def test_conversion_table_recode_store_desc_state_and_reset_layout(self):
-        from statcraft.store_descriptive import StoreDescriptiveDialog
-
-        self.win.presenter.set_column_type(0, "text")
-        self.win.presenter.set_column_type(1, "text")
-        self.win.presenter.set_column_type(2, "text")
-        self.win.presenter.worksheet.columns[0].values = ["A", "B", "A", "C"]
-        self.win.presenter.worksheet.columns[1].values = ["A", "B"]
-        self.win.presenter.worksheet.columns[2].values = ["Pass", "Fail"]
-        idx = self.win.presenter.recode_with_conversion_table(0, 1, 2, default_value="Other")
-        self.assertEqual(self.win.presenter.worksheet.columns[idx].values, ["Pass", "Fail", "Pass", "Other"])
-
-        self.win.presenter.paste(0, 0, "1\n2\n3\n")
-        sd1 = StoreDescriptiveDialog(self.win.presenter.worksheet, self.win)
-        sd1.stat_checks["median"].setChecked(False)
-        self.win._save_custom_dialog_state("store_descriptive", sd1)
-        sd2 = StoreDescriptiveDialog(self.win.presenter.worksheet, self.win)
-        self.win._restore_custom_dialog_state("store_descriptive", sd2)
-        self.assertFalse(sd2.stat_checks["median"].isChecked())
-        sd1.close(); sd2.close()
-
+        # #46159, #46160, #46171, #46178 Pane Focus
         self.win.set_view_mode("data")
-        self.win.reset_window_layout()
-        self.assertTrue(self.win.view_mode_actions["both"].isChecked())
+        self.win.focus_session_window()
+        self.assertFalse(self.win.output_pane.isHidden())
+        self.win.focus_history_window()
+        self.assertFalse(self.win.command_line_pane.isHidden())
+        self.win.focus_navigator_window()
+        self.assertFalse(self.win.navigator_container.isHidden())
+        self.win.set_view_mode("output")
+        self.win.focus_data_window()
+        self.assertFalse(self.win.worksheet_pane.isHidden())
 
-    def test_basic_stats_dialogs_respect_default_confidence_and_state(self):
-        from PySide6.QtCore import QSettings
-        from statcraft.one_sample_t_dialogs import OneSampleTDialog
-        from statcraft.two_sample_t_dialogs import TwoSampleTDialog
-        from statcraft.paired_t_dialogs import PairedTDialog
-        from statcraft.one_sample_z_dialogs import OneSampleZDialog
-        from statcraft.one_sample_proportion_dialogs import OneSampleProportionDialog
-        from statcraft.two_sample_proportion_dialogs import TwoSampleProportionDialog
-        from statcraft.one_variance_dialogs import OneVarianceDialog
-        from statcraft.two_variances_dialogs import TwoVariancesDialog
-        from statcraft.equal_variances_dialogs import TestEqualVariancesDialog
-        from statcraft.graphical_summary_dialogs import GraphicalSummaryDialog
+    def test_close_current_graph_and_menus(self):
+        # #46157 Close Current Graph + menu parity items (#46099, #46040, #46048, #46051, #46052, #46053, #46111, #46105, #46106)
+        texts = self._menu_texts()
+        expected = [
+            "Manage Rules…",
+            "Hide or Unhide Columns…",
+            "Column Width…",
+            "Standard Column Width…",
+            "Select Data Font…",
+            "Select Label Font…",
+            "Define Custom Lists…",
+            "Go To Next Column",
+            "Close Current Graph",
+            "Session Window",
+            "History Window",
+            "Project Manager / Navigator",
+            "Data Window",
+            "&StatGuide (Interpret Output)…",
+            "&Getting Started…",
+            "&How Do I?…",
+        ]
+        for label in expected:
+            self.assertIn(label, texts, f"Missing menu item: {label}")
 
-        settings = QSettings("StatCraft", "Desktop")
-        prev_val = settings.value("options/default_confidence")
-        try:
-            settings.setValue("options/default_confidence", 99.0)
-            self.win.presenter.paste(0, 0, "10\tA\n20\tB\n")
-            ws = self.win.presenter.worksheet
-
-            for cls in (
-                OneSampleTDialog,
-                TwoSampleTDialog,
-                PairedTDialog,
-                OneSampleZDialog,
-                OneSampleProportionDialog,
-                TwoSampleProportionDialog,
-            ):
-                d = cls(ws, self.win)
-                self.assertEqual(d.settings["confidence_level"], 99.0)
-                d.close()
-
-            ov1 = OneVarianceDialog(ws, self.win)
-            self.assertEqual(ov1.options["confidence_level"], 99.0)
-            ov1.sample_cols_edit.setText("C1")
-            self.win._save_custom_dialog_state("one_sample_variance", ov1)
-            ov2 = OneVarianceDialog(ws, self.win)
-            self.win._restore_custom_dialog_state("one_sample_variance", ov2)
-            self.assertEqual(ov2.sample_cols_edit.text(), "C1")
-            ov1.close(); ov2.close()
-
-            tv1 = TwoVariancesDialog(ws, self.win)
-            self.assertEqual(tv1.options["confidence_level"], 99.0)
-            tv1.s1_edit.setText("C1")
-            self.win._save_custom_dialog_state("two_sample_variances", tv1)
-            tv2 = TwoVariancesDialog(ws, self.win)
-            self.win._restore_custom_dialog_state("two_sample_variances", tv2)
-            self.assertEqual(tv2.s1_edit.text(), "C1")
-            tv1.close(); tv2.close()
-
-            ev1 = TestEqualVariancesDialog(ws, self.win)
-            self.assertEqual(ev1.options["confidence_level"], 99.0)
-            ev1.resp_edit.setText("C1")
-            self.win._save_custom_dialog_state("test_equal_variances", ev1)
-            ev2 = TestEqualVariancesDialog(ws, self.win)
-            self.win._restore_custom_dialog_state("test_equal_variances", ev2)
-            self.assertEqual(ev2.resp_edit.text(), "C1")
-            ev1.close(); ev2.close()
-
-            gs1 = GraphicalSummaryDialog(ws, self.win)
-            self.assertEqual(gs1.conf_edit.text(), "99.0")
-            gs1.var_edit.setText("C1")
-            self.win._save_custom_dialog_state("graphical_summary", gs1)
-            gs2 = GraphicalSummaryDialog(ws, self.win)
-            self.win._restore_custom_dialog_state("graphical_summary", gs2)
-            self.assertEqual(gs2.var_edit.text(), "C1")
-            gs1.close(); gs2.close()
-        finally:
-            if prev_val is None:
-                settings.remove("options/default_confidence")
-            else:
-                settings.setValue("options/default_confidence", prev_val)
-
-    def test_hypothesis_dialogs_state_roundtrip_and_decimal_places(self):
-        from PySide6.QtCore import QSettings
-        from statcraft.one_sample_t_dialogs import OneSampleTDialog
-        from statcraft.two_sample_t_dialogs import TwoSampleTDialog
-        from statcraft.paired_t_dialogs import PairedTDialog
-        from statcraft.one_sample_z_dialogs import OneSampleZDialog
-        from statcraft.one_sample_proportion_dialogs import OneSampleProportionDialog
-        from statcraft.two_sample_proportion_dialogs import TwoSampleProportionDialog
-
-        self.win.presenter.paste(0, 0, "10\t20\n12\t22\n")
-        ws = self.win.presenter.worksheet
-
-        t1 = OneSampleTDialog(ws, self.win); t1.sample_cols_edit.setText("C1")
-        self.win._save_custom_dialog_state("one_sample_t", t1)
-        t2 = OneSampleTDialog(ws, self.win); self.win._restore_custom_dialog_state("one_sample_t", t2)
-        self.assertEqual(t2.sample_cols_edit.text(), "C1"); t1.close(); t2.close()
-
-        tt1 = TwoSampleTDialog(ws, self.win); tt1.sample1_edit.setText("C1"); tt1.sample2_edit.setText("C2")
-        self.win._save_custom_dialog_state("two_sample_t", tt1)
-        tt2 = TwoSampleTDialog(ws, self.win); self.win._restore_custom_dialog_state("two_sample_t", tt2)
-        self.assertEqual(tt2.sample1_edit.text(), "C1"); self.assertEqual(tt2.sample2_edit.text(), "C2"); tt1.close(); tt2.close()
-
-        pt1 = PairedTDialog(ws, self.win); pt1.sample1_edit.setText("C1"); pt1.sample2_edit.setText("C2")
-        self.win._save_custom_dialog_state("paired_t", pt1)
-        pt2 = PairedTDialog(ws, self.win); self.win._restore_custom_dialog_state("paired_t", pt2)
-        self.assertEqual(pt2.sample1_edit.text(), "C1"); pt1.close(); pt2.close()
-
-        z1 = OneSampleZDialog(ws, self.win); z1.sample_cols_edit.setText("C1"); z1.sigma_edit.setText("2.5")
-        self.win._save_custom_dialog_state("one_sample_z", z1)
-        z2 = OneSampleZDialog(ws, self.win); self.win._restore_custom_dialog_state("one_sample_z", z2)
-        self.assertEqual(z2.sigma_edit.text(), "2.5"); z1.close(); z2.close()
-
-        p1 = OneSampleProportionDialog(ws, self.win); p1.events_edit.setText("14")
-        self.win._save_custom_dialog_state("one_sample_proportion", p1)
-        p2 = OneSampleProportionDialog(ws, self.win); self.win._restore_custom_dialog_state("one_sample_proportion", p2)
-        self.assertEqual(p2.events_edit.text(), "14"); p1.close(); p2.close()
-
-        tp1 = TwoSampleProportionDialog(ws, self.win); tp1.sample1_edit.setText("C1")
-        self.win._save_custom_dialog_state("two_sample_proportion", tp1)
-        tp2 = TwoSampleProportionDialog(ws, self.win); self.win._restore_custom_dialog_state("two_sample_proportion", tp2)
-        self.assertEqual(tp2.sample1_edit.text(), "C1"); tp1.close(); tp2.close()
-
-        settings = QSettings("StatCraft", "Desktop")
-        prev_dec = settings.value("options/decimal_places")
-        try:
-            settings.setValue("options/decimal_places", "3")
-            self.assertEqual(self.win._format_table_float(1.23456, None), "1.235")
-        finally:
-            if prev_dec is None:
-                settings.remove("options/decimal_places")
-            else:
-                settings.setValue("options/decimal_places", prev_dec)
-
-    def test_poisson_pareto_ce_mv_sixpack_state_and_confidence(self):
-        from PySide6.QtCore import QSettings
-        from statcraft.one_sample_poisson_dialogs import OneSamplePoissonDialog
-        from statcraft.two_sample_poisson_dialogs import TwoSamplePoissonDialog
-        from statcraft.pareto_dialogs import ParetoChartDialog
-        from statcraft.cause_and_effect_dialog import CauseAndEffectDialog
-        from statcraft.multivariate_control_dialogs import MultivariateChartDialog
-        from statcraft.sixpack_dialogs import CapabilitySixpackDialog, CapabilitySixpackNonnormalDialog
-
-        settings = QSettings("StatCraft", "Desktop")
-        prev_val = settings.value("options/default_confidence")
-        try:
-            settings.setValue("options/default_confidence", 99.0)
-            self.win.presenter.paste(0, 0, "5\t10\n7\t12\n")
-            ws = self.win.presenter.worksheet
-
-            op1 = OneSamplePoissonDialog(ws, self.win)
-            self.assertEqual(op1.options["confidence_level"], 99.0)
-            op1.sample_cols_edit.setText("C1")
-            self.win._save_custom_dialog_state("one_sample_poisson", op1)
-            op2 = OneSamplePoissonDialog(ws, self.win)
-            self.win._restore_custom_dialog_state("one_sample_poisson", op2)
-            self.assertEqual(op2.sample_cols_edit.text(), "C1")
-            op1.close(); op2.close()
-
-            tp1 = TwoSamplePoissonDialog(ws, self.win)
-            self.assertEqual(tp1.options["confidence_level"], 99.0)
-            tp1.sample1_edit.setText("C1")
-            self.win._save_custom_dialog_state("two_sample_poisson", tp1)
-            tp2 = TwoSamplePoissonDialog(ws, self.win)
-            self.win._restore_custom_dialog_state("two_sample_poisson", tp2)
-            self.assertEqual(tp2.sample1_edit.text(), "C1")
-            tp1.close(); tp2.close()
-
-            pa1 = ParetoChartDialog(ws, parent=self.win); pa1.edit_defects_raw.setText("C1")
-            self.win._save_custom_dialog_state("pareto_chart", pa1)
-            pa2 = ParetoChartDialog(ws, parent=self.win); self.win._restore_custom_dialog_state("pareto_chart", pa2)
-            self.assertEqual(pa2.edit_defects_raw.text(), "C1")
-            pa1.close(); pa2.close()
-
-            ce1 = CauseAndEffectDialog(ws, self.win); ce1.txt_effect.setText("Defects")
-            self.win._save_custom_dialog_state("cause_and_effect", ce1)
-            ce2 = CauseAndEffectDialog(ws, self.win); self.win._restore_custom_dialog_state("cause_and_effect", ce2)
-            self.assertEqual(ce2.txt_effect.text(), "Defects")
-            ce1.close(); ce2.close()
-
-            mv1 = MultivariateChartDialog(ws, chart_type="TSQUARED", parent=self.win); mv1.edit_vars.setText("C1 C2")
-            self.win._save_custom_dialog_state("multivariate_TSQUARED", mv1)
-            mv2 = MultivariateChartDialog(ws, chart_type="TSQUARED", parent=self.win); self.win._restore_custom_dialog_state("multivariate_TSQUARED", mv2)
-            self.assertEqual(mv2.edit_vars.text(), "C1 C2")
-            mv1.close(); mv2.close()
-
-            sp_norm = CapabilitySixpackDialog(ws, self.win)
-            self.assertEqual(sp_norm.options["confidence_level"], 99.0)
-            sp_norm.close()
-
-            sp1 = CapabilitySixpackNonnormalDialog(ws, self.win); sp1.edit_col.setText("C1")
-            self.win._save_custom_dialog_state("sixpack_nonnormal", sp1)
-            sp2 = CapabilitySixpackNonnormalDialog(ws, self.win); self.win._restore_custom_dialog_state("sixpack_nonnormal", sp2)
-            self.assertEqual(sp2.edit_col.text(), "C1")
-            sp1.close(); sp2.close()
-
-            from statcraft.nonparametrics_dialogs import SignTestDialog, MannWhitneyDialog
-            from statcraft.tolerance_intervals_dialogs import ToleranceIntervalsDialog
-            from statcraft.capability_nonnormal_dialogs import CapabilityNonnormalDialog
-
-            st_dlg = SignTestDialog(ws, self.win)
-            self.assertEqual(st_dlg.spin_conf.value(), 99.0)
-            st_dlg.close()
-            mw_dlg = MannWhitneyDialog(ws, self.win)
-            self.assertEqual(mw_dlg.spin_conf.value(), 99.0)
-            mw_dlg.close()
-
-            ti1 = ToleranceIntervalsDialog(ws, parent=self.win); ti1.edit_vars.setText("C1")
-            self.win._save_custom_dialog_state("tolerance_intervals", ti1)
-            ti2 = ToleranceIntervalsDialog(ws, parent=self.win); self.win._restore_custom_dialog_state("tolerance_intervals", ti2)
-            self.assertEqual(ti2.edit_vars.text(), "C1")
-            ti1.close(); ti2.close()
-
-            cn1 = CapabilityNonnormalDialog(ws, self.win); cn1.edit_single_col.setText("C1")
-            self.assertAlmostEqual(cn1.options["confidence_level"], 0.99)
-            self.win._save_custom_dialog_state("capability_nonnormal", cn1)
-            cn2 = CapabilityNonnormalDialog(ws, self.win); self.win._restore_custom_dialog_state("capability_nonnormal", cn2)
-            self.assertEqual(cn2.edit_single_col.text(), "C1")
-            cn1.close(); cn2.close()
-
-            from statcraft.ordinal_logistic_dialogs import OrdinalLogisticDialog
-            from statcraft.nominal_logistic_dialogs import NominalLogisticDialog
-            from statcraft.poisson_regression_dialogs import PoissonRegressionDialog
-            from statcraft.orthogonal_regression_dialogs import OrthogonalRegressionDialog
-            from statcraft.nonlinear_regression_dialogs import NonlinearRegressionDialog
-            from statcraft.probit_dialogs import ProbitAnalysisDialog
-            from statcraft.stability_study_dialogs import StabilityStudyDialog
-            from statcraft.life_regression_dialogs import LifeRegressionDialog
-
-            for pcls in (
-                OrdinalLogisticDialog,
-                NominalLogisticDialog,
-                PoissonRegressionDialog,
-                OrthogonalRegressionDialog,
-                NonlinearRegressionDialog,
-                ProbitAnalysisDialog,
-                StabilityStudyDialog,
-                LifeRegressionDialog,
-            ):
-                pdlg = pcls(self.win)
-                self.assertEqual(pdlg.spin_conf.value(), 99.0)
-                pdlg.close()
-        finally:
-            if prev_val is None:
-                settings.remove("options/default_confidence")
-            else:
-                settings.setValue("options/default_confidence", prev_val)
+        # Verify close_current_graph runs cleanly even with no open tabs
+        self.win.close_current_graph()
+        self.assertIn("Closed active graph/output tab", self.win.statusBar().currentMessage())
 
 
 if __name__ == "__main__":

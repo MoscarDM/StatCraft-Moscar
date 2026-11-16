@@ -988,7 +988,20 @@ class ModernWindow(QMainWindow):
         cmd_header = QHBoxLayout()
         cmd_header.addWidget(label("Command Line", "sectionHeading"))
         cmd_header.addStretch()
-        clear_cmd_btn = QPushButton("Clear"); clear_cmd_btn.clicked.connect(lambda: self.command_editor.clear())
+        self._cmd_history = []
+        self._cmd_history_idx = 0
+        self.prev_cmd_btn = QPushButton("Previous")
+        self.prev_cmd_btn.setToolTip("Recall the previous command in Command Line Editor")
+        self.prev_cmd_btn.clicked.connect(self.prev_command)
+        cmd_header.addWidget(self.prev_cmd_btn)
+        self.next_cmd_btn = QPushButton("Next")
+        self.next_cmd_btn.setToolTip("Advance to the next command in Command Line Editor")
+        self.next_cmd_btn.clicked.connect(self.next_command)
+        cmd_header.addWidget(self.next_cmd_btn)
+        clear_cmd_btn = QPushButton("Clear Text")
+        clear_cmd_btn.setToolTip("Clears the text in the Command Line Editor")
+        clear_cmd_btn.clicked.connect(self.clear_command_text)
+        self.clear_cmd_btn = clear_cmd_btn
         cmd_header.addWidget(clear_cmd_btn)
         run_cmd_btn = QPushButton("Run"); run_cmd_btn.clicked.connect(self.run_command_line)
         cmd_header.addWidget(run_cmd_btn)
@@ -1358,6 +1371,7 @@ class ModernWindow(QMainWindow):
         self.find_next_action = self._action(edit, "Find Next", self.find_next, QKeySequence("F3"), "find_next")
         self.replace_action = self._action(edit, "Replace…", self.replace_dialog, QKeySequence("Ctrl+H"), "replace", False)
         self._action(edit, "Go To…", self.goto_dialog, QKeySequence("Ctrl+G"), "goto", False)
+        self._action(edit, "Go To Next Column", self.go_to_next_column, QKeySequence("Ctrl+Right"))
         self._action(edit, "Move to Active Cell", self.move_to_active_cell, QKeySequence("Ctrl+Backspace"))
         self._action(edit, "Edit Command Line…", self.open_command_line, QKeySequence("Ctrl+L"))
         edit.addSeparator()
@@ -1374,6 +1388,7 @@ class ModernWindow(QMainWindow):
         self.move_columns_action = self._action(data, "Move Columns…", self.move_columns_dialog, None, "move_columns", True)
         data.addSeparator()
         self._action(data, "Autofill / Extend Series…", self.autofill_dialog, None, "autofill", True)
+        self._action(data, "Define Custom Lists…", self.define_custom_lists_dialog, None, "autofill", True)
         self._action(data, "Sort…", self.sort_dialog, None, "sort", True)
         self._action(data, "Rank…", self.rank_dialog, None, "rank", True)
         self._action(data, "Delete Rows…", self.delete_rows_dialog, None, "delete", True)
@@ -1397,6 +1412,7 @@ class ModernWindow(QMainWindow):
         self._action(col_prop_menu, "Description…", self.column_description_dialog, None, "worksheet", True)
         self._action(col_prop_menu, "Assign Formula…", self.assign_formula_dialog, None, "assign_formula", True)
         self._action(col_prop_menu, "Conditional Formatting…", lambda: self.conditional_formatting_dialog(), None, "format_column", True)
+        self._action(col_prop_menu, "Manage Rules…", self.manage_conditional_rules_dialog, None, "format_column", True)
         quick_hl_menu = col_prop_menu.addMenu("Quick Highlight")
         quick_hl_menu.addAction("Highlight Red", lambda: self._apply_quick_highlight("#f8d7da"))
         quick_hl_menu.addAction("Highlight Green", lambda: self._apply_quick_highlight("#d4edda"))
@@ -1405,6 +1421,12 @@ class ModernWindow(QMainWindow):
         quick_hl_menu.addAction("Clear Cell Formats", lambda: self._apply_quick_highlight(None))
         self._action(col_prop_menu, "Clear Conditional Formatting from Selected Columns", self.clear_selected_conditional_formatting)
         self._action(col_prop_menu, "Clear Conditional Formatting from Worksheet", self.clear_all_conditional_formatting)
+        col_prop_menu.addSeparator()
+        self._action(col_prop_menu, "Hide or Unhide Columns…", self.hide_unhide_columns_dialog)
+        self._action(col_prop_menu, "Column Width…", self.column_width_dialog)
+        self._action(col_prop_menu, "Standard Column Width…", self.standard_column_width_dialog)
+        self._action(col_prop_menu, "Select Data Font…", self.select_data_font_dialog)
+        self._action(col_prop_menu, "Select Label Font…", self.select_label_font_dialog)
         self.format_column_action = self._action(col_prop_menu, "Format Column…", self.format_column_dialog, QKeySequence("Ctrl+1"), "format_column", False)
         self.format_column_action.setShortcuts([QKeySequence("Ctrl+1"), QKeySequence("Ctrl+B")])
         self._action(data, "Worksheet Information", self.show_worksheet_information, None, "worksheet")
@@ -1808,6 +1830,7 @@ class ModernWindow(QMainWindow):
             self.graph_actions[method] = self._action(graph, title + "…", lambda checked=False, m=method: self.graph(m), None, method, True)
         graph.addSeparator()
         self.update_all_graphs_action = self._action(graph, "Update All Graphs", self.update_all_graphs, None, "refresh")
+        self._action(graph, "Close Current Graph", self.close_current_graph)
 
         # 8. View menu (`RT_MENU 8445`: Navigator, Command Line/History, Data and Output, Data Only, Output Only, Zoom)
         view = bar.addMenu("&View")
@@ -1855,9 +1878,17 @@ class ModernWindow(QMainWindow):
         self._action(view,"Reopen Closed Output Tab",lambda:self._workspace.reopen())
         self._action(view,"Close Other Output Tabs",lambda:self._workspace.close_all(self._workspace.state['active']))
         self._action(view,"Close All Output Tabs",lambda:self._workspace.close_all())
+        self._action(view, "Close Current Graph", self.close_current_graph)
         self._action(view, "Close All Graphs", self.close_all_graphs)
+        focus_menu = view.addMenu("Focus Window / Pane")
+        self._action(focus_menu, "Session Window", self.focus_session_window)
+        self._action(focus_menu, "History Window", self.focus_history_window)
+        self._action(focus_menu, "Project Manager / Navigator", self.focus_navigator_window)
+        self._action(focus_menu, "Data Window", self.focus_data_window)
         self._action(view, "Toggle Entry Direction (Down / Right)", self.toggle_entry_direction, "Ctrl+D", "direction")
         self._action(view, "Worksheet Fonts…", self.worksheet_fonts_dialog)
+        self._action(view, "Select Data Font…", self.select_data_font_dialog)
+        self._action(view, "Select Label Font…", self.select_label_font_dialog)
         self._action(view, "Reset Window Layout", self.reset_window_layout)
         self._action(view, "Refresh Worksheet", self.refresh)
         view.addSeparator()
@@ -1886,6 +1917,9 @@ class ModernWindow(QMainWindow):
 
         help_menu = bar.addMenu("&Help")
         self.help_action = self._action(help_menu, "Help", self.context_help, QKeySequence.StandardKey.HelpContents, "help")
+        self._action(help_menu, "&StatGuide (Interpret Output)…", self.statguide_dialog, None, "help")
+        self._action(help_menu, "&Getting Started…", self.getting_started_dialog, None, "workflow")
+        self._action(help_menu, "&How Do I?…", self.how_do_i_dialog, None, "help")
         self._action(help_menu, "&Keyboard Map…", self.keyboard_map_dialog)
         self._action(help_menu, "&Interactive Quick Tour…", self.open_guided_tour, None, "workflow")
         help_menu.addSeparator()
@@ -3809,6 +3843,10 @@ class ModernWindow(QMainWindow):
     def run_command_line(self):
         raw = self.command_editor.toPlainText().strip()
         if not raw: return
+        if not hasattr(self, "_cmd_history"):
+            self._cmd_history = []
+        self._cmd_history.append(raw)
+        self._cmd_history_idx = len(self._cmd_history)
         for line in raw.splitlines():
             if line.strip():
                 self.command_history_view.appendPlainText(f"MTB > {line.strip()}")
@@ -8897,6 +8935,10 @@ class ModernWindow(QMainWindow):
         hl_sub.addAction("Equal To...", lambda: self.conditional_formatting_dialog("equal_to", "Equal To"))
         hl_sub.addAction("Not Equal To...", lambda: self.conditional_formatting_dialog("not_equal_to", "Not Equal To"))
         hl_sub.addAction("Text that Contains...", lambda: self.conditional_formatting_dialog("contains", "Text that Contains"))
+        hl_sub.addAction("Values from a List...", lambda: self.conditional_formatting_dialog("in_list", "Values from a List"))
+        hl_sub.addAction("Date that Occurs (Between)...", lambda: self.conditional_formatting_dialog("date_between", "Date Between"))
+        hl_sub.addAction("Date Before...", lambda: self.conditional_formatting_dialog("date_before", "Date Before"))
+        hl_sub.addAction("Date After...", lambda: self.conditional_formatting_dialog("date_after", "Date After"))
         hi_lo_sub = cond_sub.addMenu("High/Low")
         hi_lo_sub.addAction("Highest Values...", lambda: self.conditional_formatting_dialog("highest", "Highest Values (Count)"))
         hi_lo_sub.addAction("Lowest Values...", lambda: self.conditional_formatting_dialog("lowest", "Lowest Values (Count)"))
@@ -8914,8 +8956,10 @@ class ModernWindow(QMainWindow):
         stat_sub.addAction("Above Mean", lambda: self._call(lambda: self.presenter.apply_conditional_formatting(cur_col, "above_mean", color="#d4edda")))
         stat_sub.addAction("Below Mean", lambda: self._call(lambda: self.presenter.apply_conditional_formatting(cur_col, "below_mean", color="#fff3cd")))
         stat_sub.addSeparator()
+        stat_sub.addAction("Out of Control", lambda: self._call(lambda: self.presenter.apply_conditional_formatting(cur_col, "out_of_control", color="#f8d7da")))
         stat_sub.addAction("Large Residuals", lambda: self._call(lambda: self.presenter.apply_conditional_formatting(cur_col, "large_residuals", color="#f8d7da")))
         stat_sub.addAction("Unusual X", lambda: self._call(lambda: self.presenter.apply_conditional_formatting(cur_col, "unusual_x", color="#fff3cd")))
+        cond_sub.addAction("Manage Rules...", self.manage_conditional_rules_dialog)
         quick_sub = cond_sub.addMenu("Quick Highlight")
         quick_sub.addAction("Color Selected Red", lambda: self._call(lambda: self.presenter.set_cell_highlight(sel_r_range, sel_c_range, "#f8d7da")))
         quick_sub.addAction("Color Selected Green", lambda: self._call(lambda: self.presenter.set_cell_highlight(sel_r_range, sel_c_range, "#d4edda")))
@@ -10561,6 +10605,321 @@ class ModernWindow(QMainWindow):
             self._workspace.close_all()
         self.statusBar().showMessage("Closed all open graph/output tabs.", 3500)
 
+    def close_current_graph(self):
+        if hasattr(self, "_workspace"):
+            self._workspace.close_current()
+        self.statusBar().showMessage("Closed active graph/output tab.", 3000)
+
+    def go_to_next_column(self):
+        self._commit_editor()
+        ncols = self.table.columnCount()
+        if ncols <= 0:
+            return
+        cur = max(0, self.table.currentColumn())
+        hidden = getattr(self, "_hidden_columns", set())
+        for step in range(1, ncols + 1):
+            cand = (cur + step) % ncols
+            if cand not in hidden:
+                self.table.setCurrentCell(0, cand)
+                self.table.setFocus()
+                self.statusBar().showMessage(f"Moved to C{cand + 1} (Row 1)", 2500)
+                return
+
+    def clear_command_text(self):
+        self.command_editor.clear()
+        self.command_editor.setFocus()
+        self.statusBar().showMessage("Cleared Command Line Editor text.", 2500)
+
+    def prev_command(self):
+        hist = getattr(self, "_cmd_history", [])
+        if not hist:
+            self.statusBar().showMessage("No previous command in history.", 2500)
+            return
+        idx = getattr(self, "_cmd_history_idx", len(hist))
+        idx = max(0, idx - 1)
+        self._cmd_history_idx = idx
+        self.command_editor.setPlainText(hist[idx])
+        self.command_editor.setFocus()
+
+    def next_command(self):
+        hist = getattr(self, "_cmd_history", [])
+        if not hist:
+            return
+        idx = getattr(self, "_cmd_history_idx", len(hist))
+        if idx < len(hist) - 1:
+            idx += 1
+            self._cmd_history_idx = idx
+            self.command_editor.setPlainText(hist[idx])
+        else:
+            self._cmd_history_idx = len(hist)
+            self.command_editor.clear()
+        self.command_editor.setFocus()
+
+    def focus_session_window(self):
+        if getattr(self, "_view_mode", "both") == "data":
+            self.set_view_mode("both")
+        self.output_pane.setVisible(True)
+        self.output_pane.setFocus()
+        self.statusBar().showMessage("Focused Session / Output Window", 2500)
+
+    def focus_history_window(self):
+        if getattr(self, "_view_mode", "both") == "data":
+            self.set_view_mode("both")
+        if not self.command_line_pane.isVisible():
+            self.toggle_command_line()
+        self.command_history_view.setFocus()
+        self.statusBar().showMessage("Focused History Window", 2500)
+
+    def focus_navigator_window(self):
+        target = getattr(self, "sidebar_stack", self.navigator_container)
+        if not target.isVisible():
+            self.toggle_navigator()
+        self.navigator.setFocus()
+        self.statusBar().showMessage("Focused Project Manager / Navigator", 2500)
+
+    def focus_data_window(self):
+        if getattr(self, "_view_mode", "both") == "output":
+            self.set_view_mode("both")
+        self.worksheet_pane.setVisible(True)
+        self.table.setFocus()
+        self.statusBar().showMessage("Focused Data Window", 2500)
+
+    def select_data_font_dialog(self):
+        from PySide6.QtWidgets import QFontDialog
+        font, ok = QFontDialog.getFont(self.table.font(), self, "Select Data Font")
+        if ok:
+            self.table.setFont(font)
+            self._save_ui_pref("cell_font_family", font.family())
+            self._save_ui_pref("cell_font_size", max(7, font.pointSize() or 9))
+            self.refresh()
+
+    def select_label_font_dialog(self):
+        from PySide6.QtWidgets import QFontDialog
+        font, ok = QFontDialog.getFont(self.column_names.font(), self, "Select Label Font")
+        if ok:
+            self.column_names.setFont(font)
+            self._save_ui_pref("header_font_family", font.family())
+            self._save_ui_pref("header_font_size", max(7, font.pointSize() or 9))
+            self.refresh()
+
+    def hide_unhide_columns_dialog(self):
+        self._commit_editor()
+        cols = self.presenter.worksheet.columns
+        dlg = QDialog(self); dlg.setWindowTitle("Hide or Unhide Columns"); dlg.setMinimumWidth(360)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel("Checked columns are visible in the worksheet:"))
+        list_widget = QListWidget()
+        for idx, col in enumerate(cols):
+            label = f"C{idx + 1}  {col.name}" if col.name else f"C{idx + 1}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, idx)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked if idx in self._hidden_columns else Qt.CheckState.Checked)
+            list_widget.addItem(item)
+        layout.addWidget(list_widget)
+        btn_row = QHBoxLayout()
+        show_all = QPushButton("Show All"); show_all.clicked.connect(lambda: [list_widget.item(i).setCheckState(Qt.CheckState.Checked) for i in range(list_widget.count())])
+        btn_row.addWidget(show_all)
+        layout.addLayout(btn_row)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        layout.addWidget(buttons)
+        def accept_vis():
+            hidden = set()
+            for i in range(list_widget.count()):
+                it = list_widget.item(i)
+                if it.checkState() != Qt.CheckState.Checked:
+                    hidden.add(it.data(Qt.ItemDataRole.UserRole))
+            if len(hidden) >= len(cols):
+                QMessageBox.warning(dlg, "Hide or Unhide Columns", "At least one column must remain visible.")
+                return
+            self._hidden_columns = hidden
+            self.refresh()
+            dlg.accept()
+        buttons.accepted.connect(accept_vis); buttons.rejected.connect(dlg.reject)
+        dlg.exec()
+
+    def define_custom_lists_dialog(self):
+        from .autofill_engine import get_custom_lists, set_custom_lists
+        dlg = QDialog(self); dlg.setWindowTitle("Define Custom Lists"); dlg.setMinimumSize(460, 340)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel("Define custom Autofill sequences (comma-separated items):"))
+        list_widget = QListWidget()
+        for lst in get_custom_lists():
+            list_widget.addItem(", ".join(lst))
+        layout.addWidget(list_widget)
+        add_row = QHBoxLayout()
+        entry = QLineEdit()
+        entry.setPlaceholderText("e.g., Phase 1, Phase 2, Phase 3")
+        add_btn = QPushButton("Add List")
+        def add_custom():
+            parts = [p.strip() for p in entry.text().split(",") if p.strip()]
+            if len(parts) < 2:
+                QMessageBox.warning(dlg, "Define Custom Lists", "Enter at least two comma-separated values.")
+                return
+            list_widget.addItem(", ".join(parts))
+            entry.clear()
+        add_btn.clicked.connect(add_custom)
+        del_btn = QPushButton("Delete Selected")
+        def del_custom():
+            row = list_widget.currentRow()
+            if row >= 0:
+                list_widget.takeItem(row)
+        del_btn.clicked.connect(del_custom)
+        add_row.addWidget(entry, 1); add_row.addWidget(add_btn); add_row.addWidget(del_btn)
+        layout.addLayout(add_row)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        layout.addWidget(buttons)
+        def accept_lists():
+            new_lists = [[p.strip() for p in list_widget.item(i).text().split(",") if p.strip()] for i in range(list_widget.count())]
+            set_custom_lists(new_lists)
+            self.statusBar().showMessage(f"Saved {len(new_lists)} custom autofill list(s).", 3500)
+            dlg.accept()
+        buttons.accepted.connect(accept_lists); buttons.rejected.connect(dlg.reject)
+        dlg.exec()
+
+    def manage_conditional_rules_dialog(self):
+        self._commit_editor()
+        from .conditional_formatting import validate_rules
+        dlg = QDialog(self); dlg.setWindowTitle("Manage Conditional Formatting Rules"); dlg.setMinimumSize(560, 360)
+        layout = QVBoxLayout(dlg)
+        cols = self.presenter.worksheet.columns
+        col_combo = QComboBox()
+        cur_c = max(0, min(self.table.currentColumn(), len(cols) - 1))
+        for idx, col in enumerate(cols):
+            col_combo.addItem(f"C{idx + 1}  {col.name}".strip(), idx)
+        col_combo.setCurrentIndex(cur_c)
+        top_row = QHBoxLayout()
+        top_row.addWidget(QLabel("Column:"))
+        top_row.addWidget(col_combo, 1)
+        layout.addLayout(top_row)
+
+        rules_list = QListWidget()
+        layout.addWidget(rules_list)
+        working = {idx: [dict(r) for r in col.metadata.get("conditional_rules", [])] for idx, col in enumerate(cols)}
+
+        def _fmt_rule(r):
+            p1 = "" if r.get("param1") is None else f" {r.get('param1')}"
+            p2 = "" if r.get("param2") is None else f", {r.get('param2')}"
+            return f"{r.get('type')}{p1}{p2}  [{r.get('color', '#f8d7da')}]"
+
+        def _reload_list():
+            rules_list.clear()
+            cidx = col_combo.currentData()
+            for r in working.get(cidx, []):
+                rules_list.addItem(_fmt_rule(r))
+
+        col_combo.currentIndexChanged.connect(lambda _: _reload_list())
+        _reload_list()
+
+        act_row = QHBoxLayout()
+        up_btn = QPushButton("Move Up")
+        down_btn = QPushButton("Move Down")
+        del_btn = QPushButton("Delete Rule")
+        add_btn = QPushButton("New Rule…")
+
+        def _move(delta):
+            cidx = col_combo.currentData()
+            row = rules_list.currentRow()
+            lst = working.get(cidx, [])
+            nxt = row + delta
+            if 0 <= row < len(lst) and 0 <= nxt < len(lst):
+                lst[row], lst[nxt] = lst[nxt], lst[row]
+                _reload_list()
+                rules_list.setCurrentRow(nxt)
+
+        def _delete():
+            cidx = col_combo.currentData()
+            row = rules_list.currentRow()
+            lst = working.get(cidx, [])
+            if 0 <= row < len(lst):
+                lst.pop(row)
+                _reload_list()
+
+        def _add():
+            cidx = col_combo.currentData()
+            self.table.setCurrentCell(0, cidx)
+            self.conditional_formatting_dialog()
+            working[cidx] = [dict(r) for r in cols[cidx].metadata.get("conditional_rules", [])]
+            _reload_list()
+
+        up_btn.clicked.connect(lambda: _move(-1))
+        down_btn.clicked.connect(lambda: _move(1))
+        del_btn.clicked.connect(_delete)
+        add_btn.clicked.connect(_add)
+        for b in (up_btn, down_btn, del_btn, add_btn):
+            act_row.addWidget(b)
+        layout.addLayout(act_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        layout.addWidget(buttons)
+        def accept_manage():
+            for idx, col in enumerate(cols):
+                col.metadata["conditional_rules"] = validate_rules(working[idx])
+            self.presenter.dirty = True
+            self.refresh()
+            dlg.accept()
+        buttons.accepted.connect(accept_manage); buttons.rejected.connect(dlg.reject)
+        dlg.exec()
+
+    def statguide_dialog(self):
+        hist = getattr(self.presenter, "history", [])
+        active = hist[-1] if hist else None
+        title = active.get("title", "General Statistical Interpretation") if isinstance(active, dict) else "General Statistical Interpretation"
+        summary = (
+            f"<h3>StatGuide — {title}</h3>"
+            "<p><b>1. Hypothesis Tests (p-value):</b> If <i>p</i> &le; &alpha; (typically 0.05), reject H<sub>0</sub> and conclude the effect is statistically significant.</p>"
+            "<p><b>2. Regression & ANOVA (R&sup2;, Residuals):</b> Check R&sup2;(adj) for model explanatory power and verify residuals are approximately normal with constant variance.</p>"
+            "<p><b>3. Capability (Cp, Cpk, Pp, Ppk):</b> Values &ge; 1.33 indicate a capable process centered within specification limits.</p>"
+            "<p><b>4. Control Charts (I-MR, Xbar-R):</b> Points outside 3&sigma; control limits or Nelson runs indicate special-cause variation requiring investigation.</p>"
+        )
+        dlg = QDialog(self); dlg.setWindowTitle("StatGuide"); dlg.setMinimumSize(500, 320)
+        layout = QVBoxLayout(dlg)
+        view = QTextBrowser(); view.setHtml(summary)
+        layout.addWidget(view)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.rejected.connect(dlg.reject); btns.accepted.connect(dlg.accept)
+        layout.addWidget(btns)
+        dlg.exec()
+
+    def getting_started_dialog(self):
+        dlg = QDialog(self); dlg.setWindowTitle("Getting Started with StatCraft"); dlg.setMinimumSize(480, 300)
+        layout = QVBoxLayout(dlg)
+        view = QTextBrowser()
+        view.setHtml(
+            "<h3>Getting Started</h3>"
+            "<ol>"
+            "<li><b>Enter or Open Data:</b> Type values directly into columns C1, C2, … or use <i>File &gt; Open</i>.</li>"
+            "<li><b>Run an Analysis:</b> Choose a procedure from <i>Stat</i> or <i>Graph</i>, or use <i>Ctrl+K</i> for the Command Palette.</li>"
+            "<li><b>Session Commands:</b> Open <i>View &gt; Command Line/History (Ctrl+M)</i> to run Minitab-style <code>MTB &gt;</code> commands.</li>"
+            "<li><b>Interpret Results:</b> Use <i>Help &gt; StatGuide</i> to review statistical assumptions and thresholds.</li>"
+            "</ol>"
+        )
+        layout.addWidget(view)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.rejected.connect(dlg.reject); btns.accepted.connect(dlg.accept)
+        layout.addWidget(btns)
+        dlg.exec()
+
+    def how_do_i_dialog(self):
+        dlg = QDialog(self); dlg.setWindowTitle("How Do I?"); dlg.setMinimumSize(480, 300)
+        layout = QVBoxLayout(dlg)
+        view = QTextBrowser()
+        view.setHtml(
+            "<h3>How Do I?</h3>"
+            "<ul>"
+            "<li><b>Highlight cells automatically:</b> <i>Data &gt; Column Properties &gt; Conditional Formatting…</i> or <i>Manage Rules…</i></li>"
+            "<li><b>Hide or show columns:</b> <i>Data &gt; Column Properties &gt; Hide or Unhide Columns…</i></li>"
+            "<li><b>Create custom Autofill sequences:</b> <i>Data &gt; Define Custom Lists…</i></li>"
+            "<li><b>Recall recent session commands:</b> Use <i>Previous</i> / <i>Next</i> in the Command Line Editor.</li>"
+            "<li><b>Edit the previous dialog:</b> Press <i>Ctrl+E</i> (Edit Last Dialog).</li>"
+            "</ul>"
+        )
+        layout.addWidget(view)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.rejected.connect(dlg.reject); btns.accepted.connect(dlg.accept)
+        layout.addWidget(btns)
+        dlg.exec()
+
     def copy_command_language(self, entry=None):
         target = entry or self.selected_entry
         if not isinstance(target, dict):
@@ -10625,6 +10984,11 @@ class ModernWindow(QMainWindow):
             ("Equal To", "equal_to"),
             ("Not Equal To", "not_equal_to"),
             ("Text Contains", "contains"),
+            ("Values from a List", "in_list"),
+            ("Not in List", "not_in_list"),
+            ("Date Between", "date_between"),
+            ("Date Before", "date_before"),
+            ("Date After", "date_after"),
             ("Highest N Values", "highest"),
             ("Lowest N Values", "lowest"),
             ("Top %", "top_percent"),
@@ -10635,6 +10999,7 @@ class ModernWindow(QMainWindow):
             ("Least Frequent (%)", "least_frequent_percent"),
             ("Outside Spec Limits (LSL/USL)", "outside_specs"),
             ("Outside ±3 StDev (3σ)", "outside_3sigma"),
+            ("Out of Control", "out_of_control"),
             ("Above Mean", "above_mean"),
             ("Below Mean", "below_mean"),
             ("Statistical Outlier", "outlier"),
@@ -10664,8 +11029,8 @@ class ModernWindow(QMainWindow):
 
         def _sync_fields():
             rtype = rule_type or rule_combo.currentData()
-            no_param = rtype in ("missing", "outlier", "outside_3sigma", "above_mean", "below_mean", "large_residuals", "unusual_x")
-            two_param = rtype in ("between", "not_between", "outside_specs")
+            no_param = rtype in ("missing", "outlier", "outside_3sigma", "out_of_control", "above_mean", "below_mean", "large_residuals", "unusual_x")
+            two_param = rtype in ("between", "not_between", "outside_specs", "date_between")
             p1_label.setVisible(not no_param)
             p1_edit.setVisible(not no_param)
             p2_label.setVisible(two_param)
@@ -10674,6 +11039,20 @@ class ModernWindow(QMainWindow):
                 p1_label.setText("Minimum:"); p2_label.setText("Maximum:")
             elif rtype == "outside_specs":
                 p1_label.setText("Lower Spec (LSL):"); p2_label.setText("Upper Spec (USL):")
+            elif rtype == "date_between":
+                p1_label.setText("Start Date:"); p2_label.setText("End Date:")
+                if p1_edit.text() == "0":
+                    p1_edit.setText("2025-01-01")
+                if p2_edit.text() == "10":
+                    p2_edit.setText("2025-12-31")
+            elif rtype in ("date_before", "date_after"):
+                p1_label.setText("Date:")
+                if p1_edit.text() == "0":
+                    p1_edit.setText("2025-01-01")
+            elif rtype in ("in_list", "not_in_list"):
+                p1_label.setText("Values (comma-separated):")
+                if p1_edit.text() == "0":
+                    p1_edit.setText("A, B, C")
             elif rtype in ("top_percent", "bottom_percent", "most_frequent_percent", "least_frequent_percent"):
                 p1_label.setText("Percent (%):"); p1_edit.setText("10")
             elif rtype in ("highest", "lowest", "most_frequent", "least_frequent"):

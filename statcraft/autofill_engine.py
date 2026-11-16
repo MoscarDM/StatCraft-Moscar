@@ -1,6 +1,28 @@
 import re
 from typing import List, Any
 
+_CUSTOM_LISTS: List[List[str]] = [
+    ["Low", "Medium", "High"],
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    ["Q1", "Q2", "Q3", "Q4"],
+]
+
+
+def get_custom_lists() -> List[List[str]]:
+    """Return a copy of registered custom autofill lists."""
+    return [list(lst) for lst in _CUSTOM_LISTS]
+
+
+def set_custom_lists(lists: List[List[str]]) -> None:
+    """Replace registered custom autofill lists with cleaned non-empty lists."""
+    cleaned = []
+    for lst in lists:
+        items = [str(x).strip() for x in lst if str(x).strip()]
+        if len(items) >= 2:
+            cleaned.append(items)
+    _CUSTOM_LISTS[:] = cleaned
+
 
 def autofill_sequence(sample_values: List[Any], count: int) -> List[Any]:
     """Extrapolate a pattern from a sequence of sample values.
@@ -81,6 +103,15 @@ def autofill_sequence(sample_values: List[Any], count: int) -> List[Any]:
                 else:
                     generated.append(f"{prefix}{next_val}")
             return generated
+
+    # Check for custom list match (e.g. Low -> Medium -> High)
+    for clist in _CUSTOM_LISTS:
+        folded = [x.casefold() for x in clist]
+        if all(s.strip().casefold() in folded for s in str_vals):
+            indices = [folded.index(s.strip().casefold()) for s in str_vals]
+            if len(indices) == 1 or all((indices[i] - indices[i - 1]) % len(clist) == 1 for i in range(1, len(indices))):
+                start_idx = indices[-1]
+                return [clist[(start_idx + i + 1) % len(clist)] for i in range(count)]
 
     # Check for repeating period / cycle in strings
     period = _find_period(str_vals)
