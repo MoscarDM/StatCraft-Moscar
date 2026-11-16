@@ -389,7 +389,7 @@ class WorksheetTable(QTableWidget):
                         (a.bottomRow() - a.topRow() + 1) * (a.rightColumn() - a.leftColumn() + 1)
                         for a in ranges
                     )
-                    if (multi_cells > 1 or getattr(self, "selected_columns", None) or getattr(self, "selected_rows", None)) and hasattr(win, "clear_cells"):
+                    if multi_cells > 1 and hasattr(win, "clear_cells"):
                         win.clear_cells()
                         return True
                     item = self.currentItem()

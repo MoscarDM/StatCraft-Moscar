@@ -3104,8 +3104,12 @@ class ModernWindow(QMainWindow):
             if len(selected) == 1:
                 area = selected[0]
                 left_c, right_c = area.leftColumn(), area.rightColumn()
-                QApplication.clipboard().setText("\t".join(self.column_names.item(0, c).text() for c in range(left_c, right_c + 1)))
-                self._call(lambda: self.presenter.rename_columns(left_c, [""] * (right_c - left_c + 1)))
+            elif not selected and self.column_names.currentColumn() >= 0:
+                left_c = right_c = self.column_names.currentColumn()
+            else:
+                return
+            QApplication.clipboard().setText("\t".join(self.column_names.item(0, c).text() for c in range(left_c, right_c + 1)))
+            self._call(lambda: self.presenter.rename_columns(left_c, [""] * (right_c - left_c + 1)))
             return
         self._commit_editor()
         self._call(lambda: QApplication.clipboard().setText(self.presenter.cut_block(*self._range())))
@@ -4378,15 +4382,18 @@ class ModernWindow(QMainWindow):
         dialog.exec()
 
     def rename_column(self, col_index=None):
-        index = self._current_column() if col_index is None else int(col_index)
-        if 0 <= index < self.column_names.columnCount():
-            item = self.column_names.item(0, index)
-            if item is not None:
-                self.column_names.setFocus()
-                self.column_names.setCurrentCell(0, index)
-                self.column_names.scrollToItem(item)
-                self.column_names.editItem(item)
-                return
+        if col_index is None:
+            index = self._current_column()
+            if 0 <= index < self.column_names.columnCount():
+                item = self.column_names.item(0, index)
+                if item is not None:
+                    self.column_names.setFocus()
+                    self.column_names.setCurrentCell(0, index)
+                    self.column_names.scrollToItem(item)
+                    self.column_names.editItem(item)
+                    return
+        else:
+            index = int(col_index)
         old = self.presenter.worksheet.columns[index].name
         name, accepted = QInputDialog.getText(self, "Rename Column", "Name:", text=old)
         if accepted: self._call(lambda: self.presenter.rename_column(index, name))

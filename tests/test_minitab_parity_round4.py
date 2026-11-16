@@ -63,6 +63,7 @@ class TestMinitabParityRound4(unittest.TestCase):
 
     def test_cut_column_names_and_select_all_guard(self):
         self.win.show()
+        self.win.activateWindow()
         self.win.presenter.rename_columns(0, ["Alpha", "Beta"])
         self.win.refresh()
         self.win.column_names.setFocus()

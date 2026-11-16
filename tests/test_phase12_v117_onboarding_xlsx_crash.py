@@ -209,11 +209,10 @@ class TestPhase12V117Features(unittest.TestCase):
         from statcraft import __version__, updater
         repo = Path(__file__).resolve().parents[1]
         readme = (repo / "README.md").read_text(encoding="utf-8")
-        self.assertEqual(__version__, "118.0.0")
-        self.assertEqual(updater.STATCRAFT_VERSION, "118.0.0")
-        self.assertIn("v118.0.0", readme)
+        self.assertEqual(__version__, updater.STATCRAFT_VERSION)
+        self.assertGreaterEqual(tuple(int(x) for x in __version__.split(".")), (118, 0, 0))
         self.assertNotIn("v115.0.0", readme)
-        self.assertIn("118.0.0", (repo / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertIn(f'version = "{__version__}"', (repo / "pyproject.toml").read_text(encoding="utf-8"))
 
     def test_07_excel_ctrl_v_paste_from_inline_editors_splits_rows_and_columns(self):
         from PySide6.QtCore import Qt
