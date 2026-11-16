@@ -5009,7 +5009,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.two_sample_poisson_dialog
         dlg = TwoSamplePoissonDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("two_sample_poisson", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("two_sample_poisson", dlg)
             p = dlg.result_payload or dlg.settings
             if p:
                 entry = self._call(lambda: self.presenter.two_sample_poisson(settings=p), result=True)
@@ -5021,7 +5023,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.one_sample_poisson_dialog
         dlg = OneSamplePoissonDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("one_sample_poisson", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("one_sample_poisson", dlg)
             p = dlg.result_payload or dlg.settings
             if p:
                 entry = self._call(lambda: self.presenter.one_sample_poisson(settings=p), result=True)
@@ -5271,7 +5275,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.cause_and_effect_dialog
         dlg = CauseAndEffectDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("cause_and_effect", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("cause_and_effect", dlg)
             p = dlg.selected_params
             if p:
                 entry = self._call(lambda: self.presenter.cause_and_effect(**p), result=True)
@@ -5428,7 +5434,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = lambda: self.multivariate_control_dialog(chart_type)
         dlg = MultivariateChartDialog(self.presenter.worksheet, chart_type=chart_type, parent=self)
+        self._restore_custom_dialog_state(f"multivariate_{chart_type}", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state(f"multivariate_{chart_type}", dlg)
             cfg = dlg.get_configuration()
             if cfg:
                 entry = self._call(lambda: self.presenter.multivariate_control_chart(settings=cfg), result=True)
@@ -5449,7 +5457,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.pareto_chart_dialog
         dlg = ParetoChartDialog(self.presenter.worksheet, parent=self)
+        self._restore_custom_dialog_state("pareto_chart", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("pareto_chart", dlg)
             cfg = dlg.get_configuration()
             if cfg:
                 entry = self._call(lambda: self.presenter.pareto_chart(settings=cfg), result=True)
@@ -6932,7 +6942,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.capability_sixpack_nonnormal
         dlg = CapabilitySixpackNonnormalDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("sixpack_nonnormal", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("sixpack_nonnormal", dlg)
             p = dlg.selected_params
             if p:
                 entry = self._call(lambda: self.presenter.nonnormal_sixpack(settings=p), result=True)

@@ -192,3 +192,23 @@ class CauseAndEffectDialog(QDialog):
             "no_labels": self.chk_no_labels.isChecked(),
         }
         self.accept()
+
+    def get_state(self) -> dict:
+        return {
+            "effect": self.txt_effect.text(),
+            "title": self.txt_title.text(),
+            "no_empty": self.chk_no_empty.isChecked(),
+            "no_labels": self.chk_no_labels.isChecked(),
+        }
+
+    def set_state(self, state: dict) -> None:
+        if not isinstance(state, dict):
+            return
+        if "effect" in state:
+            self.txt_effect.setText(str(state["effect"]))
+        if "title" in state:
+            self.txt_title.setText(str(state["title"]))
+        if "no_empty" in state:
+            self.chk_no_empty.setChecked(bool(state["no_empty"]))
+        if "no_labels" in state:
+            self.chk_no_labels.setChecked(bool(state["no_labels"]))

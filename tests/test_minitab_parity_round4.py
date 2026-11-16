@@ -351,6 +351,73 @@ class TestMinitabParityRound4(unittest.TestCase):
             else:
                 settings.setValue("options/decimal_places", prev_dec)
 
+    def test_poisson_pareto_ce_mv_sixpack_state_and_confidence(self):
+        from PySide6.QtCore import QSettings
+        from statcraft.one_sample_poisson_dialogs import OneSamplePoissonDialog
+        from statcraft.two_sample_poisson_dialogs import TwoSamplePoissonDialog
+        from statcraft.pareto_dialogs import ParetoChartDialog
+        from statcraft.cause_and_effect_dialog import CauseAndEffectDialog
+        from statcraft.multivariate_control_dialogs import MultivariateChartDialog
+        from statcraft.sixpack_dialogs import CapabilitySixpackDialog, CapabilitySixpackNonnormalDialog
+
+        settings = QSettings("StatCraft", "Desktop")
+        prev_val = settings.value("options/default_confidence")
+        try:
+            settings.setValue("options/default_confidence", 99.0)
+            self.win.presenter.paste(0, 0, "5\t10\n7\t12\n")
+            ws = self.win.presenter.worksheet
+
+            op1 = OneSamplePoissonDialog(ws, self.win)
+            self.assertEqual(op1.options["confidence_level"], 99.0)
+            op1.sample_cols_edit.setText("C1")
+            self.win._save_custom_dialog_state("one_sample_poisson", op1)
+            op2 = OneSamplePoissonDialog(ws, self.win)
+            self.win._restore_custom_dialog_state("one_sample_poisson", op2)
+            self.assertEqual(op2.sample_cols_edit.text(), "C1")
+            op1.close(); op2.close()
+
+            tp1 = TwoSamplePoissonDialog(ws, self.win)
+            self.assertEqual(tp1.options["confidence_level"], 99.0)
+            tp1.sample1_edit.setText("C1")
+            self.win._save_custom_dialog_state("two_sample_poisson", tp1)
+            tp2 = TwoSamplePoissonDialog(ws, self.win)
+            self.win._restore_custom_dialog_state("two_sample_poisson", tp2)
+            self.assertEqual(tp2.sample1_edit.text(), "C1")
+            tp1.close(); tp2.close()
+
+            pa1 = ParetoChartDialog(ws, parent=self.win); pa1.edit_defects_raw.setText("C1")
+            self.win._save_custom_dialog_state("pareto_chart", pa1)
+            pa2 = ParetoChartDialog(ws, parent=self.win); self.win._restore_custom_dialog_state("pareto_chart", pa2)
+            self.assertEqual(pa2.edit_defects_raw.text(), "C1")
+            pa1.close(); pa2.close()
+
+            ce1 = CauseAndEffectDialog(ws, self.win); ce1.txt_effect.setText("Defects")
+            self.win._save_custom_dialog_state("cause_and_effect", ce1)
+            ce2 = CauseAndEffectDialog(ws, self.win); self.win._restore_custom_dialog_state("cause_and_effect", ce2)
+            self.assertEqual(ce2.txt_effect.text(), "Defects")
+            ce1.close(); ce2.close()
+
+            mv1 = MultivariateChartDialog(ws, chart_type="TSQUARED", parent=self.win); mv1.edit_vars.setText("C1 C2")
+            self.win._save_custom_dialog_state("multivariate_TSQUARED", mv1)
+            mv2 = MultivariateChartDialog(ws, chart_type="TSQUARED", parent=self.win); self.win._restore_custom_dialog_state("multivariate_TSQUARED", mv2)
+            self.assertEqual(mv2.edit_vars.text(), "C1 C2")
+            mv1.close(); mv2.close()
+
+            sp_norm = CapabilitySixpackDialog(ws, self.win)
+            self.assertEqual(sp_norm.options["confidence_level"], 99.0)
+            sp_norm.close()
+
+            sp1 = CapabilitySixpackNonnormalDialog(ws, self.win); sp1.edit_col.setText("C1")
+            self.win._save_custom_dialog_state("sixpack_nonnormal", sp1)
+            sp2 = CapabilitySixpackNonnormalDialog(ws, self.win); self.win._restore_custom_dialog_state("sixpack_nonnormal", sp2)
+            self.assertEqual(sp2.edit_col.text(), "C1")
+            sp1.close(); sp2.close()
+        finally:
+            if prev_val is None:
+                settings.remove("options/default_confidence")
+            else:
+                settings.setValue("options/default_confidence", prev_val)
+
     def test_change_data_type_with_date_format_and_target_column(self):
         self.win.presenter.set_column_type(0, "text")
         self.win.presenter.worksheet.columns[0].values = ["03/15/2025", "04/20/2025"]
@@ -509,6 +576,73 @@ class TestMinitabParityRound4(unittest.TestCase):
                 settings.remove("options/decimal_places")
             else:
                 settings.setValue("options/decimal_places", prev_dec)
+
+    def test_poisson_pareto_ce_mv_sixpack_state_and_confidence(self):
+        from PySide6.QtCore import QSettings
+        from statcraft.one_sample_poisson_dialogs import OneSamplePoissonDialog
+        from statcraft.two_sample_poisson_dialogs import TwoSamplePoissonDialog
+        from statcraft.pareto_dialogs import ParetoChartDialog
+        from statcraft.cause_and_effect_dialog import CauseAndEffectDialog
+        from statcraft.multivariate_control_dialogs import MultivariateChartDialog
+        from statcraft.sixpack_dialogs import CapabilitySixpackDialog, CapabilitySixpackNonnormalDialog
+
+        settings = QSettings("StatCraft", "Desktop")
+        prev_val = settings.value("options/default_confidence")
+        try:
+            settings.setValue("options/default_confidence", 99.0)
+            self.win.presenter.paste(0, 0, "5\t10\n7\t12\n")
+            ws = self.win.presenter.worksheet
+
+            op1 = OneSamplePoissonDialog(ws, self.win)
+            self.assertEqual(op1.options["confidence_level"], 99.0)
+            op1.sample_cols_edit.setText("C1")
+            self.win._save_custom_dialog_state("one_sample_poisson", op1)
+            op2 = OneSamplePoissonDialog(ws, self.win)
+            self.win._restore_custom_dialog_state("one_sample_poisson", op2)
+            self.assertEqual(op2.sample_cols_edit.text(), "C1")
+            op1.close(); op2.close()
+
+            tp1 = TwoSamplePoissonDialog(ws, self.win)
+            self.assertEqual(tp1.options["confidence_level"], 99.0)
+            tp1.sample1_edit.setText("C1")
+            self.win._save_custom_dialog_state("two_sample_poisson", tp1)
+            tp2 = TwoSamplePoissonDialog(ws, self.win)
+            self.win._restore_custom_dialog_state("two_sample_poisson", tp2)
+            self.assertEqual(tp2.sample1_edit.text(), "C1")
+            tp1.close(); tp2.close()
+
+            pa1 = ParetoChartDialog(ws, parent=self.win); pa1.edit_defects_raw.setText("C1")
+            self.win._save_custom_dialog_state("pareto_chart", pa1)
+            pa2 = ParetoChartDialog(ws, parent=self.win); self.win._restore_custom_dialog_state("pareto_chart", pa2)
+            self.assertEqual(pa2.edit_defects_raw.text(), "C1")
+            pa1.close(); pa2.close()
+
+            ce1 = CauseAndEffectDialog(ws, self.win); ce1.txt_effect.setText("Defects")
+            self.win._save_custom_dialog_state("cause_and_effect", ce1)
+            ce2 = CauseAndEffectDialog(ws, self.win); self.win._restore_custom_dialog_state("cause_and_effect", ce2)
+            self.assertEqual(ce2.txt_effect.text(), "Defects")
+            ce1.close(); ce2.close()
+
+            mv1 = MultivariateChartDialog(ws, chart_type="TSQUARED", parent=self.win); mv1.edit_vars.setText("C1 C2")
+            self.win._save_custom_dialog_state("multivariate_TSQUARED", mv1)
+            mv2 = MultivariateChartDialog(ws, chart_type="TSQUARED", parent=self.win); self.win._restore_custom_dialog_state("multivariate_TSQUARED", mv2)
+            self.assertEqual(mv2.edit_vars.text(), "C1 C2")
+            mv1.close(); mv2.close()
+
+            sp_norm = CapabilitySixpackDialog(ws, self.win)
+            self.assertEqual(sp_norm.options["confidence_level"], 99.0)
+            sp_norm.close()
+
+            sp1 = CapabilitySixpackNonnormalDialog(ws, self.win); sp1.edit_col.setText("C1")
+            self.win._save_custom_dialog_state("sixpack_nonnormal", sp1)
+            sp2 = CapabilitySixpackNonnormalDialog(ws, self.win); self.win._restore_custom_dialog_state("sixpack_nonnormal", sp2)
+            self.assertEqual(sp2.edit_col.text(), "C1")
+            sp1.close(); sp2.close()
+        finally:
+            if prev_val is None:
+                settings.remove("options/default_confidence")
+            else:
+                settings.setValue("options/default_confidence", prev_val)
 
 
 if __name__ == "__main__":
