@@ -8124,7 +8124,18 @@ class Presenter:
         try:
             # Only the reconstructed typed recipe executes. Native history and
             # macro text are never interpreted.
-            fresh=self.analyze_response_surface(**recipe['parameters'])
+            action = recipe.get('action')
+            params = recipe.get('parameters', {})
+            if action == 'analyze_response_surface':
+                fresh = self.analyze_response_surface(**params)
+            elif action == 'analyze_factorial':
+                fresh = self.analyze_factorial(**params)
+            elif action == 'analyze_factorial_terms':
+                fresh = self.analyze_factorial_terms(**params)
+            elif action == 'general_linear_model':
+                fresh = self.general_linear_model(**params)
+            else:
+                raise ValueError('Unsupported recovered native model recipe action: ' + str(action))
         except Exception:
             self.select_worksheet(previous)
             raise

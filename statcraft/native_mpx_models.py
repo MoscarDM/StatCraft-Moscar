@@ -1,17 +1,51 @@
 """Recover explicit refit setups from observed native MPX model state.
 
-Only declarative, unweighted, untransformed continuous response-surface models
-are accepted. Native command/history text is never interpreted or executed.
+Only declarative, unweighted, untransformed OLS models (response-surface,
+2-level factorial/screening, and general linear model / ANOVA) are accepted.
+Native command/history text is never interpreted or executed.
 Saved reports remain separate immutable snapshots. All column joins use native
 UUIDs and saved internal variable IDs, never names or current C positions.
 """
 import copy
+import itertools
 import math
 from .native_mpx_outputs import _Reader
-from .glm import settings
+from .glm import settings, validate_terms as validate_glm_terms
 from .response_surface import validate_terms
 
 MAX_MODELS=100
+_RSM_TYPES = ('ResponseSurfaceRegression',)
+_FACTORIAL_TYPES = ('FractionalFactorial', 'FactorialRegression', 'ScreeningRegression', 'TwoLevelFactorial')
+_GLM_TYPES = ('GeneralLinearModel', 'GeneralFactorial', 'OneWayAnova', 'OneWayANOVA')
+_FAMILY_MAP = {
+    **{t: 'response_surface' for t in _RSM_TYPES},
+    **{t: 'factorial' for t in _FACTORIAL_TYPES},
+    **{t: 'general_linear_model' for t in _GLM_TYPES},
+}
+_MODEL_TYPE_MAP = {
+    'response_surface_regression': 'response_surface',
+    'factorial_regression': 'factorial',
+    'fractional_factorial': 'factorial',
+    'screening_regression': 'factorial',
+    'two_level_factorial': 'factorial',
+    'general_linear_model': 'general_linear_model',
+    'general_factorial': 'general_linear_model',
+    'one_way_anova': 'general_linear_model',
+    'anova': 'general_linear_model',
+}
+_OBJ_TYPE_MAP = {
+    'response_surface': 'response_surface',
+    'factorial': 'factorial',
+    'two_level_factorial': 'factorial',
+    'fractional_factorial': 'factorial',
+    'screening': 'factorial',
+    'doe_factorial': 'factorial',
+    'general_linear_model': 'general_linear_model',
+    'glm': 'general_linear_model',
+    'general_factorial': 'general_linear_model',
+    'one_way_anova': 'general_linear_model',
+    'anova': 'general_linear_model',
+}
 
 
 def _number(value):
@@ -44,23 +78,64 @@ def _source_columns(sheet):
     return found
 
 
-def _decode(project,model,uri,declared_id,commands):
+def _validate_factorial_terms(terms, count):
+    if not isinstance(terms, list) or not 1 <= len(terms) <= 64:
+        raise ValueError('Select 1–64 factorial model terms.')
+    seen = set()
+    for term in terms:
+        if not isinstance(term, list) or not 1 <= len(term) <= 3 or any(type(i) is not int or not 0 <= i < count for i in term) or term != sorted(set(term)):
+            raise ValueError('Factorial model terms must contain distinct factors in order, up to three-way interactions.')
+        key = tuple(term)
+        if key in seen:
+            raise ValueError('A factorial model term was selected more than once.')
+        seen.add(key)
+    for term in seen:
+        for size in range(1, len(term)):
+            if any(sub not in seen for sub in itertools.combinations(term, size)):
+                raise ValueError('Keep all lower-order terms for a hierarchical factorial model.')
+    return terms
+
+
+def _decode(project, model, uri, declared_id, commands, family_type='ResponseSurfaceRegression'):
+    expected_family = _FAMILY_MAP.get(family_type)
+    if expected_family is None:
+        raise ValueError('Unsupported native model family.')
     model=_dict(model,'model');metadata=_dict(model.get('metadata'),'model metadata')
     cid=metadata.get('command_id');wid=metadata.get('worksheet_id')
     if not isinstance(cid,str) or not cid or wid not in project.worksheet_ids:raise ValueError('The saved model has no available source worksheet or command identity.')
     command=commands.get(cid)
     if command is None:raise ValueError('The saved model command is absent or ambiguous.')
     if command.get('InputWorksheet')!=wid and command.get('OutputWorksheet')!=wid:raise ValueError('The saved model and command refer to different worksheets.')
-    if metadata.get('model_type')!='response_surface_regression':raise ValueError('Unsupported native model type.')
+    if _MODEL_TYPE_MAP.get(metadata.get('model_type')) != expected_family:
+        raise ValueError('Unsupported native model type.')
     model_id=_integer(metadata.get('model_id'),'model identity')
     if declared_id is not None and _integer(declared_id,'declared model identity')!=model_id:raise ValueError('Native model identities disagree.')
     sheet=project.worksheets[project.worksheet_ids.index(wid)];sources=_source_columns(sheet)
     variables=_dict(model.get('variables'),'model variables');target=_dict(variables.get('target'),'response variable')
-    predictors=_items(variables.get('predictors'),'continuous predictors',10)
-    if not 2<=len(predictors)<=10:raise ValueError('Refitting supports 2–10 continuous factors.')
+    if expected_family == 'general_linear_model':
+        allowed_roles = {'target', 'predictors', 'factors', 'covariates', 'block'}
+        if set(variables) - allowed_roles:
+            raise ValueError('The native model uses additional unsupported variable roles.')
+        if 'predictors' in variables:
+            predictors = _items(variables.get('predictors'), 'predictors', 8)
+        else:
+            raw_factors = _items(variables.get('factors', []), 'factors', 8)
+            raw_covs = _items(variables.get('covariates', []), 'covariates', 8)
+            predictors = raw_factors + raw_covs
+        if not 1 <= len(predictors) <= 8:
+            raise ValueError('General linear model refitting supports 1–8 predictors.')
+    elif expected_family == 'factorial':
+        if set(variables) - {'target', 'predictors', 'block'}:
+            raise ValueError('The native model uses additional unsupported variable roles.')
+        predictors = _items(variables.get('predictors'), 'factorial predictors', 8)
+        if not 2 <= len(predictors) <= 8:
+            raise ValueError('Factorial refitting supports 2–8 factors.')
+    else:
+        predictors=_items(variables.get('predictors'),'continuous predictors',10)
+        if not 2<=len(predictors)<=10:raise ValueError('Refitting supports 2–10 continuous factors.')
+        if set(variables)-{'target','predictors','block'}:raise ValueError('The native model uses additional unsupported variable roles.')
     block=variables.get('block');roles=[target]+predictors+([] if block is None else [_dict(block,'block variable')])
-    if set(variables)-{'target','predictors','block'}:raise ValueError('The native model uses additional unsupported variable roles.')
-    ids=[];internal={};indices=[]
+    ids=[];internal={};indices=[];predictor_roles=[]
     for position,variable in enumerate(roles):
         variable=_dict(variable,'variable reference');identity=variable.get('id')
         if not isinstance(identity,str) or identity not in sources:raise ValueError('A saved model column identity is unavailable in its worksheet.')
@@ -68,16 +143,37 @@ def _decode(project,model,uri,declared_id,commands):
         ids.append(identity);internal_id=_integer(variable.get('variable_id'),'variable identity')
         if internal_id in internal:raise ValueError('Ambiguous saved internal variable identity.')
         internal[internal_id]=identity;index=sources[identity];indices.append(index)
-        expected='categorical' if block is not None and position==len(roles)-1 else 'continuous'
-        if variable.get('type')!=expected:raise ValueError('The native model contains an unsupported predictor type.')
+        vtype = variable.get('type')
+        if position == 0:
+            expected = 'continuous'
+        elif block is not None and position == len(roles) - 1:
+            expected = 'categorical'
+        elif expected_family == 'response_surface':
+            expected = 'continuous'
+            predictor_roles.append(expected)
+        else:
+            if vtype not in ('continuous', 'categorical'):
+                raise ValueError('The native model contains an unsupported predictor type.')
+            expected = vtype
+            predictor_roles.append(expected)
+        if vtype!=expected:raise ValueError('The native model contains an unsupported predictor type.')
         if variable.get('data_type')!=('text' if sheet.columns[index].kind=='text' else 'numeric'):raise ValueError('The source data type conflicts with its saved native variable type.')
         if (expected=='continuous' and sheet.columns[index].kind!='number') or (expected=='categorical' and sheet.columns[index].kind not in ('number','text')):raise ValueError('The source column type no longer matches its saved model role.')
     response=indices[0];factors=indices[1:1+len(predictors)];block_index=indices[-1] if block is not None else None
     state=_dict(_dict(model.get('model_information'),'model information').get('input_state'),'input state')
     obj=_dict(_dict(model.get('post_analysis_data'),'post-analysis data').get('model_object'),'model object')
-    if obj.get('model_object_type')!='response_surface' or obj.get('model_analysis_type')!='response_surface':raise ValueError('Unsupported native post-analysis model.')
-    if state.get('include_constant_term') is not True:raise ValueError('Native no-intercept models cannot be reconstructed by this response-surface fitter.')
-    if state.get('coding') not in ('effects','effect'):raise ValueError('Only the observed native effects coding is supported for refitting.')
+    if _OBJ_TYPE_MAP.get(obj.get('model_object_type')) != expected_family or _OBJ_TYPE_MAP.get(obj.get('model_analysis_type')) != expected_family:
+        raise ValueError('Unsupported native post-analysis model.')
+    if state.get('include_constant_term') is not True:raise ValueError('Native no-intercept models cannot be reconstructed by this fitter.')
+    raw_coding = state.get('coding')
+    if expected_family == 'general_linear_model':
+        if raw_coding not in ('effects', 'effect', 'reference'):
+            raise ValueError('Only native effects or reference coding is supported for refitting.')
+        model_coding = 'reference' if raw_coding == 'reference' else 'effect'
+    else:
+        if raw_coding not in ('effects', 'effect'):
+            raise ValueError('Only the observed native effects coding is supported for refitting.')
+        model_coding = 'effect'
     if state.get('standardized') is not False:raise ValueError('Native standardized predictor models are not yet supported.')
     if state.get('link_function_type')!='none' or obj.get('link_function_type')!='none':raise ValueError('Native linked/generalized response models are not supported here.')
     if state.get('confidence_interval')!='two_sided':raise ValueError('Native one-sided model inference is not supported here.')
@@ -93,7 +189,7 @@ def _decode(project,model,uri,declared_id,commands):
     termlist=_dict(obj.get('model_term_list'),'post-analysis term list')
     post_predictors=_items(termlist.get('model_predictors'),'post-analysis predictors',12)
     positions={identity:i for i,identity in enumerate(ids[1:1+len(predictors)])}
-    post_ids={};coding=[None]*len(predictors);block_levels=[];constants=0
+    post_ids={};coding=[None]*len(predictors);cat_levels={};block_levels=[];constants=0
     for pred in post_predictors:
         pred=_dict(pred,'post-analysis predictor');pid=_integer(pred.get('predictor_id'),'predictor identity')
         if pid in post_ids:raise ValueError('Duplicate native predictor identity.')
@@ -106,16 +202,35 @@ def _decode(project,model,uri,declared_id,commands):
         if pred.get('was_predictor_fit') is not True or pred.get('is_random') is not False or pred.get('is_hard_to_change') is not False or pred.get('nesting_predictor_ids'):
             raise ValueError('Native random, nested, excluded or hard-to-change predictors are not supported here.')
         if identity in positions:
-            if typ!='continuous':raise ValueError('Native factor types disagree across model state.')
-            levels=_items(pred.get('numeric_levels'),'factor coding levels',2)
-            if len(levels)!=2 or not all(_number(v) for v in levels) or not levels[0]<levels[1]:raise ValueError('The saved factor has no valid low/high coding levels.')
-            coding[positions[identity]]={'low':levels[0],'high':levels[1]}
+            pos = positions[identity]
+            col_idx = factors[pos]
+            role = predictor_roles[pos]
+            if role == 'continuous':
+                if typ!='continuous':raise ValueError('Native factor types disagree across model state.')
+                if expected_family in ('response_surface', 'factorial'):
+                    levels=_items(pred.get('numeric_levels'),'factor coding levels',2)
+                    if len(levels)!=2 or not all(_number(v) for v in levels) or not levels[0]<levels[1]:raise ValueError('The saved factor has no valid low/high coding levels.')
+                    coding[pos]={'low':levels[0],'high':levels[1]}
+                else:
+                    coding[pos]={'kind':'covariate'}
+            else:
+                if typ!='categorical':raise ValueError('Native factor types disagree across model state.')
+                levels=pred.get('text_levels') if sheet.columns[col_idx].kind=='text' else pred.get('numeric_levels')
+                levels=_items(levels,'categorical factor levels',32)
+                if len(levels)<2 or len(set(levels))!=len(levels):raise ValueError('Invalid native categorical factor levels.')
+                if expected_family=='factorial' and len(levels)!=2:raise ValueError('Factorial categorical factors must have exactly 2 levels.')
+                declared_classes = predictors[pos].get('classes')
+                if declared_classes is not None and declared_classes != levels:
+                    raise ValueError('Native categorical factor levels disagree across model state.')
+                cat_levels[identity] = levels
+                coding[pos] = {'kind': 'categorical', 'levels': levels}
         else:
-            if block is None or identity!=ids[-1] or typ!='block':raise ValueError('Unexpected categorical predictor in native response-surface model.')
+            if block is None or identity!=ids[-1] or typ!='block':raise ValueError('Unexpected categorical predictor in native model.')
             block_levels=pred.get('text_levels') if sheet.columns[block_index].kind=='text' else pred.get('numeric_levels')
             block_levels=_items(block_levels,'block levels',32)
             if len(block_levels)<2 or len(set(block_levels))!=len(block_levels):raise ValueError('Invalid native fixed-block levels.')
             if block.get('classes')!=block_levels:raise ValueError('Native fixed-block levels disagree across model state.')
+            cat_levels[identity] = block_levels
         post_ids[pid]=identity
     if constants!=1 or len(post_ids)!=1+len(predictors)+(block is not None) or any(c is None for c in coding):raise ValueError('The saved model has an incomplete predictor/coding map.')
     inputs=_dict(state.get('termlist'),'input term list');input_terms=[];block_terms=0
@@ -123,19 +238,24 @@ def _decode(project,model,uri,declared_id,commands):
     fixed_ids=[_dict(v,'fixed factor').get('id') for v in fixed]
     if len(fixed_ids)!=len(ids)-1 or set(fixed_ids)!=set(ids[1:]):raise ValueError('Native input factors disagree with the declared model variables.')
     for term in _items(inputs.get('model_terms'),'input model terms',66):
-        columns=_items(_dict(term,'input term').get('term_columns'),'input term columns',2)
+        columns=_items(_dict(term,'input term').get('term_columns'),'input term columns',3 if expected_family != 'response_surface' else 2)
         identities=[_dict(v,'term variable').get('id') for v in columns]
         if any(internal.get(_integer(v.get('variable_id'),'input term variable identity'))!=v.get('id') for v in columns):raise ValueError('Input term variable identities disagree.')
         if block is not None and identities==[ids[-1]]:block_terms+=1;continue
         if not identities or any(v not in positions for v in identities):raise ValueError('Unsupported block interaction or unknown input model term.')
         input_terms.append(sorted(positions[v] for v in identities))
-    validate_terms(input_terms,len(factors))
+    if expected_family == 'response_surface':
+        validate_terms(input_terms, len(factors))
+    elif expected_family == 'factorial':
+        _validate_factorial_terms(input_terms, len(factors))
+    else:
+        validate_glm_terms(input_terms, len(factors))
     if block_terms!=(1 if block is not None else 0):raise ValueError('Native block term inclusion is inconsistent.')
     reference_terms=[];post_terms=[];constant_terms=0;post_block_terms=0
     for term in _items(termlist.get('model_terms'),'saved model terms',67):
-        term=_dict(term,'saved model term');pids=_items(term.get('predictor_ids'),'saved term predictor identities',2)
+        term=_dict(term,'saved model term');pids=_items(term.get('predictor_ids'),'saved term predictor identities',3 if expected_family != 'response_surface' else 2)
         identities=[post_ids.get(_integer(v,'term predictor identity')) for v in pids]
-        coefficients=_items(term.get('coefficients'),'saved coefficients',32);ses=_items(term.get('standard_error_coefficients'),'saved coefficient standard errors',32)
+        coefficients=_items(term.get('coefficients'),'saved coefficients',64);ses=_items(term.get('standard_error_coefficients'),'saved coefficient standard errors',64)
         if not coefficients or len(coefficients)!=len(ses) or not all(_number(v) for v in coefficients+ses) or any(v<0 for v in ses):raise ValueError('Invalid saved coefficient data.')
         if identities==['constant']:
             if len(coefficients)!=1:raise ValueError('Invalid intercept coefficient dimension.')
@@ -145,25 +265,105 @@ def _decode(project,model,uri,declared_id,commands):
             post_block_terms+=1
             reference_terms.extend({'kind':'block','level':level,'estimate':value,'standard_error':se} for level,value,se in zip(block_levels,coefficients,ses))
         else:
-            if not identities or any(v not in positions for v in identities) or len(coefficients)!=1:raise ValueError('Unsupported native saved polynomial term.')
-            normalized=sorted(positions[v] for v in identities);post_terms.append(normalized)
-            reference_terms.append({'kind':'polynomial','term':normalized,'estimate':coefficients[0],'standard_error':ses[0]})
+            if not identities or any(v not in positions for v in identities):raise ValueError('Unsupported native saved term.')
+            normalized=sorted(positions[v] for v in identities)
+            cat_in_term = [v for v in identities if v in cat_levels]
+            if not cat_in_term:
+                if len(coefficients)!=1:raise ValueError('Unsupported native saved polynomial term.')
+                post_terms.append(normalized)
+                reference_terms.append({'kind':'polynomial','term':normalized,'estimate':coefficients[0],'standard_error':ses[0]})
+            else:
+                expanded_dim = math.prod(len(cat_levels[v]) for v in cat_in_term)
+                free_dim = math.prod(len(cat_levels[v]) - 1 for v in cat_in_term)
+                if len(coefficients) not in (expanded_dim, free_dim):
+                    raise ValueError('Native categorical term coefficient dimensions disagree with factor levels.')
+                post_terms.append(normalized)
+                reference_terms.append({
+                    'kind': 'categorical_term',
+                    'term': normalized,
+                    'coefficients': list(coefficients),
+                    'standard_errors': list(ses),
+                    'expanded': len(coefficients) == expanded_dim,
+                })
     if constant_terms!=1 or post_block_terms!=block_terms or len(post_terms)!=len(input_terms) or {tuple(v) for v in post_terms}!={tuple(v) for v in input_terms}:raise ValueError('Input and saved model terms disagree.')
     tables=metadata.get('tables',{});graphs=metadata.get('graphs',{});o=settings()
-    o.update(confidence=confidence,coding='effect',ss_type='sequential' if continuous.get('sequential_sum_of_squares') else 'adjusted',graphs='four' if graphs.get('display_fourpack') or any(graphs.get(k) for k in ('display_histogram','display_normal','display_fits','display_order')) else 'none')
+    o.update(confidence=confidence,coding=model_coding,ss_type='sequential' if continuous.get('sequential_sum_of_squares') else 'adjusted',graphs='four' if graphs.get('display_fourpack') or any(graphs.get(k) for k in ('display_histogram','display_normal','display_fits','display_order')) else 'none')
     for key,saved_key in [('method','display_method_table'),('anova','display_anova_table'),('model_summary','display_summary_table'),('coefficients','display_coefficients')]:
         if type(tables.get(saved_key)) is bool:o[key]=tables[saved_key]
     o['diagnostics']='all' if tables.get('all_diagnostic_rows') else 'unusual' if tables.get('display_diagnostics_table',True) else 'none'
-    recipe={'action':'analyze_response_surface','parameters':dict(response_index=response,factor_indices=factors,coding=coding,terms=input_terms,options=o)}
-    if block is not None:recipe['parameters']['block_index']=block_index
+    source_column_ids = {'response': ids[0], 'factors': ids[1:1+len(factors)], 'block': ids[-1] if block is not None else None}
+    if expected_family == 'response_surface':
+        recipe={'action':'analyze_response_surface','parameters':dict(response_index=response,factor_indices=factors,coding=coding,terms=input_terms,options=o)}
+        if block is not None:recipe['parameters']['block_index']=block_index
+    elif expected_family == 'factorial':
+        all_numeric = all(sheet.columns[idx].kind == 'number' and role == 'continuous' for idx, role in zip(factors, predictor_roles))
+        block_compatible = (block is None) or (sheet.columns[block_index].kind == 'number' and sheet.columns[block_index].name.casefold() == 'blocks')
+        if all_numeric and block_compatible:
+            max_order = max(len(t) for t in input_terms)
+            params = dict(
+                response_index=response,
+                factor_indices=factors,
+                max_order=max_order,
+                confidence=confidence,
+                plot_residuals=(o['graphs'] != 'none'),
+                show_factor_coding=True,
+                selected_terms=input_terms,
+            )
+            if block is not None:
+                params['include_blocks'] = True
+            recipe = {'action': 'analyze_factorial_terms', 'parameters': params}
+        else:
+            cat_pos = [i for i, r in enumerate(predictor_roles) if r == 'categorical']
+            cov_pos = [i for i, r in enumerate(predictor_roles) if r == 'continuous']
+            glm_factors = [factors[i] for i in cat_pos] + ([block_index] if block is not None else [])
+            glm_covs = [factors[i] for i in cov_pos]
+            glm_pos_map = {pos: idx for idx, pos in enumerate(cat_pos)}
+            block_glm_pos = len(cat_pos)
+            for idx, pos in enumerate(cov_pos):
+                glm_pos_map[pos] = len(glm_factors) + idx
+            glm_terms = [sorted(glm_pos_map[p] for p in t) for t in input_terms]
+            if block is not None:
+                glm_terms.append([block_glm_pos])
+            validate_glm_terms(glm_terms, len(glm_factors) + len(glm_covs))
+            recipe = {'action': 'general_linear_model', 'parameters': dict(
+                response_index=response, factor_indices=glm_factors, covariate_indices=glm_covs, terms=glm_terms, options=o
+            )}
+            source_column_ids = {
+                'response': ids[0],
+                'factors': [ids[1 + i] for i in cat_pos] + ([ids[-1]] if block is not None else []),
+                'covariates': [ids[1 + i] for i in cov_pos],
+                'block': None,
+            }
+    else:
+        cat_pos = [i for i, r in enumerate(predictor_roles) if r == 'categorical']
+        cov_pos = [i for i, r in enumerate(predictor_roles) if r == 'continuous']
+        glm_factors = [factors[i] for i in cat_pos] + ([block_index] if block is not None else [])
+        glm_covs = [factors[i] for i in cov_pos]
+        glm_pos_map = {pos: idx for idx, pos in enumerate(cat_pos)}
+        block_glm_pos = len(cat_pos)
+        for idx, pos in enumerate(cov_pos):
+            glm_pos_map[pos] = len(glm_factors) + idx
+        glm_terms = [sorted(glm_pos_map[p] for p in t) for t in input_terms]
+        if block is not None:
+            glm_terms.append([block_glm_pos])
+        validate_glm_terms(glm_terms, len(glm_factors) + len(glm_covs))
+        recipe = {'action': 'general_linear_model', 'parameters': dict(
+            response_index=response, factor_indices=glm_factors, covariate_indices=glm_covs, terms=glm_terms, options=o
+        )}
+        source_column_ids = {
+            'response': ids[0],
+            'factors': [ids[1 + i] for i in cat_pos] + ([ids[-1]] if block is not None else []),
+            'covariates': [ids[1 + i] for i in cov_pos],
+            'block': None,
+        }
     from .recipes import columns
     columns(recipe)
     mse=obj.get('mean_square_error');df=_integer(obj.get('error_degrees_of_freedom'),'error degrees of freedom')
     if not _number(mse) or mse<0 or df<1:raise ValueError('Invalid native residual inference state.')
-    return {'supported':True,'command_id':cid,'worksheet_id':wid,'worksheet_name':sheet.name,'model_id':model_id,'model_uri':uri,'recipe':recipe,
+    return {'supported':True,'family':expected_family,'command_id':cid,'worksheet_id':wid,'worksheet_name':sheet.name,'model_id':model_id,'model_uri':uri,'recipe':recipe,
             'source_column_map':{str(index):identity for index,identity in zip(indices,ids)},
-            'source_column_ids':{'response':ids[0],'factors':ids[1:1+len(factors)],'block':ids[-1] if block is not None else None},
-            'verification_reference':{'coefficients':reference_terms,'mse':mse,'df_error':df,'row_count':_integer(rows.get('row_count'),'saved row count'),'coding':'effect'},
+            'source_column_ids':source_column_ids,
+            'verification_reference':{'coefficients':reference_terms,'mse':mse,'df_error':df,'row_count':_integer(rows.get('row_count'),'saved row count'),'coding':model_coding},
             'warnings':['Refit is an independent StatCraft calculation using current worksheet values; saved native output remains unchanged.']}
 
 
@@ -189,7 +389,8 @@ def read_native_models(project):
     model_items=model_collection.get('Items',[]) if isinstance(model_collection,dict) else []
     if not isinstance(model_items,list):model_items=[]
     for family in model_items[:64]:
-        if not isinstance(family,dict) or family.get('Type')!='ResponseSurfaceRegression':continue
+        if not isinstance(family,dict) or family.get('Type') not in _FAMILY_MAP:continue
+        family_type = family.get('Type')
         family_items=family.get('Items',[])
         if not isinstance(family_items,list):continue
         for item in family_items[:MAX_MODELS]:
@@ -200,7 +401,7 @@ def read_native_models(project):
             raw=reader.resolve(uri);model=raw.get('Model') if isinstance(raw,dict) else None
             model_meta=model.get('metadata',{}) if isinstance(model,dict) else {};cid=model_meta.get('command_id')
             key=cid if isinstance(cid,str) and cid else uri
-            try:descriptor=_decode(project,model,uri,item.get('Id'),commands)
+            try:descriptor=_decode(project,model,uri,item.get('Id'),commands,family_type=family_type)
             except (ValueError,TypeError,KeyError,IndexError,AttributeError,OverflowError,RecursionError) as exc:
                 descriptor={'supported':False,'command_id':cid,'worksheet_id':model_meta.get('worksheet_id'),'model_uri':uri,'error':str(exc),'warnings':['The native model cannot be refitted automatically: '+str(exc)]}
             if key in result:
@@ -217,24 +418,48 @@ def compare_native_model(result,descriptor,relative_tolerance=1e-7,absolute_tole
     """
     reference=descriptor.get('verification_reference')
     if not descriptor.get('supported') or not isinstance(reference,dict):raise ValueError('Select a supported recovered native model.')
-    if not isinstance(result,dict) or result.get('analysis')!='response_surface':raise ValueError('Compare a fitted response-surface result.')
+    is_rsm = isinstance(result, dict) and result.get('analysis') == 'response_surface'
+    is_glm = isinstance(result, dict) and result.get('analysis') == 'general_linear_model'
+    is_factorial = isinstance(result, dict) and 'factor_coding' in result and 'selected_terms' in result
+    if not (is_rsm or is_glm or is_factorial):
+        raise ValueError('Compare a fitted response-surface, factorial, or general linear model result.')
     if not _number(relative_tolerance) or not _number(absolute_tolerance) or relative_tolerance<0 or absolute_tolerance<0:raise ValueError('Comparison tolerances must be finite and nonnegative.')
-    coefficients=result.get('coefficients',[]);terms=result.get('surface_terms',result.get('terms',[]));levels=result.get('block_levels',[])
-    count=max(0,len(levels)-1);polynomial={tuple(term):coefficients[1+count+i] for i,term in enumerate(terms) if 1+count+i<len(coefficients)}
-    blocks={level:coefficients[1+i] for i,level in enumerate(levels[:-1]) if 1+i<len(coefficients)}
+    coefficients=result.get('coefficients',[])
     comparisons=[]
     def append(label,actual,expected):
         matched=_number(actual) and _number(expected) and math.isclose(actual,expected,rel_tol=relative_tolerance,abs_tol=absolute_tolerance)
         comparisons.append({'label':label,'actual':actual,'native':expected,'difference':actual-expected if _number(actual) and _number(expected) else None,'matches':bool(matched)})
-    for item in reference['coefficients']:
-        if item['kind']=='constant':actual=coefficients[0] if coefficients else {};label='Constant'
-        elif item['kind']=='polynomial':actual=polynomial.get(tuple(item['term']),{});label='Term '+str(item['term'])
-        else:
-            # The effect-coded reference level is expanded natively but absent
-            # as an independent parameter. Compare only free coefficients.
-            if item['level'] not in blocks:continue
-            actual=blocks[item['level']];label='Block '+str(item['level'])
-        append(label,actual.get('estimate'),item['estimate']);append(label+' SE',actual.get('standard_error'),item['standard_error'])
+    if is_rsm:
+        terms=result.get('surface_terms',result.get('terms',[]));levels=result.get('block_levels',[])
+        count=max(0,len(levels)-1);polynomial={tuple(term):coefficients[1+count+i] for i,term in enumerate(terms) if 1+count+i<len(coefficients)}
+        blocks={level:coefficients[1+i] for i,level in enumerate(levels[:-1]) if 1+i<len(coefficients)}
+        for item in reference['coefficients']:
+            if item['kind']=='constant':actual=coefficients[0] if coefficients else {};label='Constant'
+            elif item['kind']=='polynomial':actual=polynomial.get(tuple(item['term']),{});label='Term '+str(item['term'])
+            else:
+                # The effect-coded reference level is expanded natively but absent
+                # as an independent parameter. Compare only free coefficients.
+                if item['level'] not in blocks:continue
+                actual=blocks[item['level']];label='Block '+str(item['level'])
+            append(label,actual.get('estimate'),item['estimate']);append(label+' SE',actual.get('standard_error'),item['standard_error'])
+    elif is_factorial:
+        n_blocks = len(result.get('block_terms', []))
+        terms = result.get('selected_terms', [])
+        term_map = {tuple(term): coefficients[1 + n_blocks + i] for i, term in enumerate(terms) if 1 + n_blocks + i < len(coefficients)}
+        for item in reference['coefficients']:
+            if item['kind'] == 'constant':
+                actual = coefficients[0] if coefficients else {}; label = 'Constant'
+            elif item['kind'] == 'polynomial':
+                actual = term_map.get(tuple(item['term']), {}); label = 'Term ' + str(item['term'])
+            else:
+                continue
+            append(label, actual.get('estimate'), item['estimate']); append(label + ' SE', actual.get('standard_error'), item['standard_error'])
+    else:
+        for item in reference['coefficients']:
+            if item['kind'] == 'constant':
+                actual = coefficients[0] if coefficients else {}
+                append('Constant', actual.get('estimate'), item['estimate'])
+                append('Constant SE', actual.get('standard_error'), item['standard_error'])
     append('MSE',result.get('ms_error'),reference['mse']);append('Error DF',result.get('df_error'),reference['df_error'])
     return {'matches_saved_native':bool(comparisons) and all(v['matches'] for v in comparisons),'comparisons':comparisons,'relative_tolerance':relative_tolerance,'absolute_tolerance':absolute_tolerance,'scope':'Saved native coefficients, free coefficient standard errors, residual mean square and error degrees of freedom; independent fresh fit, not native execution.'}
 
@@ -250,7 +475,8 @@ def resolve_model_recipe(project,descriptor):
     try:
         p['response_index']=columns[identities['response']]
         p['factor_indices']=[columns[identity] for identity in identities['factors']]
-        if identities['block'] is not None:p['block_index']=columns[identities['block']]
+        if identities.get('covariates') is not None:p['covariate_indices']=[columns[identity] for identity in identities['covariates']]
+        if identities.get('block') is not None:p['block_index']=columns[identities['block']]
     except KeyError as exc:raise ValueError('A recovered native model source column was deleted or lost its identity.') from exc
     from .recipes import columns as recipe_columns
     recipe_columns(recipe)
@@ -282,6 +508,8 @@ def resolve_entry_recipe(entry, worksheet=None):
                     p['response_index'] = cols[identities['response']]
                 if identities.get('factors'):
                     p['factor_indices'] = [cols[fid] for fid in identities['factors'] if fid in cols]
+                if identities.get('covariates'):
+                    p['covariate_indices'] = [cols[cid] for cid in identities['covariates'] if cid in cols]
                 if identities.get('block') and identities['block'] in cols:
                     p['block_index'] = cols[identities['block']]
             except Exception:
