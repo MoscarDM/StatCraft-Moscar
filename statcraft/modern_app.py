@@ -1785,6 +1785,7 @@ class ModernWindow(QMainWindow):
         self.view_cmd_action.setShortcut(QKeySequence("Ctrl+M"))
         self.view_cmd_action.triggered.connect(self.toggle_command_line)
         view.addAction(self.view_cmd_action)
+        self._action(view, "Edit Command Line…", self.open_command_line, QKeySequence("Ctrl+L"))
         view.addSeparator()
         self.view_mode_actions = {}
         mode_group = QActionGroup(self)
@@ -1854,11 +1855,13 @@ class ModernWindow(QMainWindow):
         self.cancel_action.triggered.connect(self.cancel_operation)
 
         self.prev_brushed_action = QAction(tool_icon("prev_brushed"), "Go To Previous Brushed Row", self)
-        self.prev_brushed_action.setToolTip("Go To Previous Brushed Row")
+        self.prev_brushed_action.setShortcut(QKeySequence("Shift+F4"))
+        self.prev_brushed_action.setToolTip("Go To Previous Brushed Row (Shift+F4)")
         self.prev_brushed_action.triggered.connect(lambda: self.go_to_brushed_row(-1))
 
         self.next_brushed_action = QAction(tool_icon("next_brushed"), "Go To Next Brushed Row", self)
-        self.next_brushed_action.setToolTip("Go To Next Brushed Row")
+        self.next_brushed_action.setShortcut(QKeySequence("F4"))
+        self.next_brushed_action.setToolTip("Go To Next Brushed Row (F4)")
         self.next_brushed_action.triggered.connect(lambda: self.go_to_brushed_row(1))
 
         toolbar = QToolBar("Standard and Worksheet Toolbar", self)
@@ -2247,14 +2250,21 @@ class ModernWindow(QMainWindow):
         if hasattr(self, "status_nav_button"): self.status_nav_button.setChecked(vis)
         if hasattr(self, "view_nav_action"): self.view_nav_action.setChecked(vis)
 
+    def open_command_line(self):
+        if not self.command_line_pane.isVisible():
+            self.toggle_command_line()
+        self.command_editor.setFocus()
+
     def toggle_command_line(self):
-        vis = not self.command_line_pane.isVisible()
+        vis = self.command_line_pane.isHidden()
         self.command_line_pane.setVisible(vis)
         if hasattr(self, "status_cmd_button"): self.status_cmd_button.setChecked(vis)
         if hasattr(self, "view_cmd_action"): self.view_cmd_action.setChecked(vis)
         if vis:
             self.output_pane.setVisible(True)
             self.command_editor.setFocus()
+        elif hasattr(self, "table"):
+            self.table.setFocus()
 
     def set_view_mode(self, mode):
         if mode not in ("both", "data", "output"):

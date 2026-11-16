@@ -258,6 +258,16 @@ class WorksheetTable(QTableWidget):
             mods = event.modifiers()
             # Ctrl+Space / Ctrl+Home / Ctrl+End / Ctrl+Up
             if (mods & Qt.KeyboardModifier.ControlModifier) and not (mods & (Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier | Qt.KeyboardModifier.ShiftModifier)):
+                if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    if self.columnCount() > 0:
+                        next_col = min(self.columnCount() - 1, max(0, self.currentColumn()) + 1)
+                        self.setCurrentCell(0, next_col)
+                        return True
+                if key == Qt.Key.Key_Insert:
+                    win = self.window()
+                    if hasattr(win, "copy_cells"):
+                        win.copy_cells()
+                        return True
                 if key == Qt.Key.Key_Space:
                     win = self.window()
                     if hasattr(win, "select_worksheet_column") and self.currentColumn() >= 0:
@@ -282,6 +292,11 @@ class WorksheetTable(QTableWidget):
                     self.navigate('ctrl_right')
                     return True
             elif (mods & Qt.KeyboardModifier.ShiftModifier) and not (mods & (Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier | Qt.KeyboardModifier.ControlModifier)):
+                if key == Qt.Key.Key_Insert:
+                    win = self.window()
+                    if hasattr(win, "paste_cells"):
+                        win.paste_cells()
+                        return True
                 if key == Qt.Key.Key_Space:
                     win = self.window()
                     if hasattr(win, "select_worksheet_row") and self.currentRow() >= 0:
