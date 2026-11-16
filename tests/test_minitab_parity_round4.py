@@ -170,6 +170,25 @@ class TestMinitabParityRound4(unittest.TestCase):
         frame.close()
         chart.close()
 
+    def test_data_copy_submenu_and_presenter_workflows(self):
+        bar = self.win.menuBar()
+        menus = {act.text().replace("&", ""): act.menu() for act in bar.actions() if act.menu()}
+        data_submenus = {a.text().replace("&", ""): a.menu() for a in menus["Data"].actions() if a.menu()}
+        self.assertIn("Copy", data_submenus)
+        copy_items = [a.text().replace("&", "") for a in data_submenus["Copy"].actions() if not a.isSeparator()]
+        self.assertEqual(copy_items, ["Columns to Columns…", "Columns to Constants…", "Constants to Columns…"])
+
+        self.win.presenter.paste(0, 0, "10\n20\n30\n40\n")
+        created = self.win.presenter.copy_columns_to_columns([0], include_rows={0, 2})
+        self.assertEqual(len(created), 1)
+        self.assertEqual(self.win.presenter.worksheet.columns[created[0]].values, [10.0, 30.0])
+
+        stored = self.win.presenter.copy_columns_to_constants([0], ["K1", "K2"])
+        self.assertEqual(stored, ["K1", "K2"])
+        col_idx = self.win.presenter.copy_constants_to_columns(["K1", "K2"], target_name="FromConsts")
+        self.assertEqual(self.win.presenter.worksheet.columns[col_idx].name, "FromConsts")
+        self.assertEqual(self.win.presenter.worksheet.columns[col_idx].values, [10.0, 20.0])
+
 
 if __name__ == "__main__":
     unittest.main()

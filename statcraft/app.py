@@ -7428,6 +7428,118 @@ class Presenter:
         return insert_pos
 
     @undoable
+    def copy_columns_to_columns(self, source_indices, target_indices=None, include_rows=None, omit_rows=None):
+        src_list = [int(i) for i in source_indices]
+        if not src_list or any(not 0 <= i < len(self.worksheet.columns) for i in src_list):
+            raise ValueError("Select at least one valid source column to copy.")
+        inc_set = {int(r) for r in include_rows} if include_rows is not None else None
+        omit_set = {int(r) for r in omit_rows} if omit_rows is not None else set()
+        created = []
+        for pos, src_idx in enumerate(src_list):
+            src = self.worksheet.columns[src_idx]
+            vals = []
+            for r, v in enumerate(src.values):
+                if inc_set is not None and r not in inc_set:
+                    continue
+                if r in omit_set:
+                    continue
+                vals.append(v)
+            if target_indices is not None and pos < len(target_indices):
+                t_idx = int(target_indices[pos])
+                if not 0 <= t_idx < len(self.worksheet.columns):
+                    raise ValueError("Target column index out of range.")
+                dst = self.worksheet.columns[t_idx]
+                dst.kind = src.kind
+                dst.values = vals
+                dst.metadata = copy.deepcopy(src.metadata)
+                created.append(t_idx)
+            else:
+                new_name = f"{src.name} (Copy)"
+                existing_names = {c.name for c in self.worksheet.columns}
+                cnt = 1
+                while new_name in existing_names:
+                    cnt += 1
+                    new_name = f"{src.name} (Copy {cnt})"
+                self.worksheet.columns.append(Column(new_name, src.kind, vals, metadata=copy.deepcopy(src.metadata)))
+                created.append(len(self.worksheet.columns) - 1)
+        self.dirty = True
+        return created
+
+    @undoable
+    def copy_columns_to_constants(self, source_indices, constant_names=None):
+        src_list = [int(i) for i in source_indices]
+        if not src_list or any(not 0 <= i < len(self.worksheet.columns) for i in src_list):
+            raise ValueError("Select at least one valid source column.")
+        names = list(constant_names) if constant_names else []
+        stored = []
+        if len(src_list) == 1 and len(names) > 1:
+            src = self.worksheet.columns[src_list[0]]
+            vals = [v for v in src.values if v is not None]
+            for idx, cname in enumerate(names):
+                if idx >= len(vals):
+                    break
+                cname = cname.strip()
+                if not cname:
+                    continue
+                existing = next((c for c in self.worksheet.constants if c.name.casefold() == cname.casefold()), None)
+                if existing is not None:
+                    existing.kind = src.kind
+                    existing.values = [vals[idx]]
+                else:
+                    self.worksheet.constants.append(Column(cname, src.kind, [vals[idx]]))
+                stored.append(cname)
+        else:
+            for pos, src_idx in enumerate(src_list):
+                src = self.worksheet.columns[src_idx]
+                val = next((v for v in src.values if v is not None), None)
+                if val is None:
+                    raise ValueError(f"Column '{src.name}' has no non-missing value to store as a constant.")
+                cname = names[pos].strip() if pos < len(names) and names[pos].strip() else f"K{len(self.worksheet.constants) + 1}"
+                existing = next((c for c in self.worksheet.constants if c.name.casefold() == cname.casefold()), None)
+                if existing is not None:
+                    existing.kind = src.kind
+                    existing.values = [val]
+                else:
+                    self.worksheet.constants.append(Column(cname, src.kind, [val]))
+                stored.append(cname)
+        self.dirty = True
+        return stored
+
+    @undoable
+    def copy_constants_to_columns(self, constant_names, target_index=None, target_name=None):
+        if not constant_names:
+            raise ValueError("Select at least one stored constant to copy.")
+        vals = []
+        kind = None
+        for cname in constant_names:
+            found = next((c for c in self.worksheet.constants if c.name.casefold() == str(cname).strip().casefold()), None)
+            if found is None or not found.values:
+                raise ValueError(f"Stored constant '{cname}' was not found.")
+            if kind is None:
+                kind = found.kind
+            elif found.kind != kind:
+                kind = "text"
+            vals.append(found.values[0])
+        kind = kind or "number"
+        if kind == "text":
+            vals = [str(v) for v in vals]
+        if target_index is not None:
+            t_idx = int(target_index)
+            if not 0 <= t_idx < len(self.worksheet.columns):
+                raise ValueError("Target column index out of range.")
+            col = self.worksheet.columns[t_idx]
+            col.kind = kind
+            col.values = vals
+            if target_name and target_name.strip():
+                col.name = target_name.strip()
+            self.dirty = True
+            return t_idx
+        cname = (target_name or "").strip() or f"C{len(self.worksheet.columns) + 1}"
+        self.worksheet.columns.append(Column(cname, kind, vals))
+        self.dirty = True
+        return len(self.worksheet.columns) - 1
+
+    @undoable
     def sort_columns(self, target_indices, by_index, descending=False):
         if not target_indices or any(not 0 <= i < len(self.worksheet.columns) for i in target_indices):
             raise ValueError("Select at least one column to sort.")

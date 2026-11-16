@@ -1411,6 +1411,10 @@ class ModernWindow(QMainWindow):
 
         from .data_prep_dialogs import open_dialog as prepare_dialog
         data.addSeparator()
+        copy_menu = data.addMenu("Copy")
+        self._action(copy_menu, "Columns to Columns…", self.copy_columns_to_columns_dialog, None, "copy", True)
+        self._action(copy_menu, "Columns to Constants…", self.copy_columns_to_constants_dialog, None, "constants", True)
+        self._action(copy_menu, "Constants to Columns…", self.copy_constants_to_columns_dialog, None, "constants", True)
         stack_menu=data.addMenu("Stack")
         self._action(stack_menu,"Columns…",lambda:prepare_dialog(self,'stack'),None,"table",True)
         self._action(stack_menu,"Stack Worksheets…",lambda:prepare_dialog(self,'stack_worksheets'),None,"table",True)
@@ -11538,6 +11542,125 @@ class ModernWindow(QMainWindow):
                 self.formula_bar.setVisible(fb_chk.isChecked())
             if hasattr(self, "view_formula_bar_action"):
                 self.view_formula_bar_action.setChecked(fb_chk.isChecked())
+
+    @staticmethod
+    def _parse_1based_row_spec(spec: str):
+        rows = set()
+        for token in spec.replace(",", " ").split():
+            if ":" in token or "-" in token:
+                sep = ":" if ":" in token else "-"
+                a, b = token.split(sep, 1)
+                lo, hi = int(a), int(b)
+                if lo > hi:
+                    lo, hi = hi, lo
+                for r in range(max(1, lo), hi + 1):
+                    rows.add(r - 1)
+            else:
+                val = int(token)
+                if val >= 1:
+                    rows.add(val - 1)
+        return rows
+
+    def copy_columns_to_columns_dialog(self):
+        self._commit_editor()
+        cols = self.presenter.worksheet.columns
+        if not cols:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Copy Columns to Columns")
+        dlg.setMinimumWidth(420)
+        layout = QVBoxLayout(dlg)
+        form = QFormLayout()
+        src_edit = QLineEdit(f"C{self._current_column() + 1}")
+        src_edit.setPlaceholderText("e.g., C1 C2")
+        dst_edit = QLineEdit()
+        dst_edit.setPlaceholderText("Optional target columns (e.g., C3 C4); blank appends new")
+        mode_combo = QComboBox()
+        mode_combo.addItem("Copy all rows", "all")
+        mode_combo.addItem("Use rows (1-based, e.g. 1:5 8)", "include")
+        mode_combo.addItem("Omit rows (1-based, e.g. 2 4:6)", "omit")
+        rows_edit = QLineEdit()
+        rows_edit.setPlaceholderText("e.g., 1:10 or 2 4 6")
+        rows_edit.setEnabled(False)
+        mode_combo.currentIndexChanged.connect(lambda: rows_edit.setEnabled(mode_combo.currentData() != "all"))
+        form.addRow("Copy from columns:", src_edit)
+        form.addRow("To columns:", dst_edit)
+        form.addRow("Subset rows:", mode_combo)
+        form.addRow("Row numbers:", rows_edit)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            from .variable_dialogs import resolve_variables
+            src_indices = resolve_variables(self.presenter.worksheet, src_edit.text().strip())
+            dst_text = dst_edit.text().strip()
+            dst_indices = resolve_variables(self.presenter.worksheet, dst_text) if dst_text else None
+            mode = mode_combo.currentData()
+            inc_rows = self._parse_1based_row_spec(rows_edit.text()) if mode == "include" and rows_edit.text().strip() else None
+            omit_rows = self._parse_1based_row_spec(rows_edit.text()) if mode == "omit" and rows_edit.text().strip() else None
+            created = self._call(lambda: self.presenter.copy_columns_to_columns(src_indices, dst_indices, include_rows=inc_rows, omit_rows=omit_rows))
+            self.refresh()
+            if created:
+                self.statusBar().showMessage(f"Copied {len(created)} column(s)", 4000)
+
+    def copy_columns_to_constants_dialog(self):
+        self._commit_editor()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Copy Columns to Constants")
+        dlg.setMinimumWidth(400)
+        layout = QVBoxLayout(dlg)
+        form = QFormLayout()
+        src_edit = QLineEdit(f"C{self._current_column() + 1}")
+        src_edit.setPlaceholderText("e.g., C1 C2")
+        const_edit = QLineEdit()
+        const_edit.setPlaceholderText("Optional constant names (e.g., K1 K2)")
+        form.addRow("Copy from columns:", src_edit)
+        form.addRow("Store in constants:", const_edit)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            from .variable_dialogs import resolve_variables
+            src_indices = resolve_variables(self.presenter.worksheet, src_edit.text().strip())
+            cnames = const_edit.text().replace(",", " ").split() if const_edit.text().strip() else None
+            stored = self._call(lambda: self.presenter.copy_columns_to_constants(src_indices, cnames))
+            self.refresh()
+            if stored:
+                self.statusBar().showMessage(f"Stored constant(s): {', '.join(stored)}", 4000)
+
+    def copy_constants_to_columns_dialog(self):
+        self._commit_editor()
+        constants = list(getattr(self.presenter.worksheet, "constants", []) or [])
+        if not constants:
+            QMessageBox.information(self, "Copy Constants to Columns", "No stored constants exist in this worksheet.")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Copy Constants to Columns")
+        dlg.setMinimumWidth(400)
+        layout = QVBoxLayout(dlg)
+        form = QFormLayout()
+        const_edit = QLineEdit(" ".join(c.name for c in constants))
+        const_edit.setPlaceholderText("e.g., K1 K2")
+        target_edit = QLineEdit()
+        target_edit.setPlaceholderText("Optional target column name (blank appends new)")
+        form.addRow("Copy from constants:", const_edit)
+        form.addRow("To column:", target_edit)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            cnames = const_edit.text().replace(",", " ").split()
+            tname = target_edit.text().strip() or None
+            idx = self._call(lambda: self.presenter.copy_constants_to_columns(cnames, target_name=tname))
+            self.refresh()
+            if idx is not None:
+                self.statusBar().showMessage(f"Copied {len(cnames)} constant(s) to C{idx + 1}", 4000)
 
 def main():
     sandbox_mode = "--sandbox" in sys.argv
