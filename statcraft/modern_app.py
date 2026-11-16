@@ -2438,6 +2438,8 @@ class ModernWindow(QMainWindow):
             if not self._workspace.busy:self._workspace.rebuild()
         self._refreshing = True
         sheet = self.presenter.worksheet
+        prev_sheet_id = getattr(self, "_last_sheet_id", None)
+        prev_col_count = getattr(self, "_last_sheet_col_count", 0)
         current_row, current_col = self.table.currentRow(), self.table.currentColumn()
         table_block = QSignalBlocker(self.table)
         selector_block = QSignalBlocker(self.worksheet_selector)
@@ -2591,6 +2593,16 @@ class ModernWindow(QMainWindow):
             self.column_names.setColumnHidden(col_idx, is_hidden)
         if visible and sheet.columns:
             self.table.setCurrentCell(max(0, min(current_row, visible - 1)), max(0, min(current_col, len(sheet.columns) - 1)))
+        if prev_sheet_id == id(sheet) and len(sheet.columns) > prev_col_count > 0:
+            new_col_idx = len(sheet.columns) - 1
+            new_item = self.table.item(0, new_col_idx)
+            if new_item is not None:
+                self.table.scrollToItem(new_item)
+            hdr_item = self.column_names.item(0, new_col_idx)
+            if hdr_item is not None:
+                self.column_names.scrollToItem(hdr_item)
+        self._last_sheet_id = id(sheet)
+        self._last_sheet_col_count = len(sheet.columns)
         counts = str(sheet.row_count) + " rows × " + str(len(sheet.columns)) + " cols"
         if sheet.constants: counts += ' · ' + str(len(sheet.constants)) + ' constants'
         if sheet.matrices: counts += ' · ' + str(len(sheet.matrices)) + ' matrices'
@@ -8707,6 +8719,7 @@ class ModernWindow(QMainWindow):
             menu.addAction("Reset to Default Size", self.reset_graph_size)
             menu.addSeparator()
             menu.addAction("Close All Graphs", self.close_all_graphs)
+            menu.addAction(tool_icon("print"), "Print Graph…", self.print_current)
             menu.addAction(tool_icon("save"), "Save Graph As...", lambda: self.save_graph_as(target_entry))
         else:
             menu.addAction(tool_icon("copy"), "Copy\tCtrl+C", lambda: QApplication.clipboard().setText(format_entry(target_entry)))

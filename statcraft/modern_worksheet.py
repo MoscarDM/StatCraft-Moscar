@@ -291,6 +291,21 @@ class WorksheetTable(QTableWidget):
                 if key == Qt.Key.Key_Right:
                     self.navigate('ctrl_right')
                     return True
+            elif (mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)) == (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier) and not (mods & (Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)):
+                ctrl_shift_map = {
+                    Qt.Key.Key_Up: 'ctrl_up',
+                    Qt.Key.Key_Down: 'ctrl_down',
+                    Qt.Key.Key_Left: 'ctrl_left',
+                    Qt.Key.Key_Right: 'ctrl_right',
+                }
+                if key in ctrl_shift_map:
+                    r0, c0 = max(0, self.currentRow()), max(0, self.currentColumn())
+                    self.navigate(ctrl_shift_map[key])
+                    r1, c1 = max(0, self.currentRow()), max(0, self.currentColumn())
+                    from PySide6.QtWidgets import QTableWidgetSelectionRange
+                    self.clearSelection()
+                    self.setRangeSelected(QTableWidgetSelectionRange(min(r0, r1), min(c0, c1), max(r0, r1), max(c0, c1)), True)
+                    return True
             elif (mods & Qt.KeyboardModifier.ShiftModifier) and not (mods & (Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier | Qt.KeyboardModifier.ControlModifier)):
                 if key == Qt.Key.Key_Home and self.columnCount() > 0:
                     r = max(0, self.currentRow())

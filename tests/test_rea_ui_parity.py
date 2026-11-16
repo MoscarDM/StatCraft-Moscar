@@ -165,6 +165,12 @@ class ReaUiParityTests(unittest.TestCase):
             win._record_nav_expand_state(top, False)
             win.refresh()
             self.assertFalse(win.navigator.topLevelItem(0).isExpanded())
+
+            # Ctrl+Shift+Down extends selection from (0, 0) to bottom of block (1, 0)
+            win.table.setCurrentCell(0, 0)
+            QTest.keyClick(win.table, Qt.Key.Key_Down, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+            self.assertEqual(win.table.currentRow(), 1)
+            self.assertTrue(any(r.topRow() == 0 and r.bottomRow() == 1 and r.leftColumn() == 0 for r in win.table.selectedRanges()))
         finally:
             win.presenter.dirty = False
             win.close()
