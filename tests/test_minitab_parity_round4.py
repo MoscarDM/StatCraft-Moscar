@@ -298,6 +298,16 @@ class TestMinitabParityRound4(unittest.TestCase):
             else:
                 settings.setValue("options/default_confidence", prev_val)
 
+    def test_change_data_type_with_date_format_and_target_column(self):
+        self.win.presenter.set_column_type(0, "text")
+        self.win.presenter.worksheet.columns[0].values = ["03/15/2025", "04/20/2025"]
+        self.win.presenter.set_column_type(0, "date", target_index="new", date_format="%m/%d/%Y")
+        new_col = self.win.presenter.worksheet.columns[-1]
+        self.assertEqual(new_col.kind, "date")
+        self.assertEqual(new_col.metadata.get("date_format"), "%m/%d/%Y")
+        self.assertEqual(len(new_col.values), 2)
+        self.assertEqual(self.win.presenter.worksheet.columns[0].kind, "text")
+
 
 if __name__ == "__main__":
     unittest.main()

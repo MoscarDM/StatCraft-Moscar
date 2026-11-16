@@ -4477,17 +4477,37 @@ class ModernWindow(QMainWindow):
         col = self.presenter.worksheet.columns[index]
         dlg = QDialog(self)
         dlg.setWindowTitle("Change Data Type")
-        dlg.setMinimumWidth(360)
+        dlg.setMinimumWidth(390)
         layout = QVBoxLayout(dlg)
-        layout.addWidget(QLabel(f"Column: C{index + 1} ({col.name})"))
+        layout.addWidget(QLabel(f"Source Column: C{index + 1} ({col.name})"))
         type_combo = QComboBox()
         for label, code in (("Numeric", "number"), ("Text", "text"), ("Date/Time", "date")):
             type_combo.addItem(label, code)
         cur_idx = type_combo.findData(col.kind)
         if cur_idx >= 0:
             type_combo.setCurrentIndex(cur_idx)
+        target_edit = QLineEdit(f"C{index + 1}")
+        target_edit.setPlaceholderText("e.g., C1 (or leave blank to append new column)")
+        fmt_combo = QComboBox()
+        for fmt_label, fmt_code in (
+            ("Auto-detect", ""),
+            ("YYYY-MM-DD (%Y-%m-%d)", "%Y-%m-%d"),
+            ("MM/DD/YYYY (%m/%d/%Y)", "%m/%d/%Y"),
+            ("DD/MM/YYYY (%d/%m/%Y)", "%d/%m/%Y"),
+            ("YYYY-MM-DD HH:MM:SS", "%Y-%m-%d %H:%M:%S"),
+        ):
+            fmt_combo.addItem(fmt_label, fmt_code)
+        fmt_label_w = QLabel("Date/Time input format:")
+        def _sync_fmt():
+            is_date = type_combo.currentData() == "date"
+            fmt_label_w.setVisible(is_date)
+            fmt_combo.setVisible(is_date)
+        type_combo.currentIndexChanged.connect(_sync_fmt)
+        _sync_fmt()
         form = QFormLayout()
         form.addRow("Target Data Type:", type_combo)
+        form.addRow("Store in column:", target_edit)
+        form.addRow(fmt_label_w, fmt_combo)
         layout.addLayout(form)
         note = QLabel("All existing non-missing values must convert to the target type.")
         note.setWordWrap(True)
@@ -4504,7 +4524,15 @@ class ModernWindow(QMainWindow):
         layout.addWidget(buttons)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             kind = type_combo.currentData()
-            self._call(lambda: self.presenter.set_column_type(index, kind))
+            t_raw = target_edit.text().strip()
+            if not t_raw:
+                t_idx = "new"
+            else:
+                from .variable_dialogs import resolve_variables
+                resolved = resolve_variables(self.presenter.worksheet, t_raw)
+                t_idx = resolved[0] if resolved else index
+            dfmt = fmt_combo.currentData() or None
+            self._call(lambda: self.presenter.set_column_type(index, kind, target_index=t_idx, date_format=dfmt))
 
     def stored_constants(self):
         from .modern_stored_data import ConstantsDialog

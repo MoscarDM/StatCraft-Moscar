@@ -757,11 +757,32 @@ class Presenter:
         return stream.getvalue()
 
     @undoable
-    def set_column_type(self, index, kind):
+    def set_column_type(self, index, kind, target_index=None, date_format=None):
         col = self.worksheet.columns[index]
-        converted = [None if v is None else self.parse_cell(str(v), kind) for v in col.values]
-        replacement = Column(col.name, kind, converted, copy.deepcopy(col.metadata))
-        self.worksheet.columns[index] = replacement
+        if date_format and kind == "date" and col.kind == "text":
+            from datetime import datetime
+            converted = []
+            for v in col.values:
+                if v is None or str(v).strip() == "":
+                    converted.append(None)
+                else:
+                    dt = datetime.strptime(str(v).strip(), date_format)
+                    converted.append(self.parse_cell(dt.strftime("%Y-%m-%d %H:%M:%S"), "date"))
+        else:
+            converted = [None if v is None else self.parse_cell(str(v), kind) for v in col.values]
+        meta = copy.deepcopy(col.metadata)
+        if date_format and kind == "date":
+            meta["date_format"] = date_format
+        if target_index is None or target_index == index:
+            self.worksheet.columns[index] = Column(col.name, kind, converted, meta)
+        elif target_index == "new":
+            self.worksheet.columns.append(Column(f"{col.name} ({kind})", kind, converted, meta))
+        else:
+            t_idx = int(target_index)
+            if not 0 <= t_idx < len(self.worksheet.columns):
+                raise ValueError("Target column index out of range.")
+            dst = self.worksheet.columns[t_idx]
+            self.worksheet.columns[t_idx] = Column(dst.name, kind, converted, meta)
         self.dirty = True
 
     @undoable
