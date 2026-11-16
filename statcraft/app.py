@@ -6803,6 +6803,48 @@ class Presenter:
         )
 
     @undoable
+    def matrix_arithmetic(self, operation: str, left_name: str, right_name: str = "", scalar=None, dest_name: str = "M_Out"):
+        from .matrices import matrix_arithmetic
+        res = matrix_arithmetic(self.worksheet, operation, left_name, right_name=right_name, scalar=scalar, dest_name=dest_name)
+        self.dirty = True
+        return self._record(f"Matrix {operation.title()} ({dest_name})", res)
+
+    @undoable
+    def matrix_transpose(self, src_name: str, dest_name: str = ""):
+        from .matrices import matrix_transpose
+        res = matrix_transpose(self.worksheet, src_name, dest_name=dest_name)
+        self.dirty = True
+        return self._record(f"Matrix Transpose ({src_name})", res)
+
+    @undoable
+    def matrix_invert(self, src_name: str, dest_name: str = ""):
+        from .matrices import matrix_invert
+        res = matrix_invert(self.worksheet, src_name, dest_name=dest_name)
+        self.dirty = True
+        return self._record(f"Matrix Invert ({src_name})", res)
+
+    @undoable
+    def matrix_eigenanalysis(self, src_name: str, store_values_col: str = "", store_vectors_matrix: str = ""):
+        from .matrices import matrix_eigenanalysis
+        res = matrix_eigenanalysis(self.worksheet, src_name, store_values_col=store_values_col, store_vectors_matrix=store_vectors_matrix)
+        self.dirty = True
+        return self._record(f"Eigenanalysis ({src_name})", res)
+
+    @undoable
+    def copy_columns_to_matrix(self, col_indices, dest_name: str = "M1"):
+        from .matrices import copy_columns_to_matrix
+        res = copy_columns_to_matrix(self.worksheet, col_indices, dest_name=dest_name)
+        self.dirty = True
+        return self._record(f"Copy Columns to Matrix ({dest_name})", res)
+
+    @undoable
+    def copy_matrix_to_columns(self, src_name: str, col_prefix: str = ""):
+        from .matrices import copy_matrix_to_columns
+        res = copy_matrix_to_columns(self.worksheet, src_name, col_prefix=col_prefix)
+        self.dirty = True
+        return self._record(f"Copy Matrix to Columns ({src_name})", res)
+
+    @undoable
     def convert_text_to_datetime(self, col_index: int, date_format: str = "", destination: str = ""):
         from .data_prep import convert_text_to_datetime_column
         serials = convert_text_to_datetime_column(self.worksheet, col_index, fmt=date_format)

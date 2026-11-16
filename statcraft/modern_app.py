@@ -1414,6 +1414,14 @@ class ModernWindow(QMainWindow):
         self._action(random_menu, "All Distributions (Weibull, Gamma, Lognormal, Beta…)…", self.random_all_distributions_dialog, None, None, True)
         matrix_menu = calc.addMenu("Matrices")
         self._action(matrix_menu, "Input Data…", self.stored_matrices, None, "matrices", True)
+        self._action(matrix_menu, "Copy Columns to Matrix…", self.copy_columns_to_matrix_dialog, None, "matrices", True)
+        self._action(matrix_menu, "Copy Matrix to Columns…", self.copy_matrix_to_columns_dialog, None, "matrices", True)
+        matrix_menu.addSeparator()
+        self._action(matrix_menu, "Arithmetic…", self.matrix_arithmetic_dialog, None, "matrices", True)
+        self._action(matrix_menu, "Transpose…", self.matrix_transpose_dialog, None, "matrices", True)
+        self._action(matrix_menu, "Invert…", self.matrix_invert_dialog, None, "matrices", True)
+        self._action(matrix_menu, "Eigenanalysis…", self.matrix_eigenanalysis_dialog, None, "matrices", True)
+        matrix_menu.addSeparator()
         self._action(matrix_menu, "Packed Triangular Solve…", self.triangular, None, "matrices", True)
         self._action(calc, "Probability Distributions…", self.probability, None, "probability", True)
 
@@ -4219,6 +4227,102 @@ class ModernWindow(QMainWindow):
         dialog = MatricesDialog(self, self.presenter.worksheet, read_only)
         if dialog.exec() == QDialog.DialogCode.Accepted and not read_only:
             self._call(lambda: self.presenter.replace_stored_data(matrices=dialog.matrices))
+
+    def _matrix_names(self):
+        return [m.name for m in self.presenter.worksheet.matrices]
+
+    def copy_columns_to_matrix_dialog(self):
+        self._dialog(
+            "Copy Columns to Matrix",
+            [selector("col_indices", "Numeric columns", True, 1, None, ("number",))],
+            [{"key": "dest_name", "label": "Store in matrix", "default": "M1"}],
+            lambda p: self.presenter.copy_columns_to_matrix(p["col_indices"], p.get("dest_name", "M1")),
+            "Copies selected numeric worksheet columns into a stored matrix.",
+        )
+
+    def copy_matrix_to_columns_dialog(self):
+        names = self._matrix_names()
+        if not names:
+            QMessageBox.information(self, "Copy Matrix to Columns", "No stored matrices exist on this worksheet yet.")
+            return
+        self._dialog(
+            "Copy Matrix to Columns",
+            [],
+            [
+                {"key": "src_name", "label": "Source matrix", "choices": names, "default": names[0]},
+                {"key": "col_prefix", "label": "Destination column prefix (optional)", "default": "", "optional": True},
+            ],
+            lambda p: self.presenter.copy_matrix_to_columns(p["src_name"], p.get("col_prefix", "")),
+            "Copies each column of a stored matrix into numeric worksheet columns.",
+        )
+
+    def matrix_arithmetic_dialog(self):
+        names = self._matrix_names()
+        if not names:
+            QMessageBox.information(self, "Matrix Arithmetic", "No stored matrices exist on this worksheet yet.")
+            return
+        self._dialog(
+            "Matrix Arithmetic",
+            [],
+            [
+                {"key": "operation", "label": "Operation", "choices": ["Add", "Subtract", "Multiply", "Scalar"], "default": "Add"},
+                {"key": "left_name", "label": "First matrix", "choices": names, "default": names[0]},
+                {"key": "right_name", "label": "Second matrix (for Add/Subtract/Multiply)", "choices": names, "default": names[0]},
+                numeric("scalar", "Scalar multiplier (for Scalar)", 1.0, optional=True),
+                {"key": "dest_name", "label": "Store result in matrix", "default": "M_Out"},
+            ],
+            lambda p: self.presenter.matrix_arithmetic(p["operation"], p["left_name"], p.get("right_name", ""), p.get("scalar"), p.get("dest_name", "M_Out")),
+            "Performs matrix addition, subtraction, multiplication, or scalar scaling on stored matrices.",
+        )
+
+    def matrix_transpose_dialog(self):
+        names = self._matrix_names()
+        if not names:
+            QMessageBox.information(self, "Matrix Transpose", "No stored matrices exist on this worksheet yet.")
+            return
+        self._dialog(
+            "Matrix Transpose",
+            [],
+            [
+                {"key": "src_name", "label": "Matrix to transpose", "choices": names, "default": names[0]},
+                {"key": "dest_name", "label": "Store transposed matrix in (optional)", "default": "", "optional": True},
+            ],
+            lambda p: self.presenter.matrix_transpose(p["src_name"], p.get("dest_name", "")),
+            "Transposes the selected stored matrix.",
+        )
+
+    def matrix_invert_dialog(self):
+        names = self._matrix_names()
+        if not names:
+            QMessageBox.information(self, "Matrix Invert", "No stored matrices exist on this worksheet yet.")
+            return
+        self._dialog(
+            "Matrix Invert",
+            [],
+            [
+                {"key": "src_name", "label": "Square matrix to invert", "choices": names, "default": names[0]},
+                {"key": "dest_name", "label": "Store inverse matrix in (optional)", "default": "", "optional": True},
+            ],
+            lambda p: self.presenter.matrix_invert(p["src_name"], p.get("dest_name", "")),
+            "Computes the inverse of a square, non-singular stored matrix.",
+        )
+
+    def matrix_eigenanalysis_dialog(self):
+        names = self._matrix_names()
+        if not names:
+            QMessageBox.information(self, "Matrix Eigenanalysis", "No stored matrices exist on this worksheet yet.")
+            return
+        self._dialog(
+            "Matrix Eigenanalysis",
+            [],
+            [
+                {"key": "src_name", "label": "Symmetric matrix", "choices": names, "default": names[0]},
+                {"key": "store_values_col", "label": "Store eigenvalues in column (optional)", "default": "", "optional": True},
+                {"key": "store_vectors_matrix", "label": "Store eigenvectors in matrix (optional)", "default": "", "optional": True},
+            ],
+            lambda p: self.presenter.matrix_eigenanalysis(p["src_name"], p.get("store_values_col", ""), p.get("store_vectors_matrix", "")),
+            "Computes eigenvalues and eigenvectors of a symmetric stored matrix.",
+        )
 
     def _dialog(self, title, selectors, fields, callback, note=""):
         self._commit_editor()
