@@ -149,6 +149,27 @@ class TestMinitabParityRound4(unittest.TestCase):
         self.assertFalse(ev_no_ctrl.isAccepted())
         chart.close()
 
+    def test_chart_quick_bar_toggles_work_on_chart_widget(self):
+        from statcraft.micro_innovations import build_chart_quick_bar
+        from statcraft.modern_charts import ChartWidget
+        from statcraft.graph_frame import GraphFrame
+        self.win.presenter.paste(0, 0, "1\t2\n2\t4\n3\t8\n")
+        entry = self.win.presenter.scatter_plot(0, 1)
+        chart = ChartWidget(entry)
+        frame = GraphFrame(chart, entry)
+        bar = build_chart_quick_bar(frame, chart, entry, self.win)
+        actions = {a.text(): a for a in bar.menu().actions() if a.text()}
+        actions["Show Gridlines"].trigger()
+        self.assertFalse(chart.annotation_grid)
+        actions["Logarithmic Y Scale"].trigger()
+        self.assertTrue(chart.annotation_y_log)
+        actions["Crosshair Mode"].trigger()
+        self.assertTrue(chart._crosshair_enabled)
+        actions["Copy as PNG"].trigger()
+        self.assertFalse(QApplication.clipboard().pixmap().isNull())
+        frame.close()
+        chart.close()
+
 
 if __name__ == "__main__":
     unittest.main()

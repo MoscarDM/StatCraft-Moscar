@@ -453,33 +453,43 @@ def build_chart_quick_bar(graph_frame: Any, chart: Any, entry: dict[str, Any], w
     menu = QMenu(bar)
 
     def _toggle_grid(checked: bool) -> None:
+        chart.annotation_grid = checked
         fig = getattr(chart, "figure", None)
-        if fig is None:
-            return
-        for ax in fig.get_axes():
-            ax.grid(checked, alpha=0.25 if checked else 0.0)
-        if hasattr(chart, "canvas"):
-            chart.canvas.draw_idle()
+        if fig is not None:
+            for ax in fig.get_axes():
+                ax.grid(checked, alpha=0.25 if checked else 0.0)
+            if hasattr(chart, "canvas"):
+                chart.canvas.draw_idle()
+        if hasattr(chart, "update"):
+            chart.update()
 
     grid_act = menu.addAction("Show Gridlines")
     grid_act.setCheckable(True)
-    grid_act.setChecked(True)
+    grid_act.setChecked(bool(getattr(chart, "annotation_grid", True)))
     grid_act.toggled.connect(_toggle_grid)
 
     def _toggle_log_y(checked: bool) -> None:
+        chart.annotation_y_log = checked
         fig = getattr(chart, "figure", None)
-        if fig is None:
-            return
-        for ax in fig.get_axes():
-            try:
-                ax.set_yscale("log" if checked else "linear")
-            except Exception:
-                pass
-        if hasattr(chart, "canvas"):
-            chart.canvas.draw_idle()
+        if fig is not None:
+            for ax in fig.get_axes():
+                try:
+                    ax.set_yscale("log" if checked else "linear")
+                except Exception:
+                    pass
+            if hasattr(chart, "canvas"):
+                chart.canvas.draw_idle()
+        if hasattr(chart, "update"):
+            chart.update()
+        if checked and hasattr(chart, "_zoom2d_meta"):
+            meta0 = chart._zoom2d_meta.get(0, {})
+            yb = meta0.get("yb")
+            if yb and yb[0] <= 0 and hasattr(window, "statusBar"):
+                window.statusBar().showMessage("Log Y scale requires all Y bounds > 0.", 3500)
 
     log_act = menu.addAction("Logarithmic Y Scale")
     log_act.setCheckable(True)
+    log_act.setChecked(bool(getattr(chart, "annotation_y_log", False)))
     log_act.toggled.connect(_toggle_log_y)
 
     meta = entry.get("result", {}) if isinstance(entry, dict) else {}
@@ -500,17 +510,32 @@ def build_chart_quick_bar(graph_frame: Any, chart: Any, entry: dict[str, Any], w
             def _toggle_band(checked: bool, k: str = band_key) -> None:
                 if isinstance(g0, dict):
                     g0[k] = checked
+                if isinstance(meta, dict):
+                    meta[k] = checked
+                if hasattr(chart, "_prepare"):
+                    try:
+                        chart._prepare()
+                    except Exception:
+                        pass
                 if hasattr(chart, "render"):
                     try:
                         chart.render()
                     except Exception:
                         pass
+                if hasattr(chart, "update"):
+                    chart.update()
 
             b_act.toggled.connect(_toggle_band)
 
     def _toggle_crosshair(checked: bool) -> None:
         chart._crosshair_enabled = checked
+        if hasattr(chart, "setMouseTracking"):
+            chart.setMouseTracking(True)
+        if not checked:
+            chart._crosshair_pos = None
         chart.setCursor(Qt.CursorShape.CrossCursor if checked else Qt.CursorShape.ArrowCursor)
+        if hasattr(chart, "update"):
+            chart.update()
         if hasattr(window, "statusBar"):
             window.statusBar().showMessage(
                 "Crosshair mode enabled — hover plot to inspect coordinates." if checked else "Crosshair mode disabled.",
@@ -519,14 +544,21 @@ def build_chart_quick_bar(graph_frame: Any, chart: Any, entry: dict[str, Any], w
 
     cross_act = menu.addAction("Crosshair Mode")
     cross_act.setCheckable(True)
+    cross_act.setChecked(bool(getattr(chart, "_crosshair_enabled", False)))
     cross_act.toggled.connect(_toggle_crosshair)
     menu.addSeparator()
-    menu.addAction("Copy as SVG", lambda: getattr(window, "copy_chart_svg", lambda *_: None)())
+
+    def _copy_svg() -> None:
+        fn = getattr(window, "copy_active_chart_svg", None) or getattr(window, "copy_chart_svg", None)
+        if callable(fn):
+            fn(entry)
+
+    menu.addAction("Copy as SVG", _copy_svg)
 
     def _copy_png() -> None:
-        canvas = getattr(chart, "canvas", None)
-        if canvas is not None:
-            QApplication.clipboard().setPixmap(canvas.grab())
+        target = getattr(chart, "canvas", None) or chart
+        if hasattr(target, "grab"):
+            QApplication.clipboard().setPixmap(target.grab())
             if hasattr(window, "statusBar"):
                 window.statusBar().showMessage("Copied chart PNG to clipboard.", 3500)
 
