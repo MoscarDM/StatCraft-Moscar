@@ -292,6 +292,29 @@ class WorksheetTable(QTableWidget):
                     self.navigate('ctrl_right')
                     return True
             elif (mods & Qt.KeyboardModifier.ShiftModifier) and not (mods & (Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier | Qt.KeyboardModifier.ControlModifier)):
+                if key == Qt.Key.Key_Home and self.columnCount() > 0:
+                    r = max(0, self.currentRow())
+                    cur_c = max(0, self.currentColumn())
+                    from PySide6.QtWidgets import QTableWidgetSelectionRange
+                    self.setCurrentCell(r, 0)
+                    self.clearSelection()
+                    self.setRangeSelected(QTableWidgetSelectionRange(r, 0, r, cur_c), True)
+                    return True
+                if key == Qt.Key.Key_End and self.columnCount() > 0:
+                    r = max(0, self.currentRow())
+                    cur_c = max(0, self.currentColumn())
+                    last_c = cur_c
+                    for c in range(self.columnCount() - 1, -1, -1):
+                        it = self.item(r, c)
+                        if it is not None and it.text().strip():
+                            last_c = c
+                            break
+                    from PySide6.QtWidgets import QTableWidgetSelectionRange
+                    lo, hi = min(cur_c, last_c), max(cur_c, last_c)
+                    self.setCurrentCell(r, last_c)
+                    self.clearSelection()
+                    self.setRangeSelected(QTableWidgetSelectionRange(r, lo, r, hi), True)
+                    return True
                 if key == Qt.Key.Key_Insert:
                     win = self.window()
                     if hasattr(win, "paste_cells"):
@@ -327,6 +350,11 @@ class WorksheetTable(QTableWidget):
                     self.navigate('down')
                     return True
                 if key == Qt.Key.Key_Up and self.currentRow() == 0:
+                    win = self.window()
+                    if hasattr(win, "column_names") and self.currentColumn() >= 0:
+                        win.column_names.setCurrentCell(0, self.currentColumn())
+                        win.column_names.setFocus(Qt.FocusReason.OtherFocusReason)
+                        return True
                     self.navigate('up')
                     return True
                 if self.page_rows and ((key == Qt.Key.Key_PageDown and scroll.value() == scroll.maximum()) or (key == Qt.Key.Key_PageUp and scroll.value() == scroll.minimum())):

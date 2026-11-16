@@ -136,6 +136,41 @@ class ReaUiParityTests(unittest.TestCase):
             win.deleteLater()
             self.app.processEvents()
 
+    def test_navigator_collapse_persistence_and_shift_home_end_and_up_to_name_row(self):
+        win = ModernWindow(sandbox_mode=True)
+        try:
+            win.presenter.worksheet = Worksheet(
+                "S3",
+                [Column("A", "number", [1.0, 2.0]), Column("B", "number", [3.0, 4.0]), Column("C", "number", [5.0, 6.0])],
+            )
+            win.refresh()
+            # Up at Row 0 moves focus to column_names
+            win.table.setCurrentCell(0, 1)
+            QTest.keyClick(win.table, Qt.Key.Key_Up)
+            self.assertEqual(win.column_names.currentColumn(), 1)
+
+            # Shift+Home selects from currentColumn() to 0
+            win.table.setCurrentCell(0, 2)
+            QTest.keyClick(win.table, Qt.Key.Key_Home, Qt.KeyboardModifier.ShiftModifier)
+            self.assertEqual(win.table.currentColumn(), 0)
+            ranges = win.table.selectedRanges()
+            self.assertTrue(any(r.leftColumn() == 0 and r.rightColumn() == 2 for r in ranges))
+
+            # Navigator collapse key stays collapsed across refresh()
+            win.presenter.scatter_plot(1, 0)
+            win.refresh()
+            top = win.navigator.topLevelItem(0)
+            self.assertIsNotNone(top)
+            win.navigator.collapseItem(top)
+            win._record_nav_expand_state(top, False)
+            win.refresh()
+            self.assertFalse(win.navigator.topLevelItem(0).isExpanded())
+        finally:
+            win.presenter.dirty = False
+            win.close()
+            win.deleteLater()
+            self.app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()

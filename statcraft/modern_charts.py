@@ -1110,6 +1110,16 @@ class ChartWidget(GraphInteractionMixin,QWidget):
             self.reset_2d_zoom()
             event.accept()
             return
+        obj = self.object_at(event.position())
+        if obj is not None:
+            self.objectActivated.emit(str(obj))
+            event.accept()
+            return
+        win = self.window()
+        if hasattr(win, "edit_graph_dialog"):
+            win.edit_graph_dialog()
+            event.accept()
+            return
         super().mouseDoubleClickEvent(event)
 
     def paintEvent(self,event):

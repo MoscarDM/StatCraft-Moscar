@@ -874,6 +874,10 @@ class ModernWindow(QMainWindow):
         self.navigator_menu_button = QToolButton(); self.navigator_menu_button.setText("▾")
         self.navigator_menu_button.setToolTip("Navigator options")
         self.navigator_menu_button.clicked.connect(self._show_navigator_menu)
+        self.navigator_collapse_btn = QToolButton(); self.navigator_collapse_btn.setText("⊟")
+        self.navigator_collapse_btn.setToolTip("Collapse / Expand All Navigator items")
+        self.navigator_collapse_btn.clicked.connect(self._toggle_navigator_collapse_all)
+        nav_header_row.addWidget(self.navigator_collapse_btn)
         nav_header_row.addWidget(self.navigator_menu_button)
         nav_layout.addWidget(nav_header)
 
@@ -888,6 +892,9 @@ class ModernWindow(QMainWindow):
         self.navigator = QTreeWidget(); self.navigator.setHeaderHidden(True)
         self.navigator.setIndentation(12)
         self.navigator.itemClicked.connect(self._navigate)
+        self._collapsed_nav_keys = set()
+        self.navigator.itemCollapsed.connect(lambda it: self._record_nav_expand_state(it, False))
+        self.navigator.itemExpanded.connect(lambda it: self._record_nav_expand_state(it, True))
         self.navigator.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.navigator.customContextMenuRequested.connect(self._show_navigator_item_menu)
 
@@ -2366,6 +2373,33 @@ class ModernWindow(QMainWindow):
         value,ok=QInputDialog.getInt(self,'Zoom','Percent:',self._zoom_percent,10,500)
         if ok:self.set_zoom(value)
 
+    def _record_nav_expand_state(self, item, expanded):
+        if getattr(self, "_refreshing", False) or item is None:
+            return
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(data, dict):
+            return
+        if data.get("kind") == "sheet":
+            key = ("sheet", data.get("sheet_name") or item.text(0))
+        elif "entry" in data and isinstance(data["entry"], dict):
+            e = data["entry"]
+            key = ("entry", e.get("entry_id") or id(e))
+        else:
+            return
+        if expanded:
+            self._collapsed_nav_keys.discard(key)
+        else:
+            self._collapsed_nav_keys.add(key)
+
+    def _toggle_navigator_collapse_all(self):
+        root_count = self.navigator.topLevelItemCount()
+        any_expanded = any(self.navigator.topLevelItem(i).isExpanded() for i in range(root_count))
+        if any_expanded:
+            self.navigator.collapseAll()
+        else:
+            self._collapsed_nav_keys.clear()
+            self.navigator.expandAll()
+
     def _show_navigator_menu(self):
         menu = QMenu(self)
         grp_act = menu.addAction("Group Commands by Worksheet")
@@ -2625,7 +2659,7 @@ class ModernWindow(QMainWindow):
                 parent_node = QTreeWidgetItem(self.navigator, [name.upper()])
                 parent_node.setFont(0, bold_font)
                 parent_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "sheet", "index": index})
-                parent_node.setExpanded(True)
+                parent_node.setExpanded(("sheet", parent_node.text(0)) not in getattr(self, "_collapsed_nav_keys", set()))
                 sheet_nodes[name] = parent_node
             for entry in entries:
                 sname = entry.get("worksheet_name") or sheet.name
@@ -2633,7 +2667,7 @@ class ModernWindow(QMainWindow):
                 if parent_node is None:
                     parent_node = QTreeWidgetItem(self.navigator, [sname.upper()])
                     parent_node.setFont(0, bold_font)
-                    parent_node.setExpanded(True)
+                    parent_node.setExpanded(("sheet", sname) not in getattr(self, "_collapsed_nav_keys", set()))
                     sheet_nodes[sname] = parent_node
                 stale = self.presenter.result_stale(entry, cache)
                 title = entry.get("title", "Result") + ("  *" if stale is True else "")
@@ -2672,7 +2706,8 @@ class ModernWindow(QMainWindow):
                         g_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "graph", "entry": entry, "graph_index": g_idx})
                         if entry is self.selected_entry and getattr(self, '_selected_graph_index', None) == g_idx:
                             selected_tree_item = g_node
-                    node.setExpanded(True)
+                    entry_key = ("entry", entry.get("entry_id") or id(entry))
+                    node.setExpanded(entry_key not in getattr(self, "_collapsed_nav_keys", set()))
         else:
             for entry in entries:
                 stale = self.presenter.result_stale(entry, cache)
@@ -2712,7 +2747,8 @@ class ModernWindow(QMainWindow):
                         g_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "graph", "entry": entry, "graph_index": g_idx})
                         if entry is self.selected_entry and getattr(self, '_selected_graph_index', None) == g_idx:
                             selected_tree_item = g_node
-                    node.setExpanded(True)
+                    entry_key = ("entry", entry.get("entry_id") or id(entry))
+                    node.setExpanded(entry_key not in getattr(self, "_collapsed_nav_keys", set()))
         if selected_tree_item is not None:
             self.navigator.setCurrentItem(selected_tree_item)
         if hasattr(self, "navigator_filter") and self.navigator_filter.text().strip():
@@ -8116,7 +8152,9 @@ class ModernWindow(QMainWindow):
                 elif result.get('analysis') in ('optimal_design', 'design_evaluation', 'cart_tree', 'evaluating_measurement_process', 'fit_y_by_x', 'jmp_distribution', 'control_chart_builder', 'process_screening', 'definitive_screening_analysis', 'accelerated_life_testing'): chart.setMinimumHeight(440)
                 elif result.get('graph') not in ('panel_graph','graph_layout'):
                     panels = getattr(chart, 'panels', [])
-                    chart.setMinimumHeight(max(chart.minimumHeight(), len(panels)*max(260,max(len(panel['series']) for panel in panels)*42+100)+36 if result.get('graph')=='histogram_graphs' and panels else 480 if len(panels)>1 else 460))
+                    pane_h = self.output_pane.height() if hasattr(self, 'output_pane') else 0
+                    single_h = max(240, min(420, pane_h - 95)) if pane_h > 160 else 300
+                    chart.setMinimumHeight(max(chart.minimumHeight(), len(panels)*max(260,max(len(panel['series']) for panel in panels)*42+100)+36 if result.get('graph')=='histogram_graphs' and panels else 480 if len(panels)>1 else single_h))
                 chart.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                 graph_index = self._add_graph_tab(chart, entry, "Graph", conn_dict=conn_dict, set_active=True)
                 if result.get('analysis') == 'fitted_line_plot' and (result.get('options') or {}).get('graphs', 'four') != 'none':
