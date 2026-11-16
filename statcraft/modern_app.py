@@ -4826,7 +4826,9 @@ class ModernWindow(QMainWindow):
         self._last_dialog_action = self.oneway_anova_dialog
         from .oneway_dialogs import OneWayAnovaDialog
         dlg = OneWayAnovaDialog(self)
+        self._restore_custom_dialog_state("oneway_anova", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("oneway_anova", dlg)
             if dlg.entry is not None:
                 self.refresh()
                 self.show_result(dlg.entry)

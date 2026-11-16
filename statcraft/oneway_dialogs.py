@@ -643,3 +643,29 @@ class OneWayAnovaDialog(QDialog):
 
         self.accept()
         self.window.show_result(self.entry)
+
+    def get_state(self) -> dict[str, Any]:
+        import copy
+        return {
+            'mode': self.mode_combo.currentData(),
+            'response': self.response_edit.text(),
+            'factor': self.factor_edit.text(),
+            'responses': self.responses_edit.text(),
+            'options': copy.deepcopy(self.options),
+        }
+
+    def set_state(self, state: dict[str, Any]) -> None:
+        import copy
+        if not isinstance(state, dict):
+            return
+        mode = state.get('mode')
+        if mode in ('stacked', 'unstacked'):
+            self.mode_combo.setCurrentIndex(0 if mode == 'stacked' else 1)
+        if 'response' in state:
+            self.response_edit.setText(str(state['response']))
+        if 'factor' in state:
+            self.factor_edit.setText(str(state['factor']))
+        if 'responses' in state:
+            self.responses_edit.setText(str(state['responses']))
+        if isinstance(state.get('options'), dict):
+            self.options = copy.deepcopy(state['options'])

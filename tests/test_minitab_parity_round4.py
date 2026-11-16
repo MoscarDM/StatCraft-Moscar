@@ -189,6 +189,37 @@ class TestMinitabParityRound4(unittest.TestCase):
         self.assertEqual(self.win.presenter.worksheet.columns[col_idx].name, "FromConsts")
         self.assertEqual(self.win.presenter.worksheet.columns[col_idx].values, [10.0, 20.0])
 
+    def test_custom_dialog_get_set_state_roundtrip(self):
+        from statcraft.oneway_dialogs import OneWayAnovaDialog
+        from statcraft.capability_dialogs import CapabilityDialog
+
+        self.win.presenter.paste(0, 0, "10\tA\n20\tB\n")
+        ow1 = OneWayAnovaDialog(self.win)
+        ow1.response_edit.setText("C1")
+        ow1.factor_edit.setText("C2")
+        ow1.options["confidence"] = 99.0
+        self.win._save_custom_dialog_state("oneway_anova", ow1)
+        ow2 = OneWayAnovaDialog(self.win)
+        self.win._restore_custom_dialog_state("oneway_anova", ow2)
+        self.assertEqual(ow2.response_edit.text(), "C1")
+        self.assertEqual(ow2.factor_edit.text(), "C2")
+        self.assertEqual(ow2.options["confidence"], 99.0)
+        ow1.close(); ow2.close()
+
+        cap1 = CapabilityDialog(self.win.presenter.worksheet, self.win)
+        cap1.edit_single_col.setText("C1")
+        cap1.edit_lsl.setText("5")
+        cap1.edit_usl.setText("25")
+        cap1.options["confidence_level"] = 99.0
+        self.win._save_custom_dialog_state("capability_normal", cap1)
+        cap2 = CapabilityDialog(self.win.presenter.worksheet, self.win)
+        self.win._restore_custom_dialog_state("capability_normal", cap2)
+        self.assertEqual(cap2.edit_single_col.text(), "C1")
+        self.assertEqual(cap2.edit_lsl.text(), "5")
+        self.assertEqual(cap2.edit_usl.text(), "25")
+        self.assertEqual(cap2.options["confidence_level"], 99.0)
+        cap1.close(); cap2.close()
+
 
 if __name__ == "__main__":
     unittest.main()
