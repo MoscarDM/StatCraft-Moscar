@@ -495,8 +495,16 @@ class TestMinitabParityRound4(unittest.TestCase):
         self.assertEqual(self.win.presenter.worksheet.columns[2].values, [10.0, 30.0])
         execute_script(self.win.presenter, "DELETE 2 4 C1")
         self.assertEqual(self.win.presenter.worksheet.columns[0].values, [10.0, 30.0])
-        out = execute_script(self.win.presenter, "DOTPLOT C1\nSCATTERPLOT C2 * C1\nTSPLOT C1\nINTERVALPLOT C1\nINDIVIDUAL C1")
-        self.assertEqual(len(out), 5)
+        out = execute_script(self.win.presenter, "DOTPLOT C1\nSCATTERPLOT C2 * C1\nTSPLOT C1\nINTERVALPLOT C1\nINDIVIDUAL C1\nBOXPLOT C1")
+        self.assertEqual(len(out), 6)
+
+        # Copy Command Language round-trip from recipe
+        desc_entry = self.win.presenter.describe_columns([0])
+        self.win.copy_command_language(desc_entry)
+        copied_cmd = QApplication.clipboard().text()
+        self.assertEqual(copied_cmd, "DESCRIBE C1")
+        rt_out = execute_script(self.win.presenter, copied_cmd)
+        self.assertEqual(len(rt_out), 1)
 
     def test_basic_stats_dialogs_respect_default_confidence_and_state(self):
         from PySide6.QtCore import QSettings

@@ -10533,8 +10533,33 @@ class ModernWindow(QMainWindow):
         cmd = target.get("command") or ""
         if not cmd:
             recipe = target.get("recipe") or {}
-            action = str(recipe.get("action") or target.get("result", {}).get("analysis") or target.get("title", "")).upper()
-            cmd = f"{action}"
+            action = str(recipe.get("action") or "").lower()
+            params = recipe.get("parameters") or {}
+            def _col(idx):
+                return f"C{int(idx) + 1}"
+            def _cols(idxs):
+                return " ".join(_col(i) for i in (idxs or []))
+            if action in ("describe", "describe_columns"):
+                cmd = f"DESCRIBE {_cols(params.get('indices'))}"
+            elif action == "multiple_regression":
+                cmd = f"REGRESS {_col(params.get('response_index', 0))} {_cols(params.get('predictor_indices'))}".strip()
+            elif action == "oneway_anova":
+                cmd = f"ONEWAY {_col(params.get('response_index', 0))} {_col(params.get('factor_index', 1))}"
+            elif action == "scatter_plot":
+                cmd = f"SCATTERPLOT {_col(params.get('y_index', 0))} * {_col(params.get('x_index', 1))}"
+            elif action == "graph":
+                method = str(params.get("method") or "histogram").upper()
+                cmd = f"{method} {_cols(params.get('indices'))}".strip()
+            elif action in ("normal_capability", "capability"):
+                parts = [f"CAPABILITY {_col(params.get('index', params.get('column_index', 0)))}"]
+                if params.get("lsl") is not None:
+                    parts.append(f"  LSL {params['lsl']};")
+                if params.get("usl") is not None:
+                    parts.append(f"  USL {params['usl']};")
+                cmd = ";\n".join(parts) + ("." if len(parts) > 1 else "")
+            else:
+                fallback = str(action or target.get("result", {}).get("analysis") or target.get("title", "")).upper()
+                cmd = fallback
         QApplication.clipboard().setText(str(cmd))
         self.statusBar().showMessage("Copied session command language to clipboard.", 3500)
 

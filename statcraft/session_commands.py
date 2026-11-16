@@ -259,9 +259,15 @@ def execute_command_block(presenter, main_cmd: str, subcommands: List[str] | Tup
         return run(presenter, {"action": "graph", "parameters": {"method": "histogram", "indices": indices, "bins": 10}})
 
     if verb in ("BOXPLOT", "BOX"):
-        indices = resolve_variables(rest, presenter.worksheet, ("number",))
-        if len(indices) != 1:
-            raise ValueError("BOXPLOT takes one numeric column (e.g., BOXPLOT C1).")
+        cleaned = rest.replace("*", " ")
+        indices = resolve_variables(cleaned, presenter.worksheet, ("number", "text"))
+        if len(indices) == 1:
+            from .recipes import run
+            return run(presenter, {"action": "graph", "parameters": {"method": "boxplot", "indices": indices, "bins": 1}})
+        if len(indices) == 2 and "*" in rest:
+            return presenter.boxplot_graphs([indices[0]], "one_groups", [indices[1]])
+        if not indices:
+            raise ValueError("BOXPLOT takes a numeric column (e.g., BOXPLOT C1 or BOXPLOT C1 * C2).")
         from .recipes import run
         return run(presenter, {"action": "graph", "parameters": {"method": "boxplot", "indices": indices, "bins": 1}})
 

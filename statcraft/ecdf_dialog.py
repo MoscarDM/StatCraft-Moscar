@@ -103,7 +103,8 @@ class EmpiricalCDFDialog(QDialog):
         self.spin_conf = QDoubleSpinBox()
         self.spin_conf.setRange(0.50, 0.999)
         self.spin_conf.setSingleStep(0.01)
-        self.spin_conf.setValue(0.95)
+        from .variable_dialogs import default_confidence_percent
+        self.spin_conf.setValue(default_confidence_percent() / 100.0)
         conf_row.addWidget(self.spin_conf)
         conf_row.addStretch()
         opt_layout.addLayout(conf_row)
