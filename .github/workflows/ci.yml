@@ -43,7 +43,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           STATCRAFT_TESTING: '1'
         run: |
-          python -c "import os, sys, unittest, tests; res = unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.discover('tests', top_level_dir='.')); sys.stdout.flush(); sys.stderr.flush(); os._exit(0 if res.wasSuccessful() else 1)"
+          python -c "import ctypes, os, sys, unittest, tests; res = unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.discover('tests', top_level_dir='.')); sys.stdout.flush(); sys.stderr.flush(); code = 0 if res.wasSuccessful() else 1; k32 = ctypes.windll.kernel32 if os.name == 'nt' else None; (setattr(k32.GetCurrentProcess, 'restype', ctypes.c_void_p), setattr(k32.TerminateProcess, 'argtypes', [ctypes.c_void_p, ctypes.c_uint]), k32.TerminateProcess(k32.GetCurrentProcess(), code)) if k32 else os._exit(code)"
 
       - name: Run Headless UI & Calculation Smoke Verification
         env:

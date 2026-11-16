@@ -436,6 +436,29 @@ class TestMinitabParityRound4(unittest.TestCase):
             cn2 = CapabilityNonnormalDialog(ws, self.win); self.win._restore_custom_dialog_state("capability_nonnormal", cn2)
             self.assertEqual(cn2.edit_single_col.text(), "C1")
             cn1.close(); cn2.close()
+
+            from statcraft.ordinal_logistic_dialogs import OrdinalLogisticDialog
+            from statcraft.nominal_logistic_dialogs import NominalLogisticDialog
+            from statcraft.poisson_regression_dialogs import PoissonRegressionDialog
+            from statcraft.orthogonal_regression_dialogs import OrthogonalRegressionDialog
+            from statcraft.nonlinear_regression_dialogs import NonlinearRegressionDialog
+            from statcraft.probit_dialogs import ProbitAnalysisDialog
+            from statcraft.stability_study_dialogs import StabilityStudyDialog
+            from statcraft.life_regression_dialogs import LifeRegressionDialog
+
+            for pcls in (
+                OrdinalLogisticDialog,
+                NominalLogisticDialog,
+                PoissonRegressionDialog,
+                OrthogonalRegressionDialog,
+                NonlinearRegressionDialog,
+                ProbitAnalysisDialog,
+                StabilityStudyDialog,
+                LifeRegressionDialog,
+            ):
+                pdlg = pcls(self.win)
+                self.assertEqual(pdlg.spin_conf.value(), 99.0)
+                pdlg.close()
         finally:
             if prev_val is None:
                 settings.remove("options/default_confidence")
@@ -472,8 +495,8 @@ class TestMinitabParityRound4(unittest.TestCase):
         self.assertEqual(self.win.presenter.worksheet.columns[2].values, [10.0, 30.0])
         execute_script(self.win.presenter, "DELETE 2 4 C1")
         self.assertEqual(self.win.presenter.worksheet.columns[0].values, [10.0, 30.0])
-        out = execute_script(self.win.presenter, "DOTPLOT C1\nSCATTERPLOT C2 * C1\nTSPLOT C1")
-        self.assertEqual(len(out), 3)
+        out = execute_script(self.win.presenter, "DOTPLOT C1\nSCATTERPLOT C2 * C1\nTSPLOT C1\nINTERVALPLOT C1\nINDIVIDUAL C1")
+        self.assertEqual(len(out), 5)
 
     def test_basic_stats_dialogs_respect_default_confidence_and_state(self):
         from PySide6.QtCore import QSettings
@@ -686,6 +709,29 @@ class TestMinitabParityRound4(unittest.TestCase):
             cn2 = CapabilityNonnormalDialog(ws, self.win); self.win._restore_custom_dialog_state("capability_nonnormal", cn2)
             self.assertEqual(cn2.edit_single_col.text(), "C1")
             cn1.close(); cn2.close()
+
+            from statcraft.ordinal_logistic_dialogs import OrdinalLogisticDialog
+            from statcraft.nominal_logistic_dialogs import NominalLogisticDialog
+            from statcraft.poisson_regression_dialogs import PoissonRegressionDialog
+            from statcraft.orthogonal_regression_dialogs import OrthogonalRegressionDialog
+            from statcraft.nonlinear_regression_dialogs import NonlinearRegressionDialog
+            from statcraft.probit_dialogs import ProbitAnalysisDialog
+            from statcraft.stability_study_dialogs import StabilityStudyDialog
+            from statcraft.life_regression_dialogs import LifeRegressionDialog
+
+            for pcls in (
+                OrdinalLogisticDialog,
+                NominalLogisticDialog,
+                PoissonRegressionDialog,
+                OrthogonalRegressionDialog,
+                NonlinearRegressionDialog,
+                ProbitAnalysisDialog,
+                StabilityStudyDialog,
+                LifeRegressionDialog,
+            ):
+                pdlg = pcls(self.win)
+                self.assertEqual(pdlg.spin_conf.value(), 99.0)
+                pdlg.close()
         finally:
             if prev_val is None:
                 settings.remove("options/default_confidence")

@@ -70,7 +70,8 @@ class StabilityStudyDialog(ProcedureDialog):
         self.spin_conf = QDoubleSpinBox()
         self.spin_conf.setRange(50.0, 99.99)
         self.spin_conf.setDecimals(1)
-        self.spin_conf.setValue(95.0)
+        from .variable_dialogs import default_confidence_percent
+        self.spin_conf.setValue(default_confidence_percent())
         form_opt.addRow("Confidence level for shelf life (%):", self.spin_conf)
         self.layout().addWidget(opt_box)
 

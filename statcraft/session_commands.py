@@ -288,6 +288,18 @@ def execute_command_block(presenter, main_cmd: str, subcommands: List[str] | Tup
             raise ValueError("TSPLOT takes one or more numeric columns (e.g., TSPLOT C1).")
         return presenter.expanded_graph("time_series", indices)
 
+    if verb in ("INTERVALPLOT", "IPLOT"):
+        indices = resolve_variables(rest, presenter.worksheet, ("number",))
+        if len(indices) < 1:
+            raise ValueError("INTERVALPLOT takes one or more numeric columns (e.g., INTERVALPLOT C1).")
+        return presenter.expanded_graph("interval_plot", indices)
+
+    if verb in ("INDIVIDUAL", "INDPLOT"):
+        indices = resolve_variables(rest, presenter.worksheet, ("number",))
+        if len(indices) < 1:
+            raise ValueError("INDIVIDUAL takes one or more numeric columns (e.g., INDIVIDUAL C1).")
+        return presenter.expanded_graph("individual_value", indices)
+
     if verb in ("PLOT", "SCATTERPLOT"):
         cleaned = rest.replace("*", " ")
         indices = resolve_variables(cleaned, presenter.worksheet, ("number",))
