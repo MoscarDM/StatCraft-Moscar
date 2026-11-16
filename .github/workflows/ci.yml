@@ -43,7 +43,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           STATCRAFT_TESTING: '1'
         run: |
-          python -c "import os, sys, unittest, tests; res = unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.discover('tests', top_level_dir='.')); tests._cleanup_qt_widgets(); sys.stdout.flush(); sys.stderr.flush(); os._exit(0 if res.wasSuccessful() else 1)"
+          python -c "import os, sys, unittest, tests; res = unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.discover('tests', top_level_dir='.')); sys.stdout.flush(); sys.stderr.flush(); os._exit(0 if res.wasSuccessful() else 1)"
 
       - name: Run Headless UI & Calculation Smoke Verification
         env:
