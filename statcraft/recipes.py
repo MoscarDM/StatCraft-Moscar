@@ -52,6 +52,7 @@ FIELDS = {
     'expanded_graph': {'method','indices','group_index','bins','confidence','distribution','parameters'},
     'analyze_factorial_terms': {'response_index','factor_indices','max_order','confidence','plot_residuals','show_factor_coding','selected_terms'},
     'analyze_factorial': {'response_index','factor_indices','max_order','confidence','plot_residuals','show_factor_coding'},
+    'analyze_split_plot': {'response', 'whole_plot_col', 'terms', 'confidence'},
     'scatter_plot': {'x_index','y_index','mode','group_index','order','title','x_label','y_label'},
     'normality': {'index', 'method'},
     'one_variance': {'index','null_stdev','confidence'},
@@ -549,6 +550,8 @@ def columns(recipe):
         if parameters.get('factor_indices'):
             cols.extend([f for f in parameters['factor_indices'] if isinstance(f, int) and f >= 0])
         return sorted(set(cols))
+    if action == 'analyze_split_plot':
+        return []
     if action == 'accelerated_life_testing':
         cols = [parameters['time_index'], parameters['stress_index']]
         if parameters.get('censor_index') is not None and isinstance(parameters['censor_index'], int) and parameters['censor_index'] >= 0:

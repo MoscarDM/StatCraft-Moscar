@@ -27,12 +27,12 @@ class CreateFactorialDialog(QDialog):
         self.catalog_parameters={}
         self.default_runs_by_factor = {}
         self.factors=[{'name':chr(65+i),'low':-1.,'high':1.} for i in range(8)]
+        self.hard_factors=[i==0 for i in range(8)]
         layout=QVBoxLayout(self); body=QHBoxLayout(); left=QVBoxLayout(); group=QGroupBox('Type of Design'); types=QVBoxLayout(group)
         choices=['2-level factorial (default generators)','2-level factorial (specify generators)',
                  '2-level split-plot (hard-to-change factors)','Plackett-Burman design','General full factorial design']
         for index,text in enumerate(choices):
-            radio=QRadioButton(text); radio.setChecked(index==0); radio.setEnabled(index!=2)
-            if index==2: radio.setToolTip('Split-plot creation and analysis are not implemented yet.')
+            radio=QRadioButton(text); radio.setChecked(index==0)
             types.addWidget(radio); self.design_types.append(radio)
         left.addWidget(group); form=QFormLayout(); self.factor_count=QComboBox(); self.factor_count.addItems([str(i) for i in range(2,9)])
         form.addRow('Number of factors:',self.factor_count); left.addLayout(form); left.addStretch(); body.addLayout(left,3)
@@ -57,6 +57,9 @@ class CreateFactorialDialog(QDialog):
         if self.design_types[3].isChecked(): return 'plackett_burman'
         if self.design_types[4].isChecked(): return 'general_factorial'
         return None
+
+    def is_split_plot(self):
+        return self.design_types[2].isChecked()
 
     def setup_design(self,action):
         if self.catalog_kind(): self.configure_catalog()
@@ -204,24 +207,38 @@ class CreateFactorialDialog(QDialog):
         buttons(dialog,layout,accept); dialog.exec()
 
     def factor_settings(self):
-        dialog=QDialog(self); dialog.setWindowTitle('Create Factorial Design: Factors'); dialog.setMinimumWidth(600)
-        layout=QVBoxLayout(dialog); count=int(self.factor_count.currentText()); self.factor_table=QTableWidget(count,4)
-        self.factor_table.setHorizontalHeaderLabels(['Name','Type','Low','High'])
+        dialog=QDialog(self); dialog.setWindowTitle('Create Factorial Design: Factors'); dialog.setMinimumWidth(640)
+        split_plot=self.is_split_plot()
+        layout=QVBoxLayout(dialog); count=int(self.factor_count.currentText()); self.factor_table=QTableWidget(count,5 if split_plot else 4)
+        self.factor_table.setHorizontalHeaderLabels(['Name','Type','Low','High','Hard to change'] if split_plot else ['Name','Type','Low','High'])
         for row,factor in enumerate(self.factors[:count]):
             for col,value in enumerate((factor['name'],'Continuous',factor['low'],factor['high'])):
                 item=QTableWidgetItem(str(value))
                 if col==1: item.setFlags(item.flags()&~Qt.ItemFlag.ItemIsEditable)
                 self.factor_table.setItem(row,col,item)
+            if split_plot:
+                combo=QComboBox(); combo.addItems(['Yes (Whole-Plot)','No (Subplot)'])
+                combo.setCurrentIndex(0 if self.hard_factors[row] else 1)
+                self.factor_table.setCellWidget(row,4,combo)
         self.factor_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch); layout.addWidget(self.factor_table)
         error=QLabel(); error.setObjectName('error'); layout.addWidget(error)
         def accept():
             dialog.setFocus(); QApplication.processEvents()
             try:
                 factors=[dict(name=self.factor_table.item(r,0).text().strip(),low=finite_number(float(self.factor_table.item(r,2).text())),high=finite_number(float(self.factor_table.item(r,3).text()))) for r in range(count)]
-                from .doe import create_factorial
-                create_factorial(factors,randomize=False)
+                if split_plot:
+                    hard_flags=[self.factor_table.cellWidget(r,4).currentIndex()==0 for r in range(count)]
+                    hard=[f for f,flag in zip(factors,hard_flags) if flag]
+                    easy=[f for f,flag in zip(factors,hard_flags) if not flag]
+                    from .doe_split_plot import create_split_plot_design
+                    create_split_plot_design(hard,easy,replicates=self.replicates,seed=self.seed,randomize=False)
+                else:
+                    from .doe import create_factorial
+                    create_factorial(factors,randomize=False)
             except (ValueError,TypeError) as exc: error.setText(str(exc)); return
-            self.factors[:count]=factors; dialog.accept()
+            self.factors[:count]=factors
+            if split_plot: self.hard_factors[:count]=[self.factor_table.cellWidget(r,4).currentIndex()==0 for r in range(count)]
+            dialog.accept()
         buttons(dialog,layout,accept); dialog.exec()
 
     def options(self):
@@ -257,6 +274,16 @@ class CreateFactorialDialog(QDialog):
                 from .doe_planner import build_plan
                 build_plan(**self.parameters)
                 self.accept();return
+            if self.is_split_plot():
+                count=int(self.factor_count.currentText())
+                selected_factors=self.factors[:count]
+                flags=self.hard_factors[:count]
+                hard=[dict(f) for f,flag in zip(selected_factors,flags) if flag]
+                easy=[dict(f) for f,flag in zip(selected_factors,flags) if not flag]
+                from .doe_split_plot import create_split_plot_design
+                create_split_plot_design(hard,easy,replicates=self.replicates,seed=self.seed,randomize=self.randomize)
+                self.parameters=dict(hard_factors=hard,easy_factors=easy,replicates=self.replicates,seed=self.seed,randomize=self.randomize)
+                self.accept(); return
             self.parameters=dict(factors=self.factors[:int(self.factor_count.currentText())],replicates=self.replicates,centers=self.centers,blocks=self.blocks,randomize=self.randomize,seed=self.seed)
             if self.design_types[1].isChecked():
                 generators = self.generators

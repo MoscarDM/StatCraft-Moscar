@@ -5870,6 +5870,36 @@ class Presenter:
     def analyze_factorial_terms(self,**parameters):
         return self.analyze_factorial(**parameters)
 
+    def create_split_plot_design(self, hard_factors, easy_factors, replicates=1, seed=None, randomize=True):
+        from .doe_split_plot import create_split_plot_design
+        worksheet = create_split_plot_design(hard_factors, easy_factors, replicates=replicates, seed=seed, randomize=randomize)
+        self.new()
+        self.worksheet = worksheet
+        self.dirty = True
+        doe_meta = worksheet.metadata['doe']
+        result = {
+            'design': 'Split-plot factorial design',
+            'hard_factors': len(hard_factors),
+            'easy_factors': len(easy_factors),
+            'whole_plots': doe_meta['whole_plots'],
+            'runs': worksheet.row_count,
+            'replicates': replicates,
+            'randomized': randomize,
+            'seed': seed,
+            'convention': 'WP identifies whole-plot blocks for hard-to-change factors; StdOrder is unrandomized order; RunOrder is worksheet order.',
+        }
+        return self._record("Split-Plot Factorial Design", result)
+
+    def analyze_split_plot(self, response, whole_plot_col='WP', terms=None, confidence=0.95):
+        from .doe_split_plot import analyze_split_plot
+        result = analyze_split_plot(self.worksheet, response=response, whole_plot_col=whole_plot_col, terms=terms, confidence=confidence)
+        parameters = {'response': response, 'whole_plot_col': whole_plot_col, 'terms': terms, 'confidence': confidence}
+        return self._record(
+            f"Split-Plot ANOVA — {result['response']}",
+            result,
+            recipe={'action': 'analyze_split_plot', 'parameters': parameters},
+        )
+
     def create_definitive_screening_design(self, factors, replicates=1, extra_centers=0, randomize=True, seed=1, name="Definitive Screening Design"):
         from .dsd import create_definitive_screening_design
         before_state = self._capture_project_state()

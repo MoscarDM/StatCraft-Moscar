@@ -99,3 +99,40 @@ class BuildAnalyzeTaguchiDialog(ProcedureDialog):
     def validate(self):
         self.parameters=None
         super().validate()
+
+
+class BuildAnalyzeSplitPlotDialog(ProcedureDialog):
+    def __init__(self,worksheet,parent=None):
+        super().__init__(parent,'Analyze Split-Plot Design',worksheet,
+            selectors=(
+                {'key':'response_index','label':'Response:'},
+                {'key':'whole_plot_index','label':'Whole-plot column (WP):','kinds':('number','text')}),
+            fields=(
+                {'key':'terms_text','label':'Model terms (comma-separated, optional):','optional':True},
+                {'key':'confidence','label':'Confidence level (%):','numeric':True,'default':95}),
+            note='Two-stratum split-plot ANOVA separates whole-plot error from subplot residual error. Leave model terms blank for main effects and 2-factor interactions.')
+        wp_name='WP'
+        meta=worksheet.metadata.get('doe',{})
+        if isinstance(meta,dict) and meta.get('schema')=='statcraft-split-plot-v1' and isinstance(meta.get('whole_plot_col'),str):
+            wp_name=meta['whole_plot_col']
+        wp_idx=next((i for i,col in enumerate(worksheet.columns) if col.name==wp_name),None)
+        if wp_idx is not None:
+            self.controls['whole_plot_index'].setText(format_variable_list([wp_idx],worksheet))
+
+    def values(self):
+        values=super().values()
+        if values['response_index']==values['whole_plot_index']:
+            raise ValueError('Choose separate response and whole-plot columns.')
+        if not 0<values['confidence']<100:
+            raise ValueError('Confidence level must be between 0 and 100.')
+        raw_terms=(values.get('terms_text') or '').strip()
+        terms=[t.strip() for t in raw_terms.split(',') if t.strip()] if raw_terms else None
+        resp_name=self.worksheet.columns[values['response_index']].name
+        wp_name=self.worksheet.columns[values['whole_plot_index']].name
+        from .doe_split_plot import analyze_split_plot
+        analyze_split_plot(self.worksheet,response=resp_name,whole_plot_col=wp_name,terms=terms,confidence=values['confidence']/100)
+        return {'response':resp_name,'whole_plot_col':wp_name,'terms':terms,'confidence':values['confidence']/100}
+
+    def validate(self):
+        self.parameters=None
+        super().validate()

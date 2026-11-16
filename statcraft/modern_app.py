@@ -4787,8 +4787,12 @@ class ModernWindow(QMainWindow):
         dialog = CreateFactorialDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted: return
         catalog = dialog.catalog_kind()
+        split_plot = dialog.is_split_plot()
         if not catalog and not self._confirm_leave(): return
-        create = self.presenter.create_doe_plan if catalog else self.presenter.create_factorial
+        if split_plot:
+            create = self.presenter.create_split_plot_design
+        else:
+            create = self.presenter.create_doe_plan if catalog else self.presenter.create_factorial
         entry = self._call(lambda: create(**dialog.parameters), result=True)
         self.page = 0; self.refresh()
         if entry is not None and not dialog.summary and not catalog:
@@ -4800,6 +4804,14 @@ class ModernWindow(QMainWindow):
         from .doe_dialogs import AnalyzeFactorialDialog
         dialog = AnalyzeFactorialDialog(self, self.presenter.worksheet)
         if dialog.exec() == QDialog.DialogCode.Accepted: self._call(lambda: self.presenter.analyze_factorial(**dialog.parameters), result=True)
+
+    def analyze_split_plot(self):
+        self._commit_editor()
+        self._last_dialog_action = self.analyze_split_plot
+        from .doe_analysis_dialogs import BuildAnalyzeSplitPlotDialog
+        dialog = BuildAnalyzeSplitPlotDialog(self.presenter.worksheet, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._call(lambda: self.presenter.analyze_split_plot(**dialog.parameters), result=True)
 
     def create_dsd_dialog(self):
         self._commit_editor()
