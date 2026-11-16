@@ -5354,7 +5354,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = lambda: self.attribute_control_dialog(chart_type)
         dlg = AttributeChartDialog(self.presenter.worksheet, chart_type=chart_type, parent=self)
+        self._restore_custom_dialog_state(f"attribute_control_{chart_type}", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state(f"attribute_control_{chart_type}", dlg)
             p = dlg.selected_params
             if p:
                 entry = self._call(lambda: self.presenter.attribute_control_chart(settings=p), result=True)

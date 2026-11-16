@@ -43,7 +43,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           STATCRAFT_TESTING: '1'
         run: |
-          python -m unittest discover tests
+          python -m unittest discover -s tests -t .
 
       - name: Run Headless UI & Calculation Smoke Verification
         env:

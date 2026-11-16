@@ -308,6 +308,19 @@ class TestMinitabParityRound4(unittest.TestCase):
         self.assertEqual(len(new_col.values), 2)
         self.assertEqual(self.win.presenter.worksheet.columns[0].kind, "text")
 
+    def test_attribute_chart_dialog_state_roundtrip(self):
+        from statcraft.attribute_control_dialogs import AttributeChartDialog
+        self.win.presenter.paste(0, 0, "2\t50\n3\t50\n")
+        d1 = AttributeChartDialog(self.win.presenter.worksheet, chart_type="P", parent=self.win)
+        d1.edit_vars.setText("C1")
+        d1.edit_subgroup.setText("C2")
+        self.win._save_custom_dialog_state("attribute_control_P", d1)
+        d2 = AttributeChartDialog(self.win.presenter.worksheet, chart_type="P", parent=self.win)
+        self.win._restore_custom_dialog_state("attribute_control_P", d2)
+        self.assertEqual(d2.edit_vars.text(), "C1")
+        self.assertEqual(d2.edit_subgroup.text(), "C2")
+        d1.close(); d2.close()
+
 
 if __name__ == "__main__":
     unittest.main()
