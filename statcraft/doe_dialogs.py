@@ -26,15 +26,16 @@ class CreateFactorialDialog(QDialog):
         self.generators={}; self.design_types=[]
         self.catalog_parameters={}
         self.default_runs_by_factor = {}
-        self.factors=[{'name':chr(65+i),'low':-1.,'high':1.} for i in range(8)]
-        self.hard_factors=[i==0 for i in range(8)]
+        from .fractional import _FACTOR_LETTERS
+        self.factors=[{'name':_FACTOR_LETTERS[i],'low':-1.,'high':1.} for i in range(15)]
+        self.hard_factors=[i==0 for i in range(15)]
         layout=QVBoxLayout(self); body=QHBoxLayout(); left=QVBoxLayout(); group=QGroupBox('Type of Design'); types=QVBoxLayout(group)
         choices=['2-level factorial (default generators)','2-level factorial (specify generators)',
                  '2-level split-plot (hard-to-change factors)','Plackett-Burman design','General full factorial design']
         for index,text in enumerate(choices):
             radio=QRadioButton(text); radio.setChecked(index==0)
             types.addWidget(radio); self.design_types.append(radio)
-        left.addWidget(group); form=QFormLayout(); self.factor_count=QComboBox(); self.factor_count.addItems([str(i) for i in range(2,9)])
+        left.addWidget(group); form=QFormLayout(); self.factor_count=QComboBox(); self.factor_count.addItems([str(i) for i in range(2,16)])
         form.addRow('Number of factors:',self.factor_count); left.addLayout(form); left.addStretch(); body.addLayout(left,3)
         right=QVBoxLayout()
         for title,callback in [('Display Available Designs…',self.available),('Designs…',self.designs),('Factors…',self.factor_settings),('Options…',self.options),('Results…',self.results)]:
@@ -49,8 +50,8 @@ class CreateFactorialDialog(QDialog):
         kind=self.catalog_kind()
         self.factor_count.setEnabled(kind is None)
         if kind is None:
-            count=min(int(self.factor_count.currentText()),8)
-            self.factor_count.clear();self.factor_count.addItems([str(i) for i in range(2,9)])
+            count=min(int(self.factor_count.currentText()),15)
+            self.factor_count.clear();self.factor_count.addItems([str(i) for i in range(2,16)])
             self.factor_count.setCurrentText(str(count))
 
     def catalog_kind(self):
@@ -98,7 +99,7 @@ class CreateFactorialDialog(QDialog):
     def available(self):
         dialog=QDialog(self); dialog.setWindowTitle('Available Factorial Designs'); layout=QVBoxLayout(dialog)
         from .fractional import default_designs
-        rows = [(k, runs, resolution) for k in range(2, 9)
+        rows = [(k, runs, resolution) for k in range(2, 16)
                 for runs, resolution, _ in default_designs(k)]
         table = QTableWidget(len(rows), 3)
         table.setHorizontalHeaderLabels(['Factors', 'Corner runs per replicate', 'Unblocked resolution'])
@@ -290,8 +291,9 @@ class CreateFactorialDialog(QDialog):
             else:
                 from .fractional import default_designs
                 count = len(self.parameters['factors'])
-                selected_runs = self.default_runs_by_factor.get(count, 2**count)
-                generators = next(g for runs, _, g in default_designs(count) if runs == selected_runs)
+                choices = default_designs(count)
+                selected_runs = self.default_runs_by_factor.get(count, choices[0][0])
+                generators = next(g for runs, _, g in choices if runs == selected_runs)
                 if generators and self.replicates % self.blocks:
                     raise ValueError('For a default fraction, choose a block count that divides the number of replicates.')
             if generators or self.design_types[1].isChecked():
