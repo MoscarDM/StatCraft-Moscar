@@ -169,6 +169,48 @@ class MinitabParityRound4Tests(unittest.TestCase):
         self.win.close_current_graph()
         self.assertIn("Closed active graph/output tab", self.win.statusBar().currentMessage())
 
+    def test_ui_preferences_and_custom_lists_persistence(self):
+        import tempfile
+        from PySide6.QtGui import QFont
+        from statcraft import settings_scope
+
+        orig = get_custom_lists()
+        prev_ws = settings_scope._sandbox_workspace
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                settings_scope.configure_sandbox_process(Path(tmpdir))
+                self.win._apply_data_font(QFont("Consolas", 11))
+                self.win._apply_label_font(QFont("Consolas", 10))
+                set_custom_lists([["Alpha", "Beta", "Gamma"]])
+                self.win._save_ui_preferences()
+
+                # Reset in-memory state and restore from isolated sandbox settings
+                self.win._apply_data_font(QFont("Segoe UI", 9))
+                self.win._apply_label_font(QFont("Segoe UI", 9))
+                set_custom_lists([["Temp1", "Temp2"]])
+                self.win._restore_ui_preferences()
+                self.assertEqual(self.win._data_font.family(), "Consolas")
+                self.assertEqual(self.win._data_font.pointSize(), 11)
+                self.assertEqual(self.win._label_font.pointSize(), 10)
+                self.assertEqual(get_custom_lists(), [["Alpha", "Beta", "Gamma"]])
+        finally:
+            settings_scope._sandbox_workspace = prev_ws
+            set_custom_lists(orig)
+
+    def test_box_cox_no_scipy_future_warning(self):
+        import warnings
+        import numpy as np
+        from statcraft.box_cox_tool import _anderson_normal
+
+        arr = np.array([1.2, 2.5, 3.1, 4.8, 5.5, 6.2, 7.9, 8.1, 9.4, 10.2])
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            ad, p = _anderson_normal(arr)
+        self.assertGreater(ad, 0.0)
+        self.assertTrue(0.0 < p < 1.0)
+        future_warnings = [w for w in caught if issubclass(w.category, FutureWarning)]
+        self.assertEqual(future_warnings, [])
+
 
 if __name__ == "__main__":
     unittest.main()

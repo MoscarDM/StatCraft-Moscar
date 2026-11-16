@@ -3918,6 +3918,18 @@ class ModernWindow(QMainWindow):
         try:
             from .settings_scope import settings_for_process
             s = settings_for_process()
+            cell_fam = s.value("ui/cell_font_family")
+            cell_sz = s.value("ui/cell_font_size")
+            if cell_fam and hasattr(self, "table"):
+                self._apply_data_font(QFont(str(cell_fam), max(7, int(cell_sz or 9))))
+            hdr_fam = s.value("ui/header_font_family")
+            hdr_sz = s.value("ui/header_font_size")
+            if hdr_fam and hasattr(self, "column_names"):
+                self._apply_label_font(QFont(str(hdr_fam), max(7, int(hdr_sz or 9))))
+            custom_lists = s.value("autofill/custom_lists")
+            if isinstance(custom_lists, list) and custom_lists:
+                from .autofill_engine import set_custom_lists
+                set_custom_lists(custom_lists)
             geom = s.value("ui/geometry")
             if geom is not None:
                 self.restoreGeometry(geom)
@@ -3934,13 +3946,30 @@ class ModernWindow(QMainWindow):
         except Exception:
             pass
 
+    def _save_ui_pref(self, key, value):
+        try:
+            from .settings_scope import settings_for_process
+            settings_for_process().setValue(f"ui/{key}" if not str(key).startswith(("ui/", "autofill/")) else key, value)
+        except Exception:
+            pass
+
     def _save_ui_preferences(self):
         try:
             from .settings_scope import settings_for_process
+            from .autofill_engine import get_custom_lists
             s = settings_for_process()
             s.setValue("ui/geometry", self.saveGeometry())
             if hasattr(self, "work_splitter"):
                 s.setValue("ui/work_splitter", self.work_splitter.saveState())
+            if hasattr(self, "table"):
+                df = getattr(self, "_data_font", self.table.font())
+                s.setValue("ui/cell_font_family", df.family())
+                s.setValue("ui/cell_font_size", max(7, df.pointSize() or 9))
+            if hasattr(self, "column_names"):
+                lf = getattr(self, "_label_font", self.column_names.font())
+                s.setValue("ui/header_font_family", lf.family())
+                s.setValue("ui/header_font_size", max(7, lf.pointSize() or 9))
+            s.setValue("autofill/custom_lists", get_custom_lists())
             pinned_names = []
             for _, cb in self._pinned_procedures.list_items():
                 name = getattr(cb, "__name__", "")
@@ -10574,10 +10603,9 @@ class ModernWindow(QMainWindow):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             cf = cell_font_cb.currentFont(); cf.setPointSize(cell_size.value())
             hf = hdr_font_cb.currentFont(); hf.setPointSize(hdr_size.value())
-            self.table.setFont(cf)
-            self.column_names.setFont(hf)
-            self.col_header_view.setFont(hf)
-            self.row_header_view.setFont(hf)
+            self._apply_data_font(cf)
+            self._apply_label_font(hf)
+            self._save_ui_preferences()
 
     def clear_all_conditional_formatting(self):
         sheet = self.presenter.worksheet
@@ -10684,20 +10712,39 @@ class ModernWindow(QMainWindow):
         self.table.setFocus()
         self.statusBar().showMessage("Focused Data Window", 2500)
 
+    def _apply_data_font(self, font):
+        pt = max(7, font.pointSize() or 9)
+        f = QFont(font.family(), pt)
+        self._data_font = f
+        self.table.setFont(f)
+        self.table.setStyleSheet(f"QTableWidget {{ font-family: '{f.family()}'; font-size: {pt}pt; }}")
+
+    def _apply_label_font(self, font):
+        pt = max(7, font.pointSize() or 9)
+        f = QFont(font.family(), pt)
+        self._label_font = f
+        qss = f"font-family: '{f.family()}'; font-size: {pt}pt;"
+        for w in (self.column_names, getattr(self, "col_header_view", None), getattr(self, "row_header_view", None)):
+            if w is not None:
+                w.setFont(f)
+                w.setStyleSheet(qss)
+
     def select_data_font_dialog(self):
         from PySide6.QtWidgets import QFontDialog
-        font, ok = QFontDialog.getFont(self.table.font(), self, "Select Data Font")
+        cur = getattr(self, "_data_font", self.table.font())
+        font, ok = QFontDialog.getFont(cur, self, "Select Data Font")
         if ok:
-            self.table.setFont(font)
+            self._apply_data_font(font)
             self._save_ui_pref("cell_font_family", font.family())
             self._save_ui_pref("cell_font_size", max(7, font.pointSize() or 9))
             self.refresh()
 
     def select_label_font_dialog(self):
         from PySide6.QtWidgets import QFontDialog
-        font, ok = QFontDialog.getFont(self.column_names.font(), self, "Select Label Font")
+        cur = getattr(self, "_label_font", self.column_names.font())
+        font, ok = QFontDialog.getFont(cur, self, "Select Label Font")
         if ok:
-            self.column_names.setFont(font)
+            self._apply_label_font(font)
             self._save_ui_pref("header_font_family", font.family())
             self._save_ui_pref("header_font_size", max(7, font.pointSize() or 9))
             self.refresh()
@@ -10772,6 +10819,7 @@ class ModernWindow(QMainWindow):
         def accept_lists():
             new_lists = [[p.strip() for p in list_widget.item(i).text().split(",") if p.strip()] for i in range(list_widget.count())]
             set_custom_lists(new_lists)
+            self._save_ui_pref("autofill/custom_lists", new_lists)
             self.statusBar().showMessage(f"Saved {len(new_lists)} custom autofill list(s).", 3500)
             dlg.accept()
         buttons.accepted.connect(accept_lists); buttons.rejected.connect(dlg.reject)

@@ -14,7 +14,10 @@ _STANDARD_LAMBDAS = (-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0)
 
 
 def _anderson_normal(arr: np.ndarray) -> tuple[float, float]:
-    res = stats.anderson(arr, dist="norm")
+    try:
+        res = stats.anderson(arr, dist="norm", method="interpolate")
+    except TypeError:
+        res = stats.anderson(arr, dist="norm")
     ad = float(res.statistic)
     n = len(arr)
     ad_adj = ad * (1.0 + 0.75 / n + 2.25 / (n * n))
