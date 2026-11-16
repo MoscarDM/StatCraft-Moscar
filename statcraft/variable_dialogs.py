@@ -648,6 +648,17 @@ def load_dialog_state(worksheet, key_name: str) -> dict | None:
     return copy.deepcopy(saved) if saved is not None else None
 
 
+def default_confidence_percent() -> float:
+    from PySide6.QtCore import QSettings
+    try:
+        val = float(QSettings("StatCraft", "Desktop").value("options/default_confidence", 95.0))
+        if 50.0 <= val <= 99.99:
+            return val
+    except (TypeError, ValueError):
+        pass
+    return 95.0
+
+
 class ScatterTypeDialog(QDialog):
     def __init__(self,parent,default_mode=None):
         from .scatter import MODES

@@ -70,9 +70,10 @@ class TwoWayAnovaDialog(QDialog):
 
         ci_layout = QHBoxLayout()
         ci_layout.addWidget(QLabel("Confidence level (%):"))
+        from .variable_dialogs import default_confidence_percent
         self.spin_ci = QDoubleSpinBox()
         self.spin_ci.setRange(50.0, 99.9)
-        self.spin_ci.setValue(95.0)
+        self.spin_ci.setValue(default_confidence_percent())
         self.spin_ci.setDecimals(1)
         ci_layout.addWidget(self.spin_ci)
         ci_layout.addStretch()
@@ -117,3 +118,32 @@ class TwoWayAnovaDialog(QDialog):
             "confidence": self.spin_ci.value() / 100.0
         }
         self.accept()
+
+    def get_state(self) -> dict:
+        return {
+            "resp_idx": self.combo_resp.currentData(),
+            "factor_a_idx": self.combo_factor_a.currentData(),
+            "factor_b_idx": self.combo_factor_b.currentData(),
+            "fit_interaction": self.chk_interaction.isChecked(),
+            "display_means": self.chk_means.isChecked(),
+            "ci_pct": self.spin_ci.value(),
+        }
+
+    def set_state(self, state: dict) -> None:
+        if not isinstance(state, dict):
+            return
+        for combo, key in (
+            (self.combo_resp, "resp_idx"),
+            (self.combo_factor_a, "factor_a_idx"),
+            (self.combo_factor_b, "factor_b_idx"),
+        ):
+            if key in state:
+                pos = combo.findData(state[key])
+                if pos >= 0:
+                    combo.setCurrentIndex(pos)
+        if "fit_interaction" in state:
+            self.chk_interaction.setChecked(bool(state["fit_interaction"]))
+        if "display_means" in state:
+            self.chk_means.setChecked(bool(state["display_means"]))
+        if "ci_pct" in state:
+            self.spin_ci.setValue(float(state["ci_pct"]))

@@ -259,6 +259,45 @@ class TestMinitabParityRound4(unittest.TestCase):
         self.assertEqual(self.win.table.currentRow(), 0)
         self.assertEqual(self.win.table.currentColumn(), 0)
 
+    def test_twoway_imr_state_and_default_confidence_wiring(self):
+        from PySide6.QtCore import QSettings
+        from statcraft.twoway_anova_dialogs import TwoWayAnovaDialog
+        from statcraft.imr_dialogs import IMRChartDialog
+        from statcraft.regression_dialog import default_regression_options
+
+        settings = QSettings("StatCraft", "Desktop")
+        prev_val = settings.value("options/default_confidence")
+        try:
+            settings.setValue("options/default_confidence", 99.0)
+            self.win.presenter.paste(0, 0, "10\tA\tX\n20\tB\tY\n")
+            tw1 = TwoWayAnovaDialog(self.win.presenter.worksheet, self.win)
+            self.assertEqual(tw1.spin_ci.value(), 99.0)
+            tw1.chk_interaction.setChecked(False)
+            tw1.spin_ci.setValue(90.0)
+            self.win._save_custom_dialog_state("twoway_anova", tw1)
+            tw2 = TwoWayAnovaDialog(self.win.presenter.worksheet, self.win)
+            self.win._restore_custom_dialog_state("twoway_anova", tw2)
+            self.assertFalse(tw2.chk_interaction.isChecked())
+            self.assertEqual(tw2.spin_ci.value(), 90.0)
+            tw1.close(); tw2.close()
+
+            self.assertAlmostEqual(default_regression_options()["confidence"], 0.99)
+
+            imr1 = IMRChartDialog(self.win.presenter.worksheet, self.win)
+            imr1.edit_vars.setText("C1")
+            imr1.options["span"] = 3
+            self.win._save_custom_dialog_state("imr_dialog", imr1)
+            imr2 = IMRChartDialog(self.win.presenter.worksheet, self.win)
+            self.win._restore_custom_dialog_state("imr_dialog", imr2)
+            self.assertEqual(imr2.edit_vars.text(), "C1")
+            self.assertEqual(imr2.options["span"], 3)
+            imr1.close(); imr2.close()
+        finally:
+            if prev_val is None:
+                settings.remove("options/default_confidence")
+            else:
+                settings.setValue("options/default_confidence", prev_val)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4901,7 +4901,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.twoway_anova_dialog
         dlg = TwoWayAnovaDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("twoway_anova", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("twoway_anova", dlg)
             p = dlg.settings
             if p:
                 entry = self._call(lambda: self.presenter.twoway_anova(**p), result=True)

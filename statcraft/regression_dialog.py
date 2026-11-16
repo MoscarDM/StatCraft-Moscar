@@ -34,8 +34,9 @@ def _subdialog_footer(dialog: QDialog, layout: QVBoxLayout, callback, help_title
 
 
 def default_regression_options() -> dict[str, Any]:
+    from .variable_dialogs import default_confidence_percent
     return {
-        "confidence": 0.95,
+        "confidence": default_confidence_percent() / 100.0,
         "graphs": "four",  # 'four', 'fits', 'order', 'normal', 'histogram', 'none'
         "results": {
             "equation": True,

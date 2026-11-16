@@ -366,6 +366,7 @@ class CapabilityDialog(QDialog):
         self.selected_params: Optional[Dict[str, Any]] = None
 
         # Options state
+        from .variable_dialogs import default_confidence_percent
         self.options: Dict[str, Any] = {
             "tolerance_k": 6.0,
             "target": None,
@@ -373,7 +374,7 @@ class CapabilityDialog(QDialog):
             "display_unit": "ppm",
             "show_ccpk": False,
             "include_ci": False,
-            "confidence_level": 95.0,
+            "confidence_level": default_confidence_percent(),
             "ci_type": "two_sided",
             "title": "",
             "estimate_method_gt1": "pooled",
