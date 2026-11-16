@@ -5214,7 +5214,7 @@ class ModernWindow(QMainWindow):
 
     def equal_variances(self, stacked):
         selectors = [selector("response_index", "Response"), selector("factor_index", "Factor", kinds=("number", "text"))] if stacked else [selector("indices", "Group columns", True, 2)]
-        fields = [{"key": "method", "label": "Method", "choices": ["Levene", "Bartlett"]}]
+        fields = [{"key": "method", "label": "Method", "choices": ["Levene", "Bartlett", "Bonett", "MultipleComparisons"]}]
         action = self.presenter.equal_variances_stacked if stacked else self.presenter.equal_variances_columns
         self._dialog("Test for Equal Variances", selectors, fields, lambda p: action(**p), "Bartlett assumes normal populations. Levene uses the implemented robust center convention.")
 
