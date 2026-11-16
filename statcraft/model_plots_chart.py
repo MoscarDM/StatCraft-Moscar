@@ -1222,10 +1222,10 @@ def _draw_surface(chart, p, area, panel):
 
     legend_w = min(160.0, max(120.0, area.width() * 0.24))
     cube_rect = QRectF(
-        area.left() + 18.0,
-        area.top() + 24.0,
-        max(140.0, area.width() - 34.0 - legend_w),
-        max(140.0, area.height() - 42.0),
+        area.left() + 44.0,
+        area.top() + 46.0,
+        max(140.0, area.width() - 74.0 - legend_w),
+        max(140.0, area.height() - 82.0),
     )
     chart.remember_axes(cube_rect)
     panel['cube_rect'] = cube_rect
@@ -1406,7 +1406,9 @@ def _draw_surface(chart, p, area, panel):
         length = math.hypot(delta.x(), delta.y())
         ux, uy = (delta.x() / length, delta.y() / length) if length > 1 else (0.0, -1.0)
         lbl_center = end + QPointF(ux * 22, uy * 18)
-        lbl_rect = QRectF(lbl_center.x() - 60, lbl_center.y() - 10, 120, 20)
+        lx = max(area.left() + 4.0, min(lbl_center.x() - 60.0, area.right() - legend_w - 124.0))
+        ly = max(area.top() + 24.0, min(lbl_center.y() - 10.0, area.bottom() - 22.0))
+        lbl_rect = QRectF(lx, ly, 120.0, 20.0)
         p.fillRect(lbl_rect, QColor(255, 255, 255, 215))
         chart._text(p, lbl_rect, label[:18], SLATE, Qt.AlignmentFlag.AlignCenter)
 

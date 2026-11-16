@@ -1576,6 +1576,7 @@ class ModernWindow(QMainWindow):
         self._action(quality, "&Pareto Chart…", self.pareto_chart_dialog, None, "bar_chart", True)
         self.cause_and_effect_action = self._action(quality, "&Cause-and-Effect…", self.cause_and_effect_dialog, None, "workflow", True)
         self.dist_id_action = self._action(quality, "&Individual Distribution Identification…", self.dist_id_dialog, None, "chart", True)
+        self.box_cox_action = self._action(quality, "&Box-Cox Transformation…", self.box_cox_dialog, None, "chart", True)
         self.johnson_action = self._action(quality, "&Johnson Transformation…", self.johnson_dialog, None, "chart", True)
         capa_menu = quality.addMenu("Capability Analysis")
         self._action(capa_menu, "&Normal…", self.capability, None, "capability", True)
@@ -4825,6 +4826,20 @@ class ModernWindow(QMainWindow):
                 entry = self._call(lambda: self.presenter.cause_and_effect(**p), result=True)
                 if entry:
                     self.show_result(entry)
+
+    def box_cox_dialog(self):
+        self._dialog(
+            "Box-Cox Transformation",
+            [selector("column_index", "Variable")],
+            [
+                {"key": "use_rounded_lambda", "text": "Use rounded standard lambda when inside 95% CI", "boolean": True, "default": True},
+                numeric("custom_lambda", "Specify lambda (optional)", "", optional=True),
+                {"key": "store_column", "text": "Store transformed data in worksheet", "boolean": True, "default": True},
+                {"key": "store_column_name", "label": "Store column name (optional)", "default": "", "optional": True},
+            ],
+            lambda p: self.presenter.box_cox_transformation(**p),
+            "Finds the optimal Box-Cox power transformation (lambda) for positive data and compares Anderson-Darling normality before and after transformation.",
+        )
 
     def johnson_dialog(self):
         from .johnson_dialog import JohnsonDialog
@@ -8797,7 +8812,7 @@ class ModernWindow(QMainWindow):
             "nonlinear_regression": self.nonlinear_regression_dialog,
             "equal_variances": self.test_equal_variances_dialog,
             "test_equal_variances": self.test_equal_variances_dialog,
-            "one_variance": self.one_variance,
+            "one_variance": self.one_sample_variance_dialog,
             "two_variances": self.two_sample_variances_dialog,
             "one_proportion": self.one_proportion,
             "two_proportions": self.two_proportions,

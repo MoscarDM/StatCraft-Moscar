@@ -2387,6 +2387,25 @@ class Presenter:
         return entry
 
     @undoable
+    def box_cox_transformation(
+        self,
+        column_index: int,
+        use_rounded_lambda: bool = True,
+        custom_lambda=None,
+        store_column: bool = True,
+        store_column_name=None,
+    ):
+        from .box_cox_tool import run_box_cox_transformation
+        res = run_box_cox_transformation(
+            self.worksheet,
+            column_index,
+            use_rounded_lambda=use_rounded_lambda,
+            custom_lambda=custom_lambda,
+            store_column=store_column,
+            store_name=store_column_name,
+        )
+        return self._record(f"Box-Cox Transformation: {res['response_name']}", res)
+
     def johnson_transformation(
         self,
         column_index: int,
