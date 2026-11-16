@@ -359,6 +359,7 @@ class ProcedureDialog(QDialog):
         self.select_button.clicked.connect(self.transfer); left.addWidget(self.select_button)
         self.available.itemDoubleClicked.connect(lambda item:self.transfer())
         self.available.itemSelectionChanged.connect(lambda:self.select_button.setEnabled(bool(self.available.selectedItems())))
+        self.available.installEventFilter(self)
         if self.selectors: body.addLayout(left,1)
         form=QFormLayout(); form.setVerticalSpacing(14)
         for spec in self.selectors:
@@ -450,6 +451,14 @@ class ProcedureDialog(QDialog):
         if self.selectors:
             self.activate(self.selectors[0]['key'])
             self.controls[self.active_key].setFocus()
+
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj is getattr(self, 'available', None) and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.available.selectedItems():
+                self.transfer()
+                return True
+        return super().eventFilter(obj, event)
 
     def _filter_available_variables(self, text):
         query = text.strip().lower()
@@ -713,6 +722,14 @@ class ScatterDialog(QDialog):
             reset_btn.clicked.connect(self.reset_dialog)
         buttons.accepted.connect(self.validate); buttons.rejected.connect(self.reject); layout.addWidget(buttons)
         self._restore_dialog_state()
+
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj is getattr(self, 'available', None) and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.available.selectedItems():
+                self.transfer()
+                return True
+        return super().eventFilter(obj, event)
 
     def _filter_available_variables(self, text):
         query = text.strip().lower()

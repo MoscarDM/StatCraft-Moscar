@@ -288,6 +288,25 @@ class WorksheetTable(QTableWidget):
                         win.select_worksheet_row(self.currentRow())
                         return True
             elif not mods:
+                if key == Qt.Key.Key_F2:
+                    item = self.currentItem()
+                    if item is not None:
+                        self.editItem(item)
+                        return True
+                if key == Qt.Key.Key_Home:
+                    if self.columnCount() > 0:
+                        self.setCurrentCell(max(0, self.currentRow()), 0)
+                        return True
+                if key == Qt.Key.Key_End:
+                    r = max(0, self.currentRow())
+                    last_c = 0
+                    for c in range(self.columnCount() - 1, -1, -1):
+                        it = self.item(r, c)
+                        if it is not None and it.text().strip():
+                            last_c = c
+                            break
+                    self.setCurrentCell(r, last_c)
+                    return True
                 scroll = self.verticalScrollBar()
                 if key == Qt.Key.Key_Down and self.currentRow() == self.rowCount() - 1:
                     self.navigate('down')

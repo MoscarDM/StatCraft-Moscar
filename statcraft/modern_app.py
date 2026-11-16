@@ -733,6 +733,7 @@ class ModernWindow(QMainWindow):
         self.graph_options_pane.closeRequested.connect(self.close_graph_options)
         self.splitter.addWidget(self.graph_options_pane);self.graph_options_pane.hide()
         self._create_actions(); self._create_status_bar(); self.refresh()
+        self._restore_ui_preferences()
         self._show_welcome()
         self.set_ui_mode(self._ui_mode)
         QTimer.singleShot(800, self._check_startup_updates)
@@ -1211,6 +1212,13 @@ class ModernWindow(QMainWindow):
         self.status_selection_summary.setObjectName("statusSelectionSummary")
         self.status_selection_summary.setStyleSheet("color: #38bdf8; font-weight: 500; font-size: 8.5pt; padding: 0 8px;")
         sb.addPermanentWidget(self.status_selection_summary)
+
+        self.status_entry_dir_btn = QToolButton()
+        self.status_entry_dir_btn.setObjectName("statusEntryDirBtn")
+        self.status_entry_dir_btn.setText("↓ Down")
+        self.status_entry_dir_btn.setToolTip("Data entry direction — click to toggle Down (↓) or Right (→)")
+        self.status_entry_dir_btn.clicked.connect(self.toggle_entry_direction)
+        sb.addPermanentWidget(self.status_entry_dir_btn)
 
         # Right-side permanent StatCraft controls: pane layout buttons, zoom controls, Command Line toggle
         self.view_mode_buttons = {}
@@ -2212,9 +2220,12 @@ class ModernWindow(QMainWindow):
         QApplication.processEvents()
 
     def _update_corner_arrow(self):
-        arrow = "→" if getattr(self.table, "enter_direction", "down") == "right" else "↓"
+        is_right = getattr(self.table, "enter_direction", "down") == "right"
+        arrow = "→" if is_right else "↓"
         if hasattr(self, "entry_dir_label"):
             self.entry_dir_label.setText(arrow)
+        if hasattr(self, "status_entry_dir_btn"):
+            self.status_entry_dir_btn.setText("→ Right" if is_right else "↓ Down")
             hdr_h = self.column_names.horizontalHeader().height() or 20
             row_h = self.column_names.rowHeight(0) or 20
             self.entry_dir_label.setGeometry(0, hdr_h, 44, row_h)
@@ -3666,8 +3677,45 @@ class ModernWindow(QMainWindow):
         if choice == QMessageBox.StandardButton.Save: return self.save_document()
         return True
 
+    def _restore_ui_preferences(self):
+        try:
+            from .settings_scope import settings_for_process
+            s = settings_for_process()
+            geom = s.value("ui/geometry")
+            if geom is not None:
+                self.restoreGeometry(geom)
+            split_state = s.value("ui/work_splitter")
+            if split_state is not None and hasattr(self, "work_splitter"):
+                self.work_splitter.restoreState(split_state)
+            pinned = s.value("ui/pinned_procedures", [])
+            if isinstance(pinned, list):
+                for item in reversed(pinned):
+                    if isinstance(item, str) and hasattr(self, item) and callable(getattr(self, item)):
+                        cb = getattr(self, item)
+                        lbl = item.replace("_", " ").title()
+                        self._pinned_procedures.pin(lbl, cb)
+        except Exception:
+            pass
+
+    def _save_ui_preferences(self):
+        try:
+            from .settings_scope import settings_for_process
+            s = settings_for_process()
+            s.setValue("ui/geometry", self.saveGeometry())
+            if hasattr(self, "work_splitter"):
+                s.setValue("ui/work_splitter", self.work_splitter.saveState())
+            pinned_names = []
+            for _, cb in self._pinned_procedures.list_items():
+                name = getattr(cb, "__name__", "")
+                if name and hasattr(self, name):
+                    pinned_names.append(name)
+            s.setValue("ui/pinned_procedures", pinned_names)
+        except Exception:
+            pass
+
     def closeEvent(self, event):
         if self._confirm_leave():
+            self._save_ui_preferences()
             if hasattr(self, '_startup_worker') and self._startup_worker and self._startup_worker.isRunning():
                 try:
                     self._startup_worker.quit()
