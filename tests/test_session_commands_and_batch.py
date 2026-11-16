@@ -102,6 +102,71 @@ class TestSessionCommandsAndBatch(unittest.TestCase):
         self.assertEqual(display_date(p.worksheet.columns[2].values[0]), "2026-05-01")
         self.assertEqual(display_date(p.worksheet.columns[2].values[1]), "2026-11-01")
 
+    def test_local_macro_with_do_loop_and_conditional(self):
+        p = Presenter()
+        script = """
+        MACRO
+        SUMSEQ N RES
+        MCONSTANT N I S
+        MCOLUMN RES
+        LET S = 0
+        DO I = 1:N
+          IF I > 2
+            LET S = S + I
+          ENDIF
+        ENDDO
+        LET RES(1) = S
+        ENDMACRO
+        %SUMSEQ 4 C1
+        """
+        p.execute_session_script(script)
+        self.assertEqual(p.worksheet.columns[0].values[0], 7)
+
+    def test_global_macro_and_if_elseif_else_and_matrix(self):
+        p = Presenter()
+        p.worksheet = Worksheet("MacroTest", [Column("X", "number", [5.0, 10.0])])
+        script = """
+        GMACRO
+        CLASSIFY
+        MCONSTANT THRESH
+        MMATRIX M1
+        LET THRESH = MEAN(C1)
+        IF THRESH < 5
+          LET K1 = -1
+        ELSEIF THRESH = 7.5
+          LET K1 = 0
+        ELSE
+          LET K1 = 1
+        ENDIF
+        ENDMACRO
+        CLASSIFY
+        """
+        p.execute_session_script(script)
+        self.assertEqual(p.worksheet.constants[0].values[0], 0.0)
+
+    def test_macro_runaway_loop_recursion_and_partial_def_guards(self):
+        p = Presenter()
+        # Unclosed MACRO must not leave partial definition
+        with self.assertRaises(ValueError):
+            p.execute_session_script("MACRO\nBADMAC\nLET K1 = 1")
+        with self.assertRaises(ValueError):
+            p.execute_session_script("%BADMAC")
+
+        # Runaway DO loop hits MAX_MACRO_STEPS
+        with self.assertRaises(ValueError):
+            p.execute_session_script("DO K1 = 1:200000\nLET K2 = K1\nENDDO")
+
+        # Infinite recursion hits recursion guard
+        rec_script = """
+        MACRO
+        INFREC
+        %INFREC
+        ENDMACRO
+        %INFREC
+        """
+        with self.assertRaises(ValueError):
+            p.execute_session_script(rec_script)
+
 
 if __name__ == "__main__":
     unittest.main()
