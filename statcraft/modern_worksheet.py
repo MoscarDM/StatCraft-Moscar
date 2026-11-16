@@ -337,9 +337,18 @@ class WorksheetTable(QTableWidget):
                 self.navigate(direction)
                 return True
 
-            # Task 5 & 6: Backspace clears & edits; printable character type-over entry
+            # Task 5 & 6: Backspace clears multi-selection (Minitab ID 57632) or edits single cell; printable character type-over entry
             if not (mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)):
                 if key == Qt.Key.Key_Backspace:
+                    win = self.window()
+                    ranges = self.selectedRanges()
+                    multi_cells = sum(
+                        (a.bottomRow() - a.topRow() + 1) * (a.rightColumn() - a.leftColumn() + 1)
+                        for a in ranges
+                    )
+                    if (multi_cells > 1 or getattr(self, "selected_columns", None) or getattr(self, "selected_rows", None)) and hasattr(win, "clear_cells"):
+                        win.clear_cells()
+                        return True
                     item = self.currentItem()
                     if item:
                         self.editItem(item)

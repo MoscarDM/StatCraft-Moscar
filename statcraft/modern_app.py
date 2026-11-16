@@ -8255,8 +8255,18 @@ class ModernWindow(QMainWindow):
 
     def _on_row_header_clicked(self, logical_index):
         mods = QApplication.keyboardModifiers()
-        extend = bool(mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier))
-        self.select_worksheet_row(logical_index, extend=extend)
+        if mods & Qt.KeyboardModifier.ShiftModifier:
+            anchor = getattr(self, "_row_selection_anchor", max(0, self.table.currentRow()))
+            lo, hi = min(anchor, logical_index), max(anchor, logical_index)
+            self.select_worksheet_row(lo, extend=False)
+            for r in range(lo + 1, hi + 1):
+                self.select_worksheet_row(r, extend=True)
+        elif mods & Qt.KeyboardModifier.ControlModifier:
+            self._row_selection_anchor = logical_index
+            self.select_worksheet_row(logical_index, extend=True)
+        else:
+            self._row_selection_anchor = logical_index
+            self.select_worksheet_row(logical_index, extend=False)
 
     def _update_selection_summary(self):
         if not hasattr(self, "status_selection_summary"):

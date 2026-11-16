@@ -30,6 +30,7 @@ class ReaUiParityTests(unittest.TestCase):
             self.assertEqual(win.table.currentRow(), 0)
             self.assertEqual(win.table.currentColumn(), 1)
         finally:
+            win.presenter.dirty = False
             win.close()
             win.deleteLater()
             self.app.processEvents()
@@ -45,6 +46,38 @@ class ReaUiParityTests(unittest.TestCase):
             win.toggle_command_line()
             self.assertTrue(win.command_line_pane.isHidden())
         finally:
+            win.presenter.dirty = False
+            win.close()
+            win.deleteLater()
+            self.app.processEvents()
+
+    def test_backspace_clears_multi_cell_selection_and_shift_row_selects_range(self):
+        win = ModernWindow(sandbox_mode=True)
+        try:
+            win.presenter.worksheet = Worksheet(
+                "S2",
+                [Column("A", "number", [10.0, 20.0, 30.0, 40.0]), Column("B", "number", [1.0, 2.0, 3.0, 4.0])],
+            )
+            win.refresh()
+            # Multi-cell range selection + Backspace -> clears all selected cells
+            from PySide6.QtWidgets import QTableWidgetSelectionRange
+            win.table.setRangeSelected(QTableWidgetSelectionRange(0, 0, 1, 1), True)
+            QTest.keyClick(win.table, Qt.Key.Key_Backspace)
+            self.assertIsNone(win.presenter.worksheet.columns[0].values[0])
+            self.assertIsNone(win.presenter.worksheet.columns[0].values[1])
+            self.assertIsNone(win.presenter.worksheet.columns[1].values[0])
+            self.assertIsNone(win.presenter.worksheet.columns[1].values[1])
+            self.assertEqual(win.presenter.worksheet.columns[0].values[2], 30.0)
+
+            # Row header anchor + Shift+Click selects contiguous rows 1..3
+            win._row_selection_anchor = 1
+            win.select_worksheet_row(1, extend=False)
+            lo, hi = 1, 3
+            for r in range(lo + 1, hi + 1):
+                win.select_worksheet_row(r, extend=True)
+            self.assertEqual(sorted(win._selected_rows), [1, 2, 3])
+        finally:
+            win.presenter.dirty = False
             win.close()
             win.deleteLater()
             self.app.processEvents()
