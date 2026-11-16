@@ -271,6 +271,23 @@ def execute_command_block(presenter, main_cmd: str, subcommands: List[str] | Tup
             raise ValueError("DOTPLOT takes one or more numeric columns (e.g., DOTPLOT C1).")
         return presenter.dotplot_graphs(indices, "one" if len(indices) == 1 else "multiple")
 
+    if verb == "PARETO":
+        indices = resolve_variables(rest, presenter.worksheet, ("number", "text"))
+        if len(indices) != 1:
+            raise ValueError("PARETO takes one defect column (e.g., PARETO C1).")
+        return presenter.pareto_chart({
+            "is_summarized": False,
+            "defect_column": presenter.worksheet.columns[indices[0]].name,
+            "combine_percent": 95.0,
+            "show_cumulative": True,
+        })
+
+    if verb == "TSPLOT":
+        indices = resolve_variables(rest, presenter.worksheet, ("number",))
+        if len(indices) < 1:
+            raise ValueError("TSPLOT takes one or more numeric columns (e.g., TSPLOT C1).")
+        return presenter.expanded_graph("time_series", indices)
+
     if verb in ("PLOT", "SCATTERPLOT"):
         cleaned = rest.replace("*", " ")
         indices = resolve_variables(cleaned, presenter.worksheet, ("number",))

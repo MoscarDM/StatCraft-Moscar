@@ -5553,7 +5553,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.tolerance_intervals_dialog
         dlg = ToleranceIntervalsDialog(self.presenter.worksheet, parent=self)
+        self._restore_custom_dialog_state("tolerance_intervals", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("tolerance_intervals", dlg)
             p = dlg.result_params
             if p:
                 entry = self._call(
@@ -6906,7 +6908,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.capability_nonnormal_dialog
         dlg = CapabilityNonnormalDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("capability_nonnormal", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("capability_nonnormal", dlg)
             p = dlg.selected_params
             if p:
                 entry = self._call(lambda: self.presenter.capability_nonnormal(settings=p), result=True)

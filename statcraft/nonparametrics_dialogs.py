@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 from typing import Any, Dict, List, Optional
+from .variable_dialogs import default_confidence_percent
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -116,7 +117,7 @@ class SignTestDialog(_NonparametricBaseDialog):
 
         self.spin_conf = QDoubleSpinBox()
         self.spin_conf.setRange(50.0, 99.9)
-        self.spin_conf.setValue(95.0)
+        self.spin_conf.setValue(default_confidence_percent())
         form.addRow("&Confidence level:", self.spin_conf)
 
         right_layout.addLayout(form)
@@ -185,7 +186,7 @@ class OneSampleWilcoxonDialog(_NonparametricBaseDialog):
 
         self.spin_conf = QDoubleSpinBox()
         self.spin_conf.setRange(50.0, 99.9)
-        self.spin_conf.setValue(95.0)
+        self.spin_conf.setValue(default_confidence_percent())
         form.addRow("&Confidence level:", self.spin_conf)
 
         right_layout.addLayout(form)
@@ -249,7 +250,7 @@ class MannWhitneyDialog(_NonparametricBaseDialog):
 
         self.spin_conf = QDoubleSpinBox()
         self.spin_conf.setRange(50.0, 99.9)
-        self.spin_conf.setValue(95.0)
+        self.spin_conf.setValue(default_confidence_percent())
         form.addRow("&Confidence level:", self.spin_conf)
 
         self.combo_alt = QComboBox()
@@ -396,7 +397,7 @@ class MoodsMedianDialog(_NonparametricBaseDialog):
 
         self.spin_conf = QDoubleSpinBox()
         self.spin_conf.setRange(50.0, 99.9)
-        self.spin_conf.setValue(95.0)
+        self.spin_conf.setValue(default_confidence_percent())
         form.addRow("&Confidence level:", self.spin_conf)
 
         right_layout.addLayout(form)
@@ -621,7 +622,7 @@ class PairedWilcoxonDialog(_NonparametricBaseDialog):
 
         self.spin_conf = QDoubleSpinBox()
         self.spin_conf.setRange(50.0, 99.9)
-        self.spin_conf.setValue(95.0)
+        self.spin_conf.setValue(default_confidence_percent())
         form.addRow("&Confidence level:", self.spin_conf)
 
         right_layout.addLayout(form)

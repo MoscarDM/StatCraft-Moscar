@@ -36,11 +36,12 @@ class CapabilityNonnormalDialog(QDialog):
         self.setModal(True)
         self.resize(540, 420)
 
+        from .variable_dialogs import default_confidence_percent
         self.options: Dict[str, Any] = {
             "dist_or_transform": "weibull",
             "naming_convention": "classical",
             "tolerance_k": 6.0,
-            "confidence_level": 0.95,
+            "confidence_level": default_confidence_percent() / 100.0,
         }
         self.selected_params: Optional[Dict[str, Any]] = None
         self.entry: Optional[Dict[str, Any]] = None
@@ -184,3 +185,24 @@ class CapabilityNonnormalDialog(QDialog):
             "tolerance_k": 6.0,
         }
         self.accept()
+
+    def get_state(self) -> Dict[str, Any]:
+        return {
+            "col": self.edit_single_col.text(),
+            "dist_idx": self.combo_dist.currentIndex(),
+            "lsl": self.edit_lsl.text(),
+            "usl": self.edit_usl.text(),
+            "target": self.edit_target.text(),
+            "aiag_vda": self.chk_aiag_vda.isChecked(),
+        }
+
+    def set_state(self, state: Dict[str, Any]) -> None:
+        if not isinstance(state, dict):
+            return
+        if "dist_idx" in state:
+            self.combo_dist.setCurrentIndex(int(state["dist_idx"]))
+        for attr, key in (("edit_single_col", "col"), ("edit_lsl", "lsl"), ("edit_usl", "usl"), ("edit_target", "target")):
+            if key in state:
+                getattr(self, attr).setText(str(state[key]))
+        if "aiag_vda" in state:
+            self.chk_aiag_vda.setChecked(bool(state["aiag_vda"]))

@@ -412,6 +412,30 @@ class TestMinitabParityRound4(unittest.TestCase):
             sp2 = CapabilitySixpackNonnormalDialog(ws, self.win); self.win._restore_custom_dialog_state("sixpack_nonnormal", sp2)
             self.assertEqual(sp2.edit_col.text(), "C1")
             sp1.close(); sp2.close()
+
+            from statcraft.nonparametrics_dialogs import SignTestDialog, MannWhitneyDialog
+            from statcraft.tolerance_intervals_dialogs import ToleranceIntervalsDialog
+            from statcraft.capability_nonnormal_dialogs import CapabilityNonnormalDialog
+
+            st_dlg = SignTestDialog(ws, self.win)
+            self.assertEqual(st_dlg.spin_conf.value(), 99.0)
+            st_dlg.close()
+            mw_dlg = MannWhitneyDialog(ws, self.win)
+            self.assertEqual(mw_dlg.spin_conf.value(), 99.0)
+            mw_dlg.close()
+
+            ti1 = ToleranceIntervalsDialog(ws, parent=self.win); ti1.edit_vars.setText("C1")
+            self.win._save_custom_dialog_state("tolerance_intervals", ti1)
+            ti2 = ToleranceIntervalsDialog(ws, parent=self.win); self.win._restore_custom_dialog_state("tolerance_intervals", ti2)
+            self.assertEqual(ti2.edit_vars.text(), "C1")
+            ti1.close(); ti2.close()
+
+            cn1 = CapabilityNonnormalDialog(ws, self.win); cn1.edit_single_col.setText("C1")
+            self.assertAlmostEqual(cn1.options["confidence_level"], 0.99)
+            self.win._save_custom_dialog_state("capability_nonnormal", cn1)
+            cn2 = CapabilityNonnormalDialog(ws, self.win); self.win._restore_custom_dialog_state("capability_nonnormal", cn2)
+            self.assertEqual(cn2.edit_single_col.text(), "C1")
+            cn1.close(); cn2.close()
         finally:
             if prev_val is None:
                 settings.remove("options/default_confidence")
@@ -448,8 +472,8 @@ class TestMinitabParityRound4(unittest.TestCase):
         self.assertEqual(self.win.presenter.worksheet.columns[2].values, [10.0, 30.0])
         execute_script(self.win.presenter, "DELETE 2 4 C1")
         self.assertEqual(self.win.presenter.worksheet.columns[0].values, [10.0, 30.0])
-        out = execute_script(self.win.presenter, "DOTPLOT C1\nSCATTERPLOT C2 * C1")
-        self.assertEqual(len(out), 2)
+        out = execute_script(self.win.presenter, "DOTPLOT C1\nSCATTERPLOT C2 * C1\nTSPLOT C1")
+        self.assertEqual(len(out), 3)
 
     def test_basic_stats_dialogs_respect_default_confidence_and_state(self):
         from PySide6.QtCore import QSettings
@@ -638,6 +662,30 @@ class TestMinitabParityRound4(unittest.TestCase):
             sp2 = CapabilitySixpackNonnormalDialog(ws, self.win); self.win._restore_custom_dialog_state("sixpack_nonnormal", sp2)
             self.assertEqual(sp2.edit_col.text(), "C1")
             sp1.close(); sp2.close()
+
+            from statcraft.nonparametrics_dialogs import SignTestDialog, MannWhitneyDialog
+            from statcraft.tolerance_intervals_dialogs import ToleranceIntervalsDialog
+            from statcraft.capability_nonnormal_dialogs import CapabilityNonnormalDialog
+
+            st_dlg = SignTestDialog(ws, self.win)
+            self.assertEqual(st_dlg.spin_conf.value(), 99.0)
+            st_dlg.close()
+            mw_dlg = MannWhitneyDialog(ws, self.win)
+            self.assertEqual(mw_dlg.spin_conf.value(), 99.0)
+            mw_dlg.close()
+
+            ti1 = ToleranceIntervalsDialog(ws, parent=self.win); ti1.edit_vars.setText("C1")
+            self.win._save_custom_dialog_state("tolerance_intervals", ti1)
+            ti2 = ToleranceIntervalsDialog(ws, parent=self.win); self.win._restore_custom_dialog_state("tolerance_intervals", ti2)
+            self.assertEqual(ti2.edit_vars.text(), "C1")
+            ti1.close(); ti2.close()
+
+            cn1 = CapabilityNonnormalDialog(ws, self.win); cn1.edit_single_col.setText("C1")
+            self.assertAlmostEqual(cn1.options["confidence_level"], 0.99)
+            self.win._save_custom_dialog_state("capability_nonnormal", cn1)
+            cn2 = CapabilityNonnormalDialog(ws, self.win); self.win._restore_custom_dialog_state("capability_nonnormal", cn2)
+            self.assertEqual(cn2.edit_single_col.text(), "C1")
+            cn1.close(); cn2.close()
         finally:
             if prev_val is None:
                 settings.remove("options/default_confidence")
