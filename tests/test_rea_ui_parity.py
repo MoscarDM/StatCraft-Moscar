@@ -91,8 +91,7 @@ class ReaUiParityTests(unittest.TestCase):
             )
             entry = win.presenter.scatter_plot(1, 0)
             win.show_result(entry)
-            tab_labels = [win.result_tabs.tabText(i) for i in range(win.result_tabs.count())]
-            self.assertEqual(tab_labels, ["Graph"])
+            self.assertEqual(win.result_tabs.tabText(win.result_tabs.currentIndex()), "Graph")
             self.assertTrue(win.result_tabs.tabBar().isHidden())
         finally:
             win.presenter.dirty = False

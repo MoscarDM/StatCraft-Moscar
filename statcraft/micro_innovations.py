@@ -444,26 +444,13 @@ class BackgroundComputeManager(QObject):
 # 6. Floating Quick-Bar on Every Chart
 # ---------------------------------------------------------------------------
 def build_chart_quick_bar(graph_frame: Any, chart: Any, entry: dict[str, Any], window: Any) -> QWidget:
-    """Compact header quick-bar for Grid, Log Y, CI/PI toggles, and 1-click SVG/PNG copy."""
-    bar = QWidget(graph_frame)
+    """Compact Tools dropdown button for Grid, Log Y, CI/PI toggles, Crosshair, and SVG/PNG copy."""
+    bar = QToolButton(graph_frame)
     bar.setObjectName("chartQuickBar")
-    row = QHBoxLayout(bar)
-    row.setContentsMargins(0, 0, 0, 0)
-    row.setSpacing(3)
-
-    def _mk_btn(text: str, tip: str, checkable: bool = False) -> QToolButton:
-        b = QToolButton(bar)
-        b.setText(text)
-        b.setToolTip(tip)
-        b.setCheckable(checkable)
-        b.setStyleSheet(
-            "QToolButton { font-size: 7.8pt; padding: 2px 6px; border: 1px solid #cbd5e1; border-radius: 3px; }"
-            "QToolButton:checked { background-color: #0284c7; color: white; border-color: #0369a1; }"
-        )
-        return b
-
-    grid_btn = _mk_btn("Grid", "Toggle chart gridlines", checkable=True)
-    grid_btn.setChecked(True)
+    bar.setText("Tools ▾")
+    bar.setToolTip("Quick chart toggles & copy actions")
+    bar.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    menu = QMenu(bar)
 
     def _toggle_grid(checked: bool) -> None:
         fig = getattr(chart, "figure", None)
@@ -474,10 +461,10 @@ def build_chart_quick_bar(graph_frame: Any, chart: Any, entry: dict[str, Any], w
         if hasattr(chart, "canvas"):
             chart.canvas.draw_idle()
 
-    grid_btn.toggled.connect(_toggle_grid)
-    row.addWidget(grid_btn)
-
-    log_btn = _mk_btn("Log Y", "Toggle logarithmic Y axis", checkable=True)
+    grid_act = menu.addAction("Show Gridlines")
+    grid_act.setCheckable(True)
+    grid_act.setChecked(True)
+    grid_act.toggled.connect(_toggle_grid)
 
     def _toggle_log_y(checked: bool) -> None:
         fig = getattr(chart, "figure", None)
@@ -491,10 +478,10 @@ def build_chart_quick_bar(graph_frame: Any, chart: Any, entry: dict[str, Any], w
         if hasattr(chart, "canvas"):
             chart.canvas.draw_idle()
 
-    log_btn.toggled.connect(_toggle_log_y)
-    row.addWidget(log_btn)
+    log_act = menu.addAction("Logarithmic Y Scale")
+    log_act.setCheckable(True)
+    log_act.toggled.connect(_toggle_log_y)
 
-    # Show CI / PI quick toggles when the chart has fitted-line/regression bands
     meta = entry.get("result", {}) if isinstance(entry, dict) else {}
     raw_graphs = meta.get("graphs", []) if isinstance(meta, dict) else []
     if isinstance(raw_graphs, dict):
@@ -505,9 +492,10 @@ def build_chart_quick_bar(graph_frame: Any, chart: Any, entry: dict[str, Any], w
         g0 = {}
     bands = g0.get("bands") or g0.get("fitted_bands")
     if isinstance(bands, dict) or "Fitted Line" in str(entry.get("title", "")):
-        for band_key, label_txt in (("show_ci", "CI"), ("show_pi", "PI")):
-            b_btn = _mk_btn(label_txt, f"Toggle 95% {label_txt} band", checkable=True)
-            b_btn.setChecked(bool(g0.get(band_key, True)))
+        for band_key, label_txt in (("show_ci", "Show 95% CI"), ("show_pi", "Show 95% PI")):
+            b_act = menu.addAction(label_txt)
+            b_act.setCheckable(True)
+            b_act.setChecked(bool(g0.get(band_key, True)))
 
             def _toggle_band(checked: bool, k: str = band_key) -> None:
                 if isinstance(g0, dict):
@@ -518,14 +506,7 @@ def build_chart_quick_bar(graph_frame: Any, chart: Any, entry: dict[str, Any], w
                     except Exception:
                         pass
 
-            b_btn.toggled.connect(_toggle_band)
-            row.addWidget(b_btn)
-
-    svg_btn = _mk_btn("SVG", "Copy chart as SVG")
-    svg_btn.clicked.connect(lambda: getattr(window, "copy_chart_svg", lambda *_: None)())
-    row.addWidget(svg_btn)
-
-    cross_btn = _mk_btn("Crosshair", "Toggle crosshair coordinate readout on chart", checkable=True)
+            b_act.toggled.connect(_toggle_band)
 
     def _toggle_crosshair(checked: bool) -> None:
         chart._crosshair_enabled = checked
@@ -536,10 +517,11 @@ def build_chart_quick_bar(graph_frame: Any, chart: Any, entry: dict[str, Any], w
                 3000,
             )
 
-    cross_btn.toggled.connect(_toggle_crosshair)
-    row.addWidget(cross_btn)
-
-    png_btn = _mk_btn("PNG", "Copy chart image to clipboard")
+    cross_act = menu.addAction("Crosshair Mode")
+    cross_act.setCheckable(True)
+    cross_act.toggled.connect(_toggle_crosshair)
+    menu.addSeparator()
+    menu.addAction("Copy as SVG", lambda: getattr(window, "copy_chart_svg", lambda *_: None)())
 
     def _copy_png() -> None:
         canvas = getattr(chart, "canvas", None)
@@ -548,9 +530,8 @@ def build_chart_quick_bar(graph_frame: Any, chart: Any, entry: dict[str, Any], w
             if hasattr(window, "statusBar"):
                 window.statusBar().showMessage("Copied chart PNG to clipboard.", 3500)
 
-    png_btn.clicked.connect(_copy_png)
-    row.addWidget(png_btn)
-
+    menu.addAction("Copy as PNG", _copy_png)
+    bar.setMenu(menu)
     graph_frame.export_hidden.append(bar)
     return bar
 

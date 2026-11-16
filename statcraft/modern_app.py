@@ -1022,6 +1022,7 @@ class ModernWindow(QMainWindow):
         from .micro_innovations import FormulaBarWidget, PasteToastBar, ComputeProgressToast, BackgroundComputeManager
         self.formula_bar = FormulaBarWidget(self.worksheet_pane)
         self.formula_bar.commitValue.connect(self._commit_formula_bar)
+        self.formula_bar.hide()
         sheet_layout.addWidget(self.formula_bar)
         self.worksheet_selector = QComboBox(self.worksheet_pane); self.worksheet_selector.hide()
         self.worksheet_selector.currentIndexChanged.connect(self._select_sheet)
@@ -1043,9 +1044,9 @@ class ModernWindow(QMainWindow):
         self.column_names.verticalHeader().setFixedWidth(44)
         self.column_names.verticalHeader().setToolTip("Data entry direction — click to toggle Down (↓) or Right (→)")
         self.column_names.verticalHeader().sectionClicked.connect(lambda _: self.toggle_entry_direction())
-        self.column_names.horizontalHeader().setDefaultSectionSize(54)
+        self.column_names.horizontalHeader().setDefaultSectionSize(76)
         self.column_names.horizontalHeader().setMinimumSectionSize(38)
-        self.column_names.verticalHeader().setDefaultSectionSize(20)
+        self.column_names.verticalHeader().setDefaultSectionSize(24)
         self.column_names.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.column_names.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.column_names.setEditTriggers(QAbstractItemView.EditTrigger.AllEditTriggers)
@@ -1083,7 +1084,7 @@ class ModernWindow(QMainWindow):
             | QAbstractItemView.EditTrigger.EditKeyPressed
             | QAbstractItemView.EditTrigger.AnyKeyPressed
         )
-        self.table.horizontalHeader().setDefaultSectionSize(54)
+        self.table.horizontalHeader().setDefaultSectionSize(76)
         self.table.horizontalHeader().setMinimumSectionSize(38)
         self.table.horizontalHeader().hide()
         self.table.verticalHeader().setFixedWidth(44)
@@ -1795,6 +1796,9 @@ class ModernWindow(QMainWindow):
         self.view_cmd_action.triggered.connect(self.toggle_command_line)
         view.addAction(self.view_cmd_action)
         self._action(view, "Edit Command Line…", self.open_command_line, QKeySequence("Ctrl+L"))
+        self.view_formula_bar_action = QAction("Formula Bar", self, checkable=True, checked=False)
+        self.view_formula_bar_action.triggered.connect(lambda checked: self.formula_bar.setVisible(bool(checked)))
+        view.addAction(self.view_formula_bar_action)
         view.addSeparator()
         self.view_mode_actions = {}
         mode_group = QActionGroup(self)
@@ -2428,7 +2432,7 @@ class ModernWindow(QMainWindow):
         self.table.setColumnCount(len(sheet.columns))
         self.column_names.setColumnCount(len(sheet.columns))
         headers = []
-        default_w = max(40, int(round(54 * (self._zoom_percent / 100.0))))
+        default_w = max(48, int(round(76 * (self._zoom_percent / 100.0))))
         for i, column in enumerate(sheet.columns):
             if column.kind == 'date' and i not in getattr(self, '_displayed_date_columns', set()):
                 self.table.setColumnWidth(i, max(165, self.table.columnWidth(i)))
@@ -7470,16 +7474,17 @@ class ModernWindow(QMainWindow):
         if brief_bullets:
             brief_card = QFrame()
             brief_card.setObjectName("executiveBriefCard")
-            bg_c, bd_c = ("#052e16", "#166534") if is_dark else ("#F0FDF4", "#BBF7D0")
-            hdr_c, btn_c, txt_c = ("#4ade80", "#86efac", "#dcfce7") if is_dark else ("#166534", "#15803D", "#14532D")
+            bg_c, bd_c = ("#052e16", "#166534") if is_dark else ("#f8fafc", "#e2e8f0")
+            hdr_c, btn_c, txt_c = ("#4ade80", "#86efac", "#dcfce7") if is_dark else ("#0369a1", "#0284c7", "#334155")
+            border_left_c = "#16A34A" if is_dark else "#0284c7"
             brief_card.setStyleSheet(f"""
                 #executiveBriefCard {{
                     background: {bg_c};
                     border: 1px solid {bd_c};
-                    border-left: 4px solid #16A34A;
-                    border-radius: 6px;
-                    padding: 8px 12px;
-                    margin: 8px 0;
+                    border-left: 3px solid {border_left_c};
+                    border-radius: 4px;
+                    padding: 6px 10px;
+                    margin: 6px 0;
                 }}
             """)
             b_layout = QVBoxLayout(brief_card)
@@ -7804,7 +7809,10 @@ class ModernWindow(QMainWindow):
             if isinstance(value, list): notes.extend(str(item) for item in value)
             elif value: notes.append(str(value))
         if notes:
-            layout.addWidget(label("Method Notes", "sectionHeading")); note = QPlainTextEdit(); note.setReadOnly(True); note.setPlainText("\n\n".join(notes)); note.setMinimumHeight(90); note.setMaximumHeight(210); layout.addWidget(note)
+            layout.addWidget(label("Method Notes", "sectionHeading"))
+            note = QPlainTextEdit(); note.setReadOnly(True); note.setFrameShape(QFrame.Shape.NoFrame)
+            note.setStyleSheet("background: transparent;")
+            note.setPlainText("\n\n".join(notes)); note.setMinimumHeight(70); note.setMaximumHeight(190); layout.addWidget(note)
 
         # Smart Next Steps Guidance Chips
         from .guidance_chips import GuidanceChipsBar
@@ -8151,21 +8159,14 @@ class ModernWindow(QMainWindow):
         text = QPlainTextEdit(); text.setReadOnly(True); text.setFont(QFont("Consolas", 9.5)); text.setPlainText(format_entry(entry))
         text.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         text.customContextMenuRequested.connect(lambda pos: self._show_output_context_menu(text.mapToGlobal(pos)))
-        if is_pure_graph and target_tab not in ("Report", "Text export"):
-            # Pure graphs in Minitab open directly to the Graph without Report/Text export tab clutter
-            if self.result_tabs.count() > 1 and self.result_tabs.tabText(0) == "Report":
-                self.result_tabs.removeTab(0)
-            self.result_tabs.setCurrentIndex(0)
-            self.result_tabs.tabBar().setVisible(self.result_tabs.count() > 1)
-        else:
-            self.result_tabs.addTab(text, "Text export")
-            self.result_tabs.tabBar().setVisible(True)
+        self.result_tabs.addTab(text, "Text export")
         if not self.graph_options_pane.isHidden():self.graph_options_pane.load_entry(entry)
         self.refresh()
         explicit_target = (target_graph_index is not None or target_tab is not None)
-        self._workspace.after_show(target_index=chosen_tab if explicit_target and not is_pure_graph else None)
+        self._workspace.after_show(target_index=chosen_tab if explicit_target else None)
         if is_pure_graph and target_tab not in ("Report", "Text export"):
-            self.result_tabs.tabBar().setVisible(self.result_tabs.count() > 1)
+            # Pure graphs in Minitab hide the inner 3-tab bar so only the clean Graph view is shown
+            self.result_tabs.tabBar().setVisible(False)
 
     def _add_graph_tab(self, chart, entry, tab_title: str, conn_dict=None, set_active: bool = True) -> int:
         from .output_zoom import OutputZoomView
