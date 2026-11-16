@@ -506,6 +506,31 @@ class TestMinitabParityRound4(unittest.TestCase):
         rt_out = execute_script(self.win.presenter, copied_cmd)
         self.assertEqual(len(rt_out), 1)
 
+    def test_conversion_table_recode_store_desc_state_and_reset_layout(self):
+        from statcraft.store_descriptive import StoreDescriptiveDialog
+
+        self.win.presenter.set_column_type(0, "text")
+        self.win.presenter.set_column_type(1, "text")
+        self.win.presenter.set_column_type(2, "text")
+        self.win.presenter.worksheet.columns[0].values = ["A", "B", "A", "C"]
+        self.win.presenter.worksheet.columns[1].values = ["A", "B"]
+        self.win.presenter.worksheet.columns[2].values = ["Pass", "Fail"]
+        idx = self.win.presenter.recode_with_conversion_table(0, 1, 2, default_value="Other")
+        self.assertEqual(self.win.presenter.worksheet.columns[idx].values, ["Pass", "Fail", "Pass", "Other"])
+
+        self.win.presenter.paste(0, 0, "1\n2\n3\n")
+        sd1 = StoreDescriptiveDialog(self.win.presenter.worksheet, self.win)
+        sd1.stat_checks["median"].setChecked(False)
+        self.win._save_custom_dialog_state("store_descriptive", sd1)
+        sd2 = StoreDescriptiveDialog(self.win.presenter.worksheet, self.win)
+        self.win._restore_custom_dialog_state("store_descriptive", sd2)
+        self.assertFalse(sd2.stat_checks["median"].isChecked())
+        sd1.close(); sd2.close()
+
+        self.win.set_view_mode("data")
+        self.win.reset_window_layout()
+        self.assertTrue(self.win.view_mode_actions["both"].isChecked())
+
     def test_basic_stats_dialogs_respect_default_confidence_and_state(self):
         from PySide6.QtCore import QSettings
         from statcraft.one_sample_t_dialogs import OneSampleTDialog

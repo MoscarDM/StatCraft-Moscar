@@ -7561,6 +7561,45 @@ class Presenter:
         return len(self.worksheet.columns) - 1
 
     @undoable
+    def recode_with_conversion_table(self, source_index, from_index, to_index, target_index=None, target_name=None, default_value=None):
+        ncols = len(self.worksheet.columns)
+        for idx, label in ((source_index, "source"), (from_index, "current value"), (to_index, "recoded value")):
+            if not 0 <= int(idx) < ncols:
+                raise ValueError(f"Select a valid {label} column.")
+        src = self.worksheet.columns[int(source_index)]
+        from_col = self.worksheet.columns[int(from_index)]
+        to_col = self.worksheet.columns[int(to_index)]
+        mapping = {}
+        for old_v, new_v in zip(from_col.values, to_col.values):
+            if old_v is None:
+                continue
+            key = str(old_v).strip() if src.kind == "text" else old_v
+            mapping[key] = new_v
+        out_kind = to_col.kind
+        out_vals = []
+        for v in src.values:
+            if v is None:
+                out_vals.append(None)
+                continue
+            lookup = str(v).strip() if src.kind == "text" else v
+            if lookup in mapping:
+                out_vals.append(mapping[lookup])
+            else:
+                out_vals.append(v if default_value is None and out_kind == src.kind else default_value)
+        if target_index is not None:
+            t_idx = int(target_index)
+            if not 0 <= t_idx < ncols:
+                raise ValueError("Target column index out of range.")
+            dst = self.worksheet.columns[t_idx]
+            self.worksheet.columns[t_idx] = Column(dst.name, out_kind, out_vals, copy.deepcopy(dst.metadata))
+            self.dirty = True
+            return t_idx
+        cname = (target_name or "").strip() or f"{src.name} (Recoded)"
+        self.worksheet.columns.append(Column(cname, out_kind, out_vals))
+        self.dirty = True
+        return len(self.worksheet.columns) - 1
+
+    @undoable
     def sort_columns(self, target_indices, by_index, descending=False):
         if not target_indices or any(not 0 <= i < len(self.worksheet.columns) for i in target_indices):
             raise ValueError("Select at least one column to sort.")

@@ -1385,6 +1385,7 @@ class ModernWindow(QMainWindow):
         recode_menu = data.addMenu("Recode")
         self._action(recode_menu, "To &Numeric…", lambda: self.recode_dialog("number"), None, "format_column", True)
         self._action(recode_menu, "To &Text…", lambda: self.recode_dialog("text"), None, "format_column", True)
+        self._action(recode_menu, "Using &Conversion Table…", self.recode_conversion_table_dialog, None, "format_column", True)
         dt_menu = data.addMenu("Date/Time")
         self._action(dt_menu, "Convert Text to Date/Time…", self.convert_text_to_datetime_dialog, None, "format_column", True)
         self._action(dt_menu, "Round Date/Time…", self.round_datetime_dialog, None, "format_column", True)
@@ -1396,6 +1397,13 @@ class ModernWindow(QMainWindow):
         self._action(col_prop_menu, "Description…", self.column_description_dialog, None, "worksheet", True)
         self._action(col_prop_menu, "Assign Formula…", self.assign_formula_dialog, None, "assign_formula", True)
         self._action(col_prop_menu, "Conditional Formatting…", lambda: self.conditional_formatting_dialog(), None, "format_column", True)
+        quick_hl_menu = col_prop_menu.addMenu("Quick Highlight")
+        quick_hl_menu.addAction("Highlight Red", lambda: self._apply_quick_highlight("#f8d7da"))
+        quick_hl_menu.addAction("Highlight Green", lambda: self._apply_quick_highlight("#d4edda"))
+        quick_hl_menu.addAction("Highlight Yellow", lambda: self._apply_quick_highlight("#fff3cd"))
+        quick_hl_menu.addSeparator()
+        quick_hl_menu.addAction("Clear Cell Formats", lambda: self._apply_quick_highlight(None))
+        self._action(col_prop_menu, "Clear Conditional Formatting from Selected Columns", self.clear_selected_conditional_formatting)
         self._action(col_prop_menu, "Clear Conditional Formatting from Worksheet", self.clear_all_conditional_formatting)
         self.format_column_action = self._action(col_prop_menu, "Format Column…", self.format_column_dialog, QKeySequence("Ctrl+1"), "format_column", False)
         self.format_column_action.setShortcuts([QKeySequence("Ctrl+1"), QKeySequence("Ctrl+B")])
@@ -1850,6 +1858,7 @@ class ModernWindow(QMainWindow):
         self._action(view, "Close All Graphs", self.close_all_graphs)
         self._action(view, "Toggle Entry Direction (Down / Right)", self.toggle_entry_direction, "Ctrl+D", "direction")
         self._action(view, "Worksheet Fonts…", self.worksheet_fonts_dialog)
+        self._action(view, "Reset Window Layout", self.reset_window_layout)
         self._action(view, "Refresh Worksheet", self.refresh)
         view.addSeparator()
         self._action(view, "Command Palette (Find Procedure)…", self.open_command_palette, QKeySequence("Ctrl+K"), "find")
@@ -4668,7 +4677,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.store_descriptive_dialog
         dlg = StoreDescriptiveDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("store_descriptive", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("store_descriptive", dlg)
             p = dlg.get_parameters()
             if p:
                 entry = self._call(lambda: self.presenter.store_descriptive_stats(**p), result=True)
@@ -10199,12 +10210,36 @@ class ModernWindow(QMainWindow):
         layout.addWidget(match_case); layout.addWidget(whole_word)
         status_lbl = label("", "secondary"); layout.addWidget(status_lbl)
         btn_row = QHBoxLayout(); btn_row.addStretch()
+        find_next_btn = QPushButton("Find Next")
         replace_one_btn = QPushButton("Replace")
         replace_all_btn = QPushButton("Replace All"); replace_all_btn.setDefault(True)
         close_btn = QPushButton("Close")
-        btn_row.addWidget(replace_one_btn); btn_row.addWidget(replace_all_btn); btn_row.addWidget(close_btn)
+        btn_row.addWidget(find_next_btn); btn_row.addWidget(replace_one_btn); btn_row.addWidget(replace_all_btn); btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
+        def _sync_find_state():
+            self._find_state["query"] = find_edit.text()
+            self._find_state["match_case"] = match_case.isChecked()
+            self._find_state["whole_word"] = whole_word.isChecked()
+        def do_find_next():
+            _sync_find_state()
+            try:
+                match = self.presenter.find_next(
+                    find_edit.text(),
+                    match_case=match_case.isChecked(),
+                    whole_word=whole_word.isChecked(),
+                    start_row=self.page * self.PAGE_SIZE + max(0, self.table.currentRow()),
+                    start_col=max(0, self.table.currentColumn()),
+                )
+                if match is None:
+                    status_lbl.setText("No matching cells found.")
+                else:
+                    r, c = match
+                    self._jump_to_cell(r, c)
+                    status_lbl.setText(f"Found at Row {r + 1}, C{c + 1}.")
+            except ValueError as exc:
+                status_lbl.setText(str(exc))
         def do_replace(all_matches):
+            _sync_find_state()
             try:
                 count = self.presenter.replace_cells(
                     find_edit.text(), replace_edit.text(),
@@ -10218,6 +10253,7 @@ class ModernWindow(QMainWindow):
                 status_lbl.setText(f"Replaced {count} cell(s).")
             except ValueError as exc:
                 status_lbl.setText(str(exc))
+        find_next_btn.clicked.connect(do_find_next)
         replace_one_btn.clicked.connect(lambda: do_replace(False))
         replace_all_btn.clicked.connect(lambda: do_replace(True))
         close_btn.clicked.connect(dialog.accept)
@@ -11723,6 +11759,88 @@ class ModernWindow(QMainWindow):
                 self.formula_bar.setVisible(fb_chk.isChecked())
             if hasattr(self, "view_formula_bar_action"):
                 self.view_formula_bar_action.setChecked(fb_chk.isChecked())
+
+    def _apply_quick_highlight(self, color: str | None):
+        self._commit_editor()
+        first_r, last_r, left_c, right_c = self._range()
+        selected_cols = list(self._selected_columns) if getattr(self, "_selected_columns", None) else []
+        if selected_cols:
+            full_r = list(range(self.presenter.worksheet.row_count))
+            rows = full_r if full_r else list(range(first_r, last_r + 1))
+            cols = selected_cols
+        else:
+            rows = list(range(first_r, last_r + 1))
+            cols = list(range(left_c, right_c + 1))
+        if color is None:
+            self._call(lambda: self.presenter.clear_cell_formats(rows, cols))
+        else:
+            self._call(lambda: self.presenter.set_cell_highlight(rows, cols, color))
+
+    def clear_selected_conditional_formatting(self):
+        self._commit_editor()
+        cols = self._column_targets()
+        self._call(lambda: self.presenter.clear_conditional_formatting(cols))
+
+    def reset_window_layout(self):
+        self.set_view_mode("both")
+        if hasattr(self, "view_nav_action") and not self.view_nav_action.isChecked():
+            self.view_nav_action.setChecked(True)
+            self.toggle_navigator(True)
+        if hasattr(self, "view_cmd_action") and self.view_cmd_action.isChecked():
+            self.view_cmd_action.setChecked(False)
+            self.toggle_command_line(False)
+        if hasattr(self, "formula_bar"):
+            self.formula_bar.setVisible(False)
+        if hasattr(self, "view_formula_bar_action"):
+            self.view_formula_bar_action.setChecked(False)
+        if hasattr(self, "main_splitter"):
+            w = max(800, self.width())
+            self.main_splitter.setSizes([230, max(500, w - 230)])
+        if hasattr(self, "right_splitter"):
+            h = max(600, self.height())
+            self.right_splitter.setSizes([h // 2, h - (h // 2)])
+        self.statusBar().showMessage("Restored default Minitab window layout", 3500)
+
+    def recode_conversion_table_dialog(self):
+        self._commit_editor()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Recode Using Conversion Table")
+        dlg.setMinimumWidth(420)
+        layout = QVBoxLayout(dlg)
+        form = QFormLayout()
+        src_edit = QLineEdit(f"C{self._current_column() + 1}")
+        from_edit = QLineEdit()
+        from_edit.setPlaceholderText("Column of current values (e.g., C2)")
+        to_edit = QLineEdit()
+        to_edit.setPlaceholderText("Column of recoded values (e.g., C3)")
+        dst_edit = QLineEdit()
+        dst_edit.setPlaceholderText("Optional target column (blank appends new)")
+        form.addRow("Recode column:", src_edit)
+        form.addRow("Current values column:", from_edit)
+        form.addRow("New values column:", to_edit)
+        form.addRow("Store in column:", dst_edit)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+            | QDialogButtonBox.StandardButton.Help
+        )
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        buttons.helpRequested.connect(lambda: self.context_help("Recode Using Conversion Table"))
+        layout.addWidget(buttons)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            from .variable_dialogs import resolve_variables
+            ws = self.presenter.worksheet
+            src = resolve_variables(ws, src_edit.text().strip())[0]
+            frm = resolve_variables(ws, from_edit.text().strip())[0]
+            to = resolve_variables(ws, to_edit.text().strip())[0]
+            dst_raw = dst_edit.text().strip()
+            dst = resolve_variables(ws, dst_raw)[0] if dst_raw else None
+            idx = self._call(lambda: self.presenter.recode_with_conversion_table(src, frm, to, target_index=dst))
+            self.refresh()
+            if idx is not None:
+                self.statusBar().showMessage(f"Recoded column into C{idx + 1}", 4000)
 
     @staticmethod
     def _parse_1based_row_spec(spec: str):

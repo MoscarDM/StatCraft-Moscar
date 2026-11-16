@@ -262,6 +262,9 @@ class StoreDescriptiveDialog(QDialog):
 
         # Buttons
         btn_layout = QHBoxLayout()
+        self.btn_help = QPushButton("Help")
+        self.btn_help.clicked.connect(lambda: self.parent().context_help("Store Descriptive Statistics") if hasattr(self.parent(), "context_help") else QMessageBox.information(self, "Store Descriptive Statistics", "Select variables, optional grouping column, and statistics to store."))
+        btn_layout.addWidget(self.btn_help)
         btn_layout.addStretch()
 
         self.btn_cancel = QPushButton("Cancel")
@@ -300,3 +303,27 @@ class StoreDescriptiveDialog(QDialog):
             "by_index": by_idx,
             "selected_stats": selected_stats
         }
+
+    def get_state(self) -> dict:
+        return {
+            "selected_rows": [item.row() for item in self.list_vars.selectedIndexes()],
+            "by_index": self.combo_by.currentData(),
+            "stats": [k for k, chk in self.stat_checks.items() if chk.isChecked()],
+        }
+
+    def set_state(self, state: dict) -> None:
+        if not isinstance(state, dict):
+            return
+        if "selected_rows" in state:
+            self.list_vars.clearSelection()
+            for r in state["selected_rows"]:
+                if 0 <= r < self.list_vars.count():
+                    self.list_vars.item(r).setSelected(True)
+        if "by_index" in state:
+            pos = self.combo_by.findData(state["by_index"])
+            if pos >= 0:
+                self.combo_by.setCurrentIndex(pos)
+        if isinstance(state.get("stats"), list):
+            chosen = set(state["stats"])
+            for k, chk in self.stat_checks.items():
+                chk.setChecked(k in chosen)
