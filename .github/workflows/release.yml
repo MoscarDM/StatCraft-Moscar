@@ -57,6 +57,13 @@ jobs:
           pyinstaller --noconfirm --distpath dist/app --workpath build/app StatCraft.spec
           pyinstaller --noconfirm --distpath dist/setup --workpath build/setup installer.spec
 
+      - name: Verify Built Windows Executable (Smoke & SHA-256)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          STATCRAFT_TESTING: '1'
+        run: |
+          python scripts/verify_built_executable.py --exe dist/app/StatCraft.exe
+
       - name: Stage Windows Binaries
         shell: pwsh
         run: |

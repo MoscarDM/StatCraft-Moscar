@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QSplitter, QVBoxLayout, QHBoxLayout,
     QLabel, QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QComboBox, QToolBar, QStyle,
-    QTabWidget, QScrollArea, QPlainTextEdit, QTextEdit, QDialog, QDialogButtonBox,
+    QTabWidget, QScrollArea, QPlainTextEdit, QTextEdit, QTextBrowser, QDialog, QDialogButtonBox,
     QFormLayout, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
     QMessageBox, QFileDialog, QInputDialog, QCheckBox, QTabBar, QMenu,
     QToolButton, QSlider, QRadioButton, QGroupBox, QGridLayout, QFrame,QTableWidgetSelectionRange,
@@ -12401,6 +12401,9 @@ class ModernWindow(QMainWindow):
                 self.statusBar().showMessage(f"Copied {len(cnames)} constant(s) to C{idx + 1}", 4000)
 
 def main():
+    if "--smoke-verify" in sys.argv[1:]:
+        from .smoke_verify import run_smoke_verify
+        return run_smoke_verify()
     sandbox_mode = "--sandbox" in sys.argv
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("StatCraft"); app.setOrganizationName("StatCraft")

@@ -82,6 +82,14 @@ jobs:
           python -m PyInstaller --noconfirm --distpath dist/setup installer.spec
           python -m PyInstaller --noconfirm --distpath dist/app StatCraft.spec
 
+      - name: Verify Built Windows Executable (Smoke & SHA-256)
+        if: runner.os == 'Windows'
+        env:
+          QT_QPA_PLATFORM: offscreen
+          STATCRAFT_TESTING: '1'
+        run: |
+          python scripts/verify_built_executable.py --exe dist/app/StatCraft.exe
+
       - name: Upload Test Executable Artifacts (Pre-Release Testing)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
