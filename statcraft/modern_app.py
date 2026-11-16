@@ -3854,10 +3854,19 @@ class ModernWindow(QMainWindow):
                     pass
             if hasattr(self, "r_workbench"):
                 self.r_workbench.shutdown(wait=True)
-            # Tab/header signals can fire while Qt dismantles child widgets.
+            # Tab/header signals and timers can fire while Qt dismantles child widgets.
             self._refreshing = True
+            for timer in self.findChildren(QTimer):
+                try:
+                    timer.stop()
+                except Exception:
+                    pass
             self.worksheet_tabs.blockSignals(True); self.worksheet_selector.blockSignals(True)
             self.table.blockSignals(True); self.column_names.blockSignals(True)
+            if hasattr(self, "navigator"):
+                self.navigator.blockSignals(True)
+            if hasattr(self, "result_tabs"):
+                self.result_tabs.blockSignals(True)
             event.accept()
         else: event.ignore()
 
