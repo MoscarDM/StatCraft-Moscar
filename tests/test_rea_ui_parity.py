@@ -82,6 +82,61 @@ class ReaUiParityTests(unittest.TestCase):
             win.deleteLater()
             self.app.processEvents()
 
+    def test_pure_graph_opens_without_report_or_text_export_tabs(self):
+        win = ModernWindow(sandbox_mode=True)
+        try:
+            win.presenter.worksheet = Worksheet(
+                "G1",
+                [Column("X", "number", [1.0, 2.0, 3.0]), Column("Y", "number", [2.0, 4.0, 6.0])],
+            )
+            entry = win.presenter.scatter_plot(1, 0)
+            win.show_result(entry)
+            tab_labels = [win.result_tabs.tabText(i) for i in range(win.result_tabs.count())]
+            self.assertEqual(tab_labels, ["Graph"])
+            self.assertTrue(win.result_tabs.tabBar().isHidden())
+        finally:
+            win.presenter.dirty = False
+            win.close()
+            win.deleteLater()
+            self.app.processEvents()
+
+    def test_hidden_columns_in_dialogs_and_conditional_rules_and_shortcuts(self):
+        from statcraft.conditional_formatting import effective_highlights
+        from statcraft.variable_dialogs import ProcedureDialog
+
+        col = Column("V", "number", [1.0, 5.0, 10.0])
+        hl_ne = effective_highlights(col, 3, rules=[{"type": "not_equal_to", "param1": 5.0, "color": "#fecaca"}])
+        self.assertEqual(sorted(hl_ne.keys()), ["0", "2"])
+        hl_nb = effective_highlights(col, 3, rules=[{"type": "not_between", "param1": 2.0, "param2": 8.0, "color": "#fecaca"}])
+        self.assertEqual(sorted(hl_nb.keys()), ["0", "2"])
+
+        win = ModernWindow(sandbox_mode=True)
+        try:
+            win.presenter.worksheet = Worksheet(
+                "H1",
+                [Column("A", "number", [1.0, 2.0]), Column("B", "number", [3.0, 4.0])],
+            )
+            win._hidden_columns = {1}
+            win._use_hidden_in_dialogs = False
+            dlg_hide = ProcedureDialog(win, "TestHide", win.presenter.worksheet, selectors=[{"key": "x", "label": "Var:"}])
+            self.assertEqual(dlg_hide.available.count(), 1)
+            dlg_hide.deleteLater()
+
+            win._use_hidden_in_dialogs = True
+            dlg_show = ProcedureDialog(win, "TestShow", win.presenter.worksheet, selectors=[{"key": "x", "label": "Var:"}])
+            self.assertEqual(dlg_show.available.count(), 2)
+            dlg_show.deleteLater()
+
+            # Ctrl+Shift+D is owned uniquely by dark_mode_action (no duplicate on toggle_theme_action)
+            self.assertEqual(win.toggle_theme_action.shortcut().toString(), "")
+            self.assertEqual(win.dark_mode_action.shortcut().toString(), "Ctrl+Shift+D")
+            self.assertEqual([s.toString() for s in win.format_column_action.shortcuts()], ["Ctrl+1", "Ctrl+B"])
+        finally:
+            win.presenter.dirty = False
+            win.close()
+            win.deleteLater()
+            self.app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()

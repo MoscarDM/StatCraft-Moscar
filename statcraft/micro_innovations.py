@@ -126,11 +126,19 @@ COMMAND_SIGNATURES: dict[str, str] = {
 class CommandLineAssistant(QObject):
     """Attaches verb + column autocomplete and live syntax hints to command_editor."""
 
-    def __init__(self, editor: Any, hint_label: QLabel, get_worksheet: Callable[[], Any]) -> None:
+    def __init__(
+        self,
+        editor: Any,
+        hint_label: QLabel,
+        get_worksheet: Callable[[], Any],
+        get_history: Callable[[], list[str]] | None = None,
+    ) -> None:
         super().__init__(editor)
         self.editor = editor
         self.hint_label = hint_label
         self.get_worksheet = get_worksheet
+        self.get_history = get_history
+        self._history_pos = -1
         self._model = QStringListModel(sorted(COMMAND_SIGNATURES.keys()), self)
         self._completer: QCompleter | None = None
         editor.textChanged.connect(self._on_text_changed)
@@ -197,7 +205,31 @@ class CommandLineAssistant(QObject):
         cursor.insertText(completion + " ")
         self.editor.setTextCursor(cursor)
 
+    def cycle_history(self, step: int) -> bool:
+        if not callable(self.get_history):
+            return False
+        cmds = [c for c in self.get_history() if c and c.strip()]
+        if not cmds:
+            return False
+        if self._history_pos < 0:
+            self._history_pos = len(cmds) - 1 if step < 0 else 0
+        else:
+            self._history_pos = max(0, min(len(cmds) - 1, self._history_pos + step))
+        self.editor.setPlainText(cmds[self._history_pos])
+        return True
+
     def eventFilter(self, obj: QObject, event: Any) -> bool:
+        if obj is self.editor and event.type() == event.Type.KeyPress:
+            mods = event.modifiers()
+            if (mods & Qt.KeyboardModifier.AltModifier) and event.key() in (Qt.Key.Key_Up, Qt.Key.Key_F2):
+                if self.cycle_history(-1):
+                    return True
+            if (mods & Qt.KeyboardModifier.AltModifier) and event.key() == Qt.Key.Key_Down:
+                if self.cycle_history(1):
+                    return True
+            if mods == Qt.KeyboardModifier.NoModifier and event.key() == Qt.Key.Key_F2:
+                if self.cycle_history(1):
+                    return True
         if obj is self.editor and self._completer is not None and event.type() == event.Type.KeyPress:
             popup = self._completer.popup()
             if popup.isVisible() and event.key() in (
@@ -492,6 +524,20 @@ def build_chart_quick_bar(graph_frame: Any, chart: Any, entry: dict[str, Any], w
     svg_btn = _mk_btn("SVG", "Copy chart as SVG")
     svg_btn.clicked.connect(lambda: getattr(window, "copy_chart_svg", lambda *_: None)())
     row.addWidget(svg_btn)
+
+    cross_btn = _mk_btn("Crosshair", "Toggle crosshair coordinate readout on chart", checkable=True)
+
+    def _toggle_crosshair(checked: bool) -> None:
+        chart._crosshair_enabled = checked
+        chart.setCursor(Qt.CursorShape.CrossCursor if checked else Qt.CursorShape.ArrowCursor)
+        if hasattr(window, "statusBar"):
+            window.statusBar().showMessage(
+                "Crosshair mode enabled — hover plot to inspect coordinates." if checked else "Crosshair mode disabled.",
+                3000,
+            )
+
+    cross_btn.toggled.connect(_toggle_crosshair)
+    row.addWidget(cross_btn)
 
     png_btn = _mk_btn("PNG", "Copy chart image to clipboard")
 

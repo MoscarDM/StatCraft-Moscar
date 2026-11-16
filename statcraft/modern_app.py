@@ -980,6 +980,8 @@ class ModernWindow(QMainWindow):
         cmd_header = QHBoxLayout()
         cmd_header.addWidget(label("Command Line", "sectionHeading"))
         cmd_header.addStretch()
+        clear_cmd_btn = QPushButton("Clear"); clear_cmd_btn.clicked.connect(lambda: self.command_editor.clear())
+        cmd_header.addWidget(clear_cmd_btn)
         run_cmd_btn = QPushButton("Run"); run_cmd_btn.clicked.connect(self.run_command_line)
         cmd_header.addWidget(run_cmd_btn)
         cmd_layout.addLayout(cmd_header)
@@ -994,7 +996,10 @@ class ModernWindow(QMainWindow):
         cmd_layout.addWidget(self.command_hint_label)
         from .micro_innovations import CommandLineAssistant
         self._cmd_assistant = CommandLineAssistant(
-            self.command_editor, self.command_hint_label, lambda: self.presenter.worksheet
+            self.command_editor,
+            self.command_hint_label,
+            lambda: self.presenter.worksheet,
+            lambda: [e.get("command") or e.get("title", "") for e in getattr(self.presenter, "history", [])],
         )
         cmd_layout.addWidget(label("History", "sectionHeading"))
         self.command_history_view = QPlainTextEdit(); self.command_history_view.setReadOnly(True)
@@ -1339,8 +1344,10 @@ class ModernWindow(QMainWindow):
         self.find_next_action = self._action(edit, "Find Next", self.find_next, QKeySequence("F3"), "find_next")
         self.replace_action = self._action(edit, "Replace…", self.replace_dialog, QKeySequence("Ctrl+H"), "replace", False)
         self._action(edit, "Go To…", self.goto_dialog, QKeySequence("Ctrl+G"), "goto", False)
+        self._action(edit, "Move to Active Cell", self.move_to_active_cell, QKeySequence("Ctrl+Backspace"))
         edit.addSeparator()
         self._action(edit, "Worksheet Description…", self.worksheet_description_dialog, None, "worksheet", False)
+        self._action(edit, "Project Description…", self.project_description_dialog, None, "worksheet", False)
 
         # 3. Data menu
         data = bar.addMenu("D&ata")
@@ -1374,7 +1381,9 @@ class ModernWindow(QMainWindow):
         self._action(col_prop_menu, "Description…", self.column_description_dialog, None, "worksheet", True)
         self._action(col_prop_menu, "Assign Formula…", self.assign_formula_dialog, None, "assign_formula", True)
         self._action(col_prop_menu, "Conditional Formatting…", lambda: self.conditional_formatting_dialog(), None, "format_column", True)
+        self._action(col_prop_menu, "Clear Conditional Formatting from Worksheet", self.clear_all_conditional_formatting)
         self.format_column_action = self._action(col_prop_menu, "Format Column…", self.format_column_dialog, QKeySequence("Ctrl+1"), "format_column", False)
+        self.format_column_action.setShortcuts([QKeySequence("Ctrl+1"), QKeySequence("Ctrl+B")])
         self._action(data, "Worksheet Information", self.show_worksheet_information, None, "worksheet")
         self._action(data, "Stored Constants…", self.stored_constants, None, "constants", True)
         data.addSeparator()
@@ -1816,7 +1825,9 @@ class ModernWindow(QMainWindow):
         self._action(view,"Reopen Closed Output Tab",lambda:self._workspace.reopen())
         self._action(view,"Close Other Output Tabs",lambda:self._workspace.close_all(self._workspace.state['active']))
         self._action(view,"Close All Output Tabs",lambda:self._workspace.close_all())
+        self._action(view, "Close All Graphs", self.close_all_graphs)
         self._action(view, "Toggle Entry Direction (Down / Right)", self.toggle_entry_direction, "Ctrl+D", "direction")
+        self._action(view, "Worksheet Fonts…", self.worksheet_fonts_dialog)
         self._action(view, "Refresh Worksheet", self.refresh)
         view.addSeparator()
         self._action(view, "Command Palette (Find Procedure)…", self.open_command_palette, QKeySequence("Ctrl+K"), "find")
@@ -1838,7 +1849,7 @@ class ModernWindow(QMainWindow):
 
         # 10. Help menu (Always final menu on desktop menubar)
         help_menu = bar.addMenu("&Help")
-        self.help_action = self._action(help_menu, "Help", self.about, QKeySequence.StandardKey.HelpContents, "help")
+        self.help_action = self._action(help_menu, "Help", self.context_help, QKeySequence.StandardKey.HelpContents, "help")
         self._action(help_menu, "&Interactive Quick Tour…", self.open_guided_tour, None, "workflow")
         help_menu.addSeparator()
         self._action(help_menu, "Verify &Air-Gapped & Offline Integrity…", self.verify_airgap_dialog, None, "shield")
@@ -1990,9 +2001,8 @@ class ModernWindow(QMainWindow):
 
 
 
-        # Global shortcut Ctrl+Shift+D to toggle theme
+        # Theme toggle action (shortcut Ctrl+Shift+D is owned by dark_mode_action to avoid Qt ambiguity)
         self.toggle_theme_action = QAction(self)
-        self.toggle_theme_action.setShortcut(QKeySequence("Ctrl+Shift+D"))
         self.toggle_theme_action.triggered.connect(self.toggle_dark_mode)
         self.addAction(self.toggle_theme_action)
 
@@ -8122,14 +8132,40 @@ class ModernWindow(QMainWindow):
                 except Exception:
                     pass
                 self.result_tabs.setCurrentIndex(0)
+        is_pure_graph = (
+            supported(entry)
+            and not result.get("tables")
+            and result.get("analysis") != "native_saved_output"
+            and (
+                bool(result.get("graph"))
+                or result.get("analysis") in (
+                    "graph_builder",
+                    "panel_graph",
+                    "graph_layout",
+                    "model_contour_plot",
+                    "model_surface_plot",
+                    "factorial_plots",
+                )
+            )
+        )
         text = QPlainTextEdit(); text.setReadOnly(True); text.setFont(QFont("Consolas", 9.5)); text.setPlainText(format_entry(entry))
         text.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         text.customContextMenuRequested.connect(lambda pos: self._show_output_context_menu(text.mapToGlobal(pos)))
-        self.result_tabs.addTab(text, "Text export")
+        if is_pure_graph and target_tab not in ("Report", "Text export"):
+            # Pure graphs in Minitab open directly to the Graph without Report/Text export tab clutter
+            if self.result_tabs.count() > 1 and self.result_tabs.tabText(0) == "Report":
+                self.result_tabs.removeTab(0)
+            self.result_tabs.setCurrentIndex(0)
+            self.result_tabs.tabBar().setVisible(self.result_tabs.count() > 1)
+        else:
+            self.result_tabs.addTab(text, "Text export")
+            self.result_tabs.tabBar().setVisible(True)
         if not self.graph_options_pane.isHidden():self.graph_options_pane.load_entry(entry)
         self.refresh()
         explicit_target = (target_graph_index is not None or target_tab is not None)
-        self._workspace.after_show(target_index=chosen_tab if explicit_target else None)
+        self._workspace.after_show(target_index=chosen_tab if explicit_target and not is_pure_graph else None)
+        if is_pure_graph and target_tab not in ("Report", "Text export"):
+            self.result_tabs.tabBar().setVisible(self.result_tabs.count() > 1)
 
     def _add_graph_tab(self, chart, entry, tab_title: str, conn_dict=None, set_active: bool = True) -> int:
         from .output_zoom import OutputZoomView
@@ -8155,6 +8191,24 @@ class ModernWindow(QMainWindow):
 
         graph_frame = GraphFrame(chart, entry)
         graph_frame.export_hidden.extend(getattr(chart, "export_controls", []))
+        cur_sheet = getattr(self.presenter, "worksheet", None)
+        if (
+            isinstance(entry, dict)
+            and cur_sheet is not None
+            and entry.get("_sheet_id") == id(cur_sheet)
+            and entry.get("_sheet_version") is not None
+            and entry.get("_sheet_version") != self._sheet_versions.version(cur_sheet)
+        ):
+            from .micro_innovations import StaleOutputBanner
+            g_stale = StaleOutputBanner(graph_card)
+            rerun_cb = entry.get("_rerun_action") or self._last_dialog_action
+            g_stale.rerunRequested.connect(lambda cb=rerun_cb: cb() if callable(cb) else self.edit_last_dialog())
+            graph_card_layout.addWidget(g_stale)
+        if result.get("analysis") == "native_saved_output":
+            ro_badge = QLabel("Read-Only Native Snapshot" if not entry.get("native_model", {}).get("supported") else "Editable Copy")
+            ro_badge.setStyleSheet("color: #64748b; font-size: 8pt; padding: 1px 6px;")
+            graph_frame.header.addWidget(ro_badge)
+            graph_frame.export_hidden.append(ro_badge)
         chart.objectSelected.connect(lambda target: self._graph_object_selected(target))
         chart.objectActivated.connect(lambda target, e=entry: self._activate_graph_object(e, target))
         if hasattr(chart, 'brushRowsSelected'):
@@ -8608,8 +8662,12 @@ class ModernWindow(QMainWindow):
             menu.addAction(tool_icon("layout_tool"), "Layout Tool...", lambda: self.layout_tool_dialog(target_entry))
             menu.addAction("Set ID Column for Hover…", lambda: self.set_graph_id_column_dialog(target_entry))
             menu.addAction("Rename Graph…", lambda: self.rename_output_dialog(target_entry))
+            menu.addAction("Duplicate Graph", lambda: self.duplicate_graph(target_entry))
+            menu.addAction("Copy Command Language", lambda: self.copy_command_language(target_entry))
+            menu.addAction("Go to Session / Report", lambda: self.show_result(target_entry, target_tab="Report"))
             menu.addAction("Reset to Default Size", self.reset_graph_size)
             menu.addSeparator()
+            menu.addAction("Close All Graphs", self.close_all_graphs)
             menu.addAction(tool_icon("save"), "Save Graph As...", lambda: self.save_graph_as(target_entry))
         else:
             menu.addAction(tool_icon("copy"), "Copy\tCtrl+C", lambda: QApplication.clipboard().setText(format_entry(target_entry)))
@@ -10057,6 +10115,109 @@ class ModernWindow(QMainWindow):
         self._hidden_columns.clear()
         self.refresh()
 
+    def move_to_active_cell(self):
+        item = self.table.currentItem()
+        if item is not None:
+            self.table.scrollToItem(item)
+            self.table.setFocus()
+
+    def project_description_dialog(self):
+        proj = getattr(self.presenter, "native_project", None)
+        meta = proj.metadata if proj is not None and isinstance(getattr(proj, "metadata", None), dict) else self.presenter.worksheet.metadata.setdefault("project_description", {})
+        dialog = QDialog(self); dialog.setWindowTitle("Project Description"); dialog.setMinimumWidth(460)
+        layout = QVBoxLayout(dialog); form = QFormLayout()
+        creator_edit = QLineEdit(str(meta.get("creator", "")))
+        comments_edit = QPlainTextEdit(str(meta.get("comments", ""))); comments_edit.setMaximumHeight(110)
+        form.addRow("Creator:", creator_edit)
+        form.addRow("Comments:", comments_edit)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept); buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            meta["creator"] = creator_edit.text().strip()
+            meta["comments"] = comments_edit.toPlainText().strip()
+            self.presenter.dirty = True
+            self.refresh()
+
+    def worksheet_fonts_dialog(self):
+        from PySide6.QtWidgets import QSpinBox, QFontComboBox
+        dlg = QDialog(self); dlg.setWindowTitle("Worksheet Fonts"); dlg.setMinimumWidth(380)
+        layout = QVBoxLayout(dlg); form = QFormLayout()
+        cell_font_cb = QFontComboBox(); cell_font_cb.setCurrentFont(self.table.font())
+        cell_size = QSpinBox(); cell_size.setRange(7, 24); cell_size.setValue(max(7, self.table.font().pointSize() or 9))
+        hdr_font_cb = QFontComboBox(); hdr_font_cb.setCurrentFont(self.column_names.font())
+        hdr_size = QSpinBox(); hdr_size.setRange(7, 24); hdr_size.setValue(max(7, self.column_names.font().pointSize() or 9))
+        form.addRow("Cell Font:", cell_font_cb)
+        form.addRow("Cell Size:", cell_size)
+        form.addRow("Header Font:", hdr_font_cb)
+        form.addRow("Header Size:", hdr_size)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept); buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            cf = cell_font_cb.currentFont(); cf.setPointSize(cell_size.value())
+            hf = hdr_font_cb.currentFont(); hf.setPointSize(hdr_size.value())
+            self.table.setFont(cf)
+            self.column_names.setFont(hf)
+            self.col_header_view.setFont(hf)
+            self.row_header_view.setFont(hf)
+
+    def clear_all_conditional_formatting(self):
+        sheet = self.presenter.worksheet
+        for col in sheet.columns:
+            col.metadata.pop("conditional_rules", None)
+        if hasattr(self, "_cf_cache"):
+            self._cf_cache.invalidate()
+        self.refresh()
+        self.statusBar().showMessage("Cleared conditional formatting rules from the active worksheet.", 4000)
+
+    def duplicate_graph(self, entry=None):
+        target = entry or self.selected_entry
+        if not isinstance(target, dict):
+            return
+        import copy
+        clone = copy.deepcopy(target)
+        clone["title"] = f"{target.get('title', 'Graph')} (Copy)"
+        clone.pop("entry_id", None)
+        self.presenter.history.append(clone)
+        self.refresh()
+        self.show_result(clone)
+
+    def close_all_graphs(self):
+        if hasattr(self, "_workspace"):
+            self._workspace.close_all()
+        self.statusBar().showMessage("Closed all open graph/output tabs.", 3500)
+
+    def copy_command_language(self, entry=None):
+        target = entry or self.selected_entry
+        if not isinstance(target, dict):
+            QApplication.clipboard().setText("")
+            return
+        cmd = target.get("command") or ""
+        if not cmd:
+            recipe = target.get("recipe") or {}
+            action = str(recipe.get("action") or target.get("result", {}).get("analysis") or target.get("title", "")).upper()
+            cmd = f"{action}"
+        QApplication.clipboard().setText(str(cmd))
+        self.statusBar().showMessage("Copied session command language to clipboard.", 3500)
+
+    def context_help(self):
+        active_dlg = QApplication.activeModalWidget()
+        if active_dlg is not None and active_dlg is not self:
+            title = active_dlg.windowTitle() or "Dialog Help"
+            QMessageBox.information(active_dlg, f"Help — {title}", f"Active Dialog: {title}\n\n• Double-click or press Enter in Available Variables to select columns.\n• Press F3 or click Reset to restore defaults.\n• Press OK to run the procedure.")
+            return
+        entry = getattr(self, "selected_entry", None)
+        if isinstance(entry, dict):
+            title = entry.get("title", "StatCraft")
+            res = entry.get("result", {}) if isinstance(entry.get("result"), dict) else {}
+            note = res.get("assumptions") or res.get("method") or res.get("convention") or "Right-click any output or graph for export, R script, and edit options."
+            QMessageBox.information(self, f"Help — {title}", f"{title}\n\n{note}")
+            return
+        self.about()
+
     def conditional_formatting_dialog(self, rule_type=None, title=None):
         self._commit_editor()
         c = max(0, min(self.table.currentColumn(), len(self.presenter.worksheet.columns) - 1))
@@ -10064,7 +10225,9 @@ class ModernWindow(QMainWindow):
             ("Greater Than", "greater_than"),
             ("Less Than", "less_than"),
             ("Between", "between"),
+            ("Not Between", "not_between"),
             ("Equal To", "equal_to"),
+            ("Not Equal To", "not_equal_to"),
             ("Text Contains", "contains"),
             ("Highest N Values", "highest"),
             ("Lowest N Values", "lowest"),

@@ -472,7 +472,11 @@ class ProcedureDialog(QDialog):
         if hasattr(self, 'error'): self.error.setVisible(False)
         spec=next(s for s in self.selectors if s['key']==key)
         any_populated = any(_column_has_data(c) for c in self.worksheet.columns)
+        parent = self.parent()
+        hidden_cols = set(getattr(parent, '_hidden_columns', ()) or ()) if parent is not None and not getattr(parent, '_use_hidden_in_dialogs', False) else set()
         for i,column in enumerate(self.worksheet.columns):
+            if i in hidden_cols:
+                continue
             if any_populated and not _column_has_data(column) and column.name == f"C{i + 1}":
                 continue
             if column.kind in spec.get('kinds',('number',)):

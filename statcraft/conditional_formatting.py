@@ -15,8 +15,8 @@ import re
 
 
 RULE_TYPES = frozenset((
-    "missing", "greater_than", "less_than", "equal_to",
-    "between", "contains", "highest", "lowest", "outlier",
+    "missing", "greater_than", "less_than", "equal_to", "not_equal_to",
+    "between", "not_between", "contains", "highest", "lowest", "outlier",
     "above_mean", "below_mean", "outside_3sigma", "outside_specs",
     "top_percent", "bottom_percent",
 ))
@@ -46,9 +46,9 @@ def validate_rule(rule):
     if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
         raise ValueError("Conditional formatting color must be #RRGGBB.")
     first, second = rule.get("param1"), rule.get("param2")
-    if kind in ("greater_than", "less_than", "between"):
+    if kind in ("greater_than", "less_than", "between", "not_between"):
         first = _number(first, "Value")
-        if kind == "between":
+        if kind in ("between", "not_between"):
             second = _number(second, "Maximum")
             first, second = min(first, second), max(first, second)
         else:
@@ -72,7 +72,7 @@ def validate_rule(rule):
         second = _number(second, "USL") if has_usl else None
         if first is not None and second is not None and first > second:
             first, second = second, first
-    elif kind in ("equal_to", "contains"):
+    elif kind in ("equal_to", "not_equal_to", "contains"):
         if isinstance(first, bool) or not isinstance(first, (str, int, float)):
             raise ValueError("Enter a text or numeric comparison value.")
         if isinstance(first, (int, float)):
@@ -145,11 +145,14 @@ def effective_highlights(column, row_count=None, rules=None):
                     match = value < first
                 elif kind == "between" and number:
                     match = first <= value <= second
-                elif kind == "equal_to":
+                elif kind == "not_between" and number:
+                    match = not (first <= value <= second)
+                elif kind in ("equal_to", "not_equal_to"):
                     try:
-                        match = value == _number(first, "Value") if number else str(value).casefold() == str(first).casefold()
+                        eq = value == _number(first, "Value") if number else str(value).casefold() == str(first).casefold()
                     except ValueError:
-                        match = False
+                        eq = False
+                    match = eq if kind == "equal_to" else not eq
                 elif kind == "contains":
                     match = str(first).casefold() in str(value).casefold()
                 elif kind in ("highest", "top_percent") and number and cutoff is not None:
