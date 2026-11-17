@@ -293,6 +293,33 @@ class MpxWorksheetOpsTests(unittest.TestCase):
             with self.assertRaises((UnsupportedFormatError, ValueError)):
                 save_mpx(p, Path(folder) / "empty.mpx")
 
+    def test_statcraft_overlay_metadata_and_description_allowed_while_unknown_key_rejected(self):
+        with scratch() as folder:
+            source = Path(folder) / "overlay_src.mpx"
+            target = Path(folder) / "overlay_copy.mpx"
+            _write_plain_fixture(source)
+
+            p = load_mpx(source)
+            col0 = p.worksheets[0].columns[0]
+            col0.metadata["conditional_rules"] = [{"type": "greater_than", "param1": 1.0, "color": "#f8d7da"}]
+            col0.metadata["cell_highlights"] = {"0": "#fff3cd"}
+            col0.metadata["cell_comments"] = {"0": "Check reading"}
+            col0.metadata["value_order"] = ["3.0", "4.0"]
+            col0.metadata["description"] = "Measured yield response"
+            save_mpx(p, target)
+
+            with ZipFile(target) as z:
+                sheet_doc = json.loads(z.read("/sheets/1/sheet.json"))
+                self.assertEqual(
+                    sheet_doc["Data"]["Columns"][0]["WorksheetVarBody"]["Description"],
+                    "Measured yield response",
+                )
+
+            bad = load_mpx(source)
+            bad.worksheets[0].columns[0].metadata["custom"] = 1
+            with self.assertRaises(UnsupportedFormatError):
+                save_mpx(bad, Path(folder) / "bad_overlay.mpx")
+
 
 if __name__ == "__main__":
     unittest.main()

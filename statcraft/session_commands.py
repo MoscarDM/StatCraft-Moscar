@@ -1,6 +1,7 @@
 """Minitab Session Command & Batch Exec (.MTB) Interpreter for StatCraft."""
 from __future__ import annotations
 
+import math
 import os
 import re
 import shlex
@@ -15,11 +16,14 @@ MAX_MACRO_DEPTH = 64
 _BUILTIN_VERBS = frozenset({
     "DESCRIBE", "DESC", "INFO", "INFORMATION", "CORRELATION", "CORR",
     "NORMALITY", "NORM", "LET", "NAME", "ERASE", "COPY", "DELETE", "SET",
+    "PRINT", "READ", "MEAN", "STDEV", "MEDIAN", "SUM", "MINIMUM", "MAXIMUM",
+    "COUNT", "N", "NMISS",
     "HISTOGRAM", "HIST", "BOXPLOT", "BOX", "DOTPLOT", "DOT", "PARETO",
-    "TSPLOT", "INTERVALPLOT", "IPLOT", "REGRESS", "REG", "ANOVA", "ONEWAY",
-    "TWOSAMPLE", "TTEST", "1SAMPLE", "ONESAMPLE", "CHI", "CHISQUARE",
-    "TALLY", "INDICATOR", "SUBSET", "RANDOM", "CAPABILITY", "CAPA",
-    "XBARR", "XBARCHART", "IMR", "PCHART", "NPCHART", "CCHART", "UCHART",
+    "TSPLOT", "INTERVALPLOT", "IPLOT", "INDIVIDUAL", "INDPLOT", "PLOT", "SCATTERPLOT",
+    "REGRESS", "REGR", "ANOVA", "ONEWAY", "AOVONEWAY",
+    "TWOSAMPLE", "TWOSAMPLE-T", "TTEST", "TINTERVAL", "1SAMPLE", "ONESAMPLE", "CHI", "CHISQUARE",
+    "TALLY", "INDICATOR", "SUBSET", "RANDOM", "SORT", "RANK", "CAPABILITY", "CAPA",
+    "XBARR", "XBARCHART", "XBAR-R", "IMR", "ICHART", "PCHART", "NPCHART", "CCHART", "UCHART",
     "EWMA", "CUSUM", "PCA", "FACTOR", "CLUSTER", "KMEANS", "ARIMA",
     "ACF", "PACF", "CCF", "RSCR", "RSCRIPT", "R", "BOOTSTRAP", "RANDTEST",
     "PGOF", "NBREG", "BANOVA", "NESTED", "MANOVA", "REML", "MIXED",
@@ -670,7 +674,7 @@ def execute_command_block(
             raise ValueError("Syntax: PLOT C2 * C1 (Y then X)")
         return presenter.scatter_plot(indices[1], indices[0])
 
-    if verb in ("REGRESS", "REGR"):
+    if verb in ("REGRESS", "REGR", "REG"):
         indices = resolve_variables(rest, presenter.worksheet, ("number",))
         if len(indices) < 2:
             raise ValueError("Syntax: REGRESS C_response C_predictor1 [C_predictor2 ...]")
@@ -696,7 +700,7 @@ def execute_command_block(
             raise ValueError("Syntax: TWOSAMPLE C1 C2")
         return presenter.two_sample_t({"data_format": 1, "sample1_col": indices[0], "sample2_col": indices[1]})
 
-    if verb in ("XBARCHART", "XBAR-R"):
+    if verb in ("XBARCHART", "XBAR-R", "XBARR"):
         indices = resolve_variables(rest, presenter.worksheet, ("number",))
         if len(indices) == 2:
             return presenter.xbar_r_stacked(response_index=indices[0], factor_index=indices[1])
@@ -944,6 +948,203 @@ def execute_command_block(
             elif s_up.startswith("SIMS "):
                 n_sims = int(float(sub.strip().split()[1]))
         return presenter.monte_carlo_simulation(inputs_s, formula_s, lsl=lsl, usl=usl, n_sims=n_sims)
+
+    if verb in ("MEAN", "STDEV", "MEDIAN", "SUM", "MINIMUM", "MAXIMUM", "COUNT", "N", "NMISS"):
+        toks = rest.split()
+        if not toks or len(toks) > 2:
+            raise ValueError(f"Syntax: {verb} C1 [K1]")
+        col_idx = resolve_variables(toks[0], presenter.worksheet, ("number",))[0]
+        col = presenter.worksheet.columns[col_idx]
+        vals = [
+            float(v) for v in col.values
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(float(v))
+        ]
+        n_total = len(col.values)
+        n_valid = len(vals)
+        n_miss = n_total - n_valid
+        if verb == "COUNT":
+            val = float(n_total)
+        elif verb == "N":
+            val = float(n_valid)
+        elif verb == "NMISS":
+            val = float(n_miss)
+        elif verb == "SUM":
+            val = float(sum(vals))
+        else:
+            if not vals:
+                raise ValueError(f"Column '{col.name}' has no numeric observations for {verb}.")
+            if verb == "MEAN":
+                val = float(sum(vals) / n_valid)
+            elif verb == "STDEV":
+                if n_valid < 2:
+                    raise ValueError(f"STDEV requires at least 2 numeric observations in '{col.name}'.")
+                m_val = sum(vals) / n_valid
+                val = math.sqrt(sum((x - m_val) ** 2 for x in vals) / (n_valid - 1))
+            elif verb == "MEDIAN":
+                s_vals = sorted(vals)
+                mid = n_valid // 2
+                val = float(s_vals[mid]) if n_valid % 2 else float((s_vals[mid - 1] + s_vals[mid]) / 2.0)
+            elif verb == "MINIMUM":
+                val = float(min(vals))
+            else:
+                val = float(max(vals))
+        if len(toks) == 2:
+            dest_up = toks[1].upper()
+            if scope is not None and dest_up in scope.constants:
+                scope.constants[dest_up] = val
+            elif dest_up.startswith("K") and dest_up[1:].isdigit():
+                k_idx = int(dest_up[1:]) - 1
+                while len(presenter.worksheet.constants) <= k_idx:
+                    next_num = len(presenter.worksheet.constants) + 1
+                    presenter.worksheet.constants.append(Column(f"K{next_num}", "number", [None]))
+                presenter.worksheet.constants[k_idx].kind = "number"
+                presenter.worksheet.constants[k_idx].values = [val]
+                presenter.dirty = True
+            else:
+                raise ValueError(f"Destination '{toks[1]}' must be a stored constant (K1, K2, ...) or macro constant.")
+        col_label = col.name or f"C{col_idx + 1}"
+        return presenter._record(
+            f"{verb} of {col_label}",
+            {"column": col_label, "statistic": verb, "value": val, "text": f"{verb} of {col_label} = {val:.6g}"},
+        )
+
+    if verb == "PRINT":
+        indices = resolve_variables(rest, presenter.worksheet, ("number", "text", "date"))
+        if not indices:
+            raise ValueError("Syntax: PRINT C1 [C2 ...]")
+        sel_cols = [presenter.worksheet.columns[i] for i in indices]
+        col_names = [c.name or f"C{i + 1}" for i, c in zip(indices, sel_cols)]
+        max_rows = max((len(c.values) for c in sel_cols), default=0)
+        lines = ["Row\t" + "\t".join(col_names)]
+        for r in range(min(max_rows, 500)):
+            row_cells = []
+            for c in sel_cols:
+                v = c.values[r] if r < len(c.values) else None
+                row_cells.append("*" if v is None else str(v))
+            lines.append(f"{r + 1}\t" + "\t".join(row_cells))
+        formatted_text = "\n".join(lines)
+        return presenter._record("Print Data", {"columns": col_names, "text": formatted_text})
+
+    if verb == "READ":
+        toks = rest.split()
+        col_tokens = []
+        inline_rest = []
+        for idx_t, tok in enumerate(toks):
+            if re.match(r"^C[1-9][0-9]*$", tok, re.IGNORECASE) and not inline_rest:
+                col_tokens.append(tok.upper())
+            else:
+                inline_rest = toks[idx_t:]
+                break
+        if not col_tokens:
+            raise ValueError("Syntax: READ C1 [C2 ...]; row1; row2.")
+        col_indices = [int(ct[1:]) - 1 for ct in col_tokens]
+        sub_lines = [s for s in subcommands if s.strip() and s.strip().upper() != "END"]
+        val_text = " ".join([" ".join(inline_rest)] + sub_lines).strip()
+        nums = _parse_number_tokens(val_text)
+        n_cols = len(col_indices)
+        last_entry = None
+        for pos, col_idx in enumerate(col_indices):
+            last_entry = presenter.set_column_values(col_idx, nums[pos::n_cols], "number")
+        return last_entry
+
+    if verb in ("PCHART", "NPCHART", "CCHART", "UCHART"):
+        toks = rest.split()
+        if not toks:
+            raise ValueError(f"Syntax: {verb} C1 [C2 | subgroup_size]")
+        cols = resolve_variables(toks[0], presenter.worksheet, ("number",))
+        chart_type = verb[:-5]  # P, NP, C, U
+        is_subgroup_col = False
+        subgroup_col_idx = None
+        subgroup_size = None
+        if len(toks) >= 2:
+            try:
+                subgroup_col_idx = resolve_variables(toks[1], presenter.worksheet, ("number",))[0]
+                is_subgroup_col = True
+            except ValueError:
+                subgroup_size = float(toks[1])
+        elif chart_type == "C":
+            subgroup_size = 1.0
+        return presenter.attribute_control_chart({
+            "chart_type": chart_type,
+            "variables": [cols[0]],
+            "subgroup_size": subgroup_size,
+            "subgroup_col_idx": subgroup_col_idx,
+            "is_subgroup_col": is_subgroup_col,
+            "options": {},
+        })
+
+    if verb in ("EWMA", "CUSUM"):
+        cols = resolve_variables(rest, presenter.worksheet, ("number",))
+        if not cols:
+            raise ValueError(f"Syntax: {verb} C1")
+        return presenter.time_weighted_control_chart({
+            "chart_type": verb,
+            "columns": [cols[0]],
+            "arranged_mode": 0,
+            "subgroup_spec": 1,
+            "options": {},
+        })
+
+    if verb == "PCA":
+        cols = resolve_variables(rest, presenter.worksheet, ("number",))
+        return presenter.pca({"variable_indices": cols, "matrix_type": "correlation"})
+
+    if verb == "FACTOR":
+        cols = resolve_variables(rest, presenter.worksheet, ("number",))
+        return presenter.factor_analysis(variable_columns=cols)
+
+    if verb == "CLUSTER":
+        cols = resolve_variables(rest, presenter.worksheet, ("number",))
+        return presenter.cluster_observations({"variable_indices": cols, "n_clusters": 3})
+
+    if verb == "KMEANS":
+        cols = resolve_variables(rest, presenter.worksheet, ("number",))
+        return presenter.cluster_kmeans({"variable_indices": cols, "k_clusters": 3})
+
+    if verb == "ACF":
+        cols = resolve_variables(rest, presenter.worksheet, ("number",))
+        if len(cols) != 1:
+            raise ValueError("Syntax: ACF C1")
+        return presenter.autocorrelation({"series_index": cols[0]})
+
+    if verb == "PACF":
+        cols = resolve_variables(rest, presenter.worksheet, ("number",))
+        if len(cols) != 1:
+            raise ValueError("Syntax: PACF C1")
+        return presenter.partial_autocorrelation({"series_index": cols[0]})
+
+    if verb == "ARIMA":
+        toks = rest.split()
+        if not toks:
+            raise ValueError("Syntax: ARIMA [p d q] C1")
+        ints = []
+        col_parts = []
+        for idx_t, tok in enumerate(toks):
+            if not col_parts and re.fullmatch(r"\d+", tok):
+                ints.append(int(tok))
+            else:
+                col_parts = toks[idx_t:]
+                break
+        if not col_parts:
+            raise ValueError("Syntax: ARIMA [p d q] C1")
+        p = ints[0] if len(ints) >= 1 else 1
+        d = ints[1] if len(ints) >= 2 else 0
+        q = ints[2] if len(ints) >= 3 else 0
+        cols = resolve_variables(" ".join(col_parts), presenter.worksheet, ("number",))
+        if len(cols) != 1:
+            raise ValueError("Syntax: ARIMA [p d q] C1")
+        return presenter.arima({
+            "series_index": cols[0],
+            "p": p,
+            "d": d,
+            "q": q,
+            "P": 0,
+            "D": 0,
+            "Q": 0,
+            "S": 1,
+            "include_constant": True,
+            "forecasts": 3,
+        })
 
     raise ValueError(f"Unsupported session command '{verb}'.")
 

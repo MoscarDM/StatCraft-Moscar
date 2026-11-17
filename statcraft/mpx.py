@@ -433,8 +433,8 @@ def save_mpx(project, path, session_records=None):
             document["Data"]["Name"] = sheet.name
             if "PrivateTitle" in document["Data"]:
                 document["Data"]["PrivateTitle"] = sheet.name
-        from .mpx_columns import prepare_columns
-        extent=max(original.row_count,max((len(column.values) for column in sheet.columns if any(column.metadata==base.metadata for base in original.columns)),default=0))
+        from .mpx_columns import prepare_columns, native_column_metadata
+        extent=max(original.row_count,max((len(column.values) for column in sheet.columns if any(native_column_metadata(column.metadata)==native_column_metadata(base.metadata) for base in original.columns)),default=0))
         matches, changed = prepare_columns(document,sheet.columns,original.columns,extent,appended_ids,uri)
         resized_sheet=False
         for position, (column, original_position) in enumerate(zip(sheet.columns, matches)):
@@ -442,9 +442,10 @@ def save_mpx(project, path, session_records=None):
                 continue
             baseline=original.columns[original_position]
             resized=len(column.values)!=len(baseline.values)
-            if column.kind != baseline.kind or column.metadata != baseline.metadata:
+            if column.kind != baseline.kind or native_column_metadata(column.metadata) != native_column_metadata(baseline.metadata):
                 raise io.UnsupportedFormatError("Native column type and metadata changes are unverified.")
-            if column.name == baseline.name and column.values == baseline.values:
+            desc_changed = column.metadata.get("description") != baseline.metadata.get("description")
+            if column.name == baseline.name and column.values == baseline.values and not desc_changed:
                 continue
             if baseline.metadata.get("unsupported_native_storage"):
                 raise io.UnsupportedFormatError("Native edits to an untyped empty placeholder column require unverified storage initialization.")
@@ -453,6 +454,8 @@ def save_mpx(project, path, session_records=None):
             wrapper = document["Data"]["Columns"][position]["WorksheetVarBody"]
             if column.name != baseline.name:
                 wrapper["Name"] = column.name
+            if desc_changed and isinstance(column.metadata.get("description"), str):
+                wrapper["Description"] = column.metadata["description"]
             body = wrapper["VarData"]["VarDataBody"]
             if resized:
                 from .mpx_rows import prepare_column_resize

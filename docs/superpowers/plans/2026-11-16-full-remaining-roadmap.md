@@ -1,6 +1,6 @@
 # StatCraft Full Remaining Roadmap Implementation Plan
 
-> **Status (2026-11-17):** **Tasks 1–10 (Tracks 1–6) are COMPLETE and shipped**, including `v120.0.2` multi-platform release (`254209e`) and post-plan MPX/numerical parity expansions through `236703a`. See **Execution Ledger** below and **Next Horizon (Track 7+)** at the bottom of this document.
+> **Status (2026-11-17):** **All planned tracks (Tasks 1–13, 15 REA pain points `699e2ec`, complete `_BUILTIN_VERBS` session command verbs, MPX column overlay metadata, and `v121.0.0` release) are COMPLETE.** See **Execution Ledger** below.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement remaining Next Horizon tasks. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -17,7 +17,9 @@
 - [x] **Tasks 9–10 (`1cd905f`):** Automated GUI visual stress harness (`scripts/visual_stress_suite.py`) + live desktop inspection runbook (`visual-stress-runbook.md`), plus Dark Mode conditional highlight contrast fix (`d61b6b7`).
 - [x] **Release `v120.0.2` (`b4d5cc5` → `254209e`):** PyInstaller `StatCraft.exe` built & verified, `pyproject.toml` synced, macOS DMG `-fs HFS+` + `ditto` ZIP packaging hardened, full 2,814-test suite passed (`OK`, `skipped=1`), and `Multi-Platform Release` succeeded.
 - [x] **Post-Plan Phase A (`4195b81`, `236703a`):** Copy-on-write shared numeric/date `/blobs/blobM` allocation (`mpx.py`), Binary/Ordinal/Nominal Logistic & Poisson native model recovery (`native_mpx_models.py`), and `ui/zoom_percent` persistence (`modern_app.py`).
-- [x] **Post-Plan Phase B (`80a8650`, `4553139`):** External Numerical Reference Parity Suites 1 & 2 (`tests/test_numerical_reference_parity.py`, `tests/test_numerical_reference_parity_phase2.py`) — NIST StRD `Norris`/`Pontius`, Normal Capability, 3×10×3 Gage R&R, Montgomery Two-Way ANOVA, Lieblein-Zelen & censored Weibull MLE, Binary Logistic MLE, Poisson MLE, EWMA, and One-Way ANOVA + Tukey HSD.
+- [x] **Task 13 (`0b1eb78`) & Post-Plan Phase B (`80a8650`, `4553139`):** External Numerical Reference Parity Suites 1–3 (`tests/test_numerical_reference_parity*.py`).
+- [x] **15 REA User Pain Points (`699e2ec`):** Freeze Panes, Auto-Save & Recovery, Save/Clear History & Session Window, Navigator Ordering, Split View, Tile With Worksheet, Merge Worksheets dialog, Append to ReportPad, Set Cell Comment, Auto-Update Graph, Reference & Percentile Lines, Graph Titles/Gridlines, and Brushing Color & Palette.
+- [x] **`v121.0.0` Finalization (`session_commands.py`, `mpx.py`, `mpx_columns.py`):** Completed remaining `_BUILTIN_VERBS` (`MEAN`, `STDEV`, `MEDIAN`, `SUM`, `MINIMUM`, `MAXIMUM`, `COUNT`, `N`, `NMISS`, `PRINT`, `READ`, `PCHART`/`NPCHART`/`CCHART`/`UCHART`, `EWMA`/`CUSUM`, `PCA`/`FACTOR`/`CLUSTER`/`KMEANS`, `ACF`/`PACF`/`ARIMA`), allowed StatCraft column overlay metadata & `description` persistence in `.mpx` copies, and bumped `statcraft` to `121.0.0`.
 
 **Goal:** Close all remaining Minitab 22 parity, MPX native continuity, DOE, statistical method, session macro, and built-executable release gaps across StatCraft.
 
