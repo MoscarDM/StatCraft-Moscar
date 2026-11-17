@@ -1,6 +1,23 @@
 # StatCraft Full Remaining Roadmap Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status (2026-11-17):** **Tasks 1–10 (Tracks 1–6) are COMPLETE and shipped**, including `v120.0.2` multi-platform release (`254209e`) and post-plan MPX/numerical parity expansions through `236703a`. See **Execution Ledger** below and **Next Horizon (Track 7+)** at the bottom of this document.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement remaining Next Horizon tasks. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+## Execution Ledger (Completed)
+
+- [x] **Task 1 (`1dc1b7e`):** Safe text & date column editing/resizing in `.mpx` copies (`mpx.py`, `mpx_rows.py`, `tests/test_mpx_text_date_edit.py`).
+- [x] **Task 2 (`54af029`):** Expanded native MPX model recovery for 2-level factorial and GLM/One-Way ANOVA (`native_mpx_models.py`, `app.py`).
+- [x] **Task 3 (`6a72636`):** Split-plot factorial design creation & two-stratum whole-plot/subplot ANOVA (`doe_split_plot.py`, `tests/test_doe_split_plot.py`).
+- [x] **Task 4 (`d04941a`):** Extended 2-level principal-fraction generator catalog for 9–15 factors (`fractional.py`, `doe_catalog_designs.py`) + blocked/screening end-to-end fixtures.
+- [x] **Task 5 (`f0c62cb`):** Bonett test, Multiple Comparisons, and Bonferroni-adjusted variance/stdev CIs (`variance_tests.py`).
+- [x] **Task 6 (`672bd4c`):** ARIMA exact/ML estimation (`method='ML'`) and log/Box-Cox forecast back-transformation (`arima.py`, `arima_dialogs.py`, `arima_report.py`).
+- [x] **Task 7 (`c12eb05`):** Local/global `MACRO` / `GMACRO` / `ENDMACRO`, `MCONSTANT` / `MCOLUMN` / `MMATRIX`, `IF/ENDIF`, and bounded `DO/ENDDO` loops (`session_commands.py`).
+- [x] **Task 8 (`4d00985`):** `--smoke-verify`, `scripts/verify_built_executable.py`, CI/Release `.exe` SHA-256 verification gates (`ci.yml`, `release.yml`).
+- [x] **Tasks 9–10 (`1cd905f`):** Automated GUI visual stress harness (`scripts/visual_stress_suite.py`) + live desktop inspection runbook (`visual-stress-runbook.md`), plus Dark Mode conditional highlight contrast fix (`d61b6b7`).
+- [x] **Release `v120.0.2` (`b4d5cc5` → `254209e`):** PyInstaller `StatCraft.exe` built & verified, `pyproject.toml` synced, macOS DMG `-fs HFS+` + `ditto` ZIP packaging hardened, full 2,814-test suite passed (`OK`, `skipped=1`), and `Multi-Platform Release` succeeded.
+- [x] **Post-Plan Phase A (`4195b81`, `236703a`):** Copy-on-write shared numeric/date `/blobs/blobM` allocation (`mpx.py`), Binary/Ordinal/Nominal Logistic & Poisson native model recovery (`native_mpx_models.py`), and `ui/zoom_percent` persistence (`modern_app.py`).
+- [x] **Post-Plan Phase B (`80a8650`, `4553139`):** External Numerical Reference Parity Suites 1 & 2 (`tests/test_numerical_reference_parity.py`, `tests/test_numerical_reference_parity_phase2.py`) — NIST StRD `Norris`/`Pontius`, Normal Capability, 3×10×3 Gage R&R, Montgomery Two-Way ANOVA, Lieblein-Zelen & censored Weibull MLE, Binary Logistic MLE, Poisson MLE, EWMA, and One-Way ANOVA + Tukey HSD.
 
 **Goal:** Close all remaining Minitab 22 parity, MPX native continuity, DOE, statistical method, session macro, and built-executable release gaps across StatCraft.
 
@@ -512,4 +529,17 @@ Inspect every generated `.png` in `artifacts/visual_qa/` visually and verify zer
 git add docs/superpowers/plans/visual-stress-runbook.md
 git commit -m "docs(qa): add Codex visual stress-testing inspection runbook"
 ```
+
+---
+
+## Next Horizon (Track 7+: Remaining Deeper Parity)
+
+### Task 11: Native MPX Structural Worksheet Edits (Add / Delete / Reorder Sheets)
+- [ ] Safely support adding, renaming, deleting, and reordering worksheets in `.mpx` copies (`mpx.py`, `session.py`, `workspace_state.py`), updating `worksheet_ids`, `worksheet_uris`, and ZIP members atomically while preserving retained native output links.
+
+### Task 12: Remaining Native MPX Model Recovery (Reliability, ARIMA, Mixed Models)
+- [ ] Extend `native_mpx_models.py` and `Presenter.refit_native_model` to recover Parametric Distribution/Reliability, ARIMA, and Mixed-Effects native model recipes with strict unsupported-option diagnostics.
+
+### Task 13: External Numerical Reference Parity Phase 3 (Mixed Models, ARIMA, Nonnormal Capability, Predictive ML)
+- [ ] Add `tests/test_numerical_reference_parity_phase3.py` validating REML Mixed Models, Seasonal ARIMA (`CLS` & `ML`), Nonnormal Capability (Johnson/Box-Cox/Weibull), and Predictive ML (CART/Random Forest/MARS) against external Minitab 22 / R / analytical reference fixtures.
 
