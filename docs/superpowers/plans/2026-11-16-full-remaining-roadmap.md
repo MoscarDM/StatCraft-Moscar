@@ -545,3 +545,8 @@ git commit -m "docs(qa): add Codex visual stress-testing inspection runbook"
 ### Task 13: External Numerical Reference Parity Phase 3 (Mixed Models, ARIMA, Nonnormal Capability, Predictive ML)
 - [x] Add `tests/test_numerical_reference_parity_phase3.py` validating REML Mixed Models, Seasonal ARIMA (`CLS` & `ML`), Nonnormal Capability (Johnson/Box-Cox/Weibull), and Predictive ML (CART/Random Forest) against external analytical/reference fixtures.
 
+### Task 14: Post-v121.0.0 Sequential Release Gate (`v121.1.0`)
+- [x] **Stage 1 (Build & Live Visual Stress Check):** Rebuilt `dist/app/StatCraft.exe` for `v121.0.0`, passed `scripts/verify_built_executable.py`, and completed live `scripts/visual_stress_suite.py --quick --exe dist/app/StatCraft.exe` verification.
+- [x] **Stage 2 (Deeper Minitab 22 Parity Pass — Round 5):** Implemented 15 REA-grounded menu/handler capabilities in `statcraft/modern_app.py`, `statcraft/graph_frame.py`, and `statcraft/modern_charts.py` (`Save/Print ReportPad`, `Close/Save All Worksheets`, `Order Columns/Constants/Matrices by ID & Name`, `Print Session Window/History`, `Export Dialog Settings`, `Create Indicator Variables from Brushed Rows` in Data & Graph, `Crosshair Mode`, `Insert/Duplicate Graph Text Annotation`, and `Reset 3D View Defaults`), covered by `tests/test_minitab_parity_round5.py`.
+- [x] **Stage 3 (Real-World `.mpx` Corpus E2E & Release):** Added `tests/test_mpx_corpus_end_to_end.py` validating all 6 real Minitab 22 `.mpx` corpus files (when present) and `tests/fixtures/statcraft-profile-v*.mpx` roundtrips + owned multi-worksheet edits, bumped to `v121.1.0`, and verified the release suite.
+

@@ -1353,7 +1353,9 @@ class ModernWindow(QMainWindow):
         self.save_action = self._action(file, "Save Project", self.save_document, QKeySequence.StandardKey.Save, "save")
         self._action(file, "Save Project As…", lambda: self.save_document(True), QKeySequence.StandardKey.SaveAs, "save_copy")
         self._action(file, "Save Current Worksheet As…", self.export_data, None, "export")
+        self._action(file, "Save All Worksheets As…", self.save_all_worksheets_dialog, None, "save_copy")
         self._action(file, "Close Worksheet", self.close_worksheet)
+        self._action(file, "Close All Worksheets", self.close_all_worksheets)
         self._action(file, "Export All Graphs in Project…", self.export_all_graphs_dialog, None, "export")
         self._action(file, "Export Output to Modern &Tidyverse / ggplot2 (.R)…", self.export_active_r_file, None, "save")
         self._action(file, "Export Output to Pure &Base R Script (.R)…", self.export_active_base_r_file, None, "save")
@@ -1373,6 +1375,7 @@ class ModernWindow(QMainWindow):
         self._action(file, "Export Session as &Markdown Report (.md)…", self.export_session_markdown_dialog, None, "export")
         self._action(file, "Save Session Window…", self.save_session_window_dialog, None, "save")
         self._action(file, "Save History As…", self.save_history_dialog, None, "save")
+        self._action(file, "Save ReportPad As…", self.save_report_pad_dialog, None, "save")
         self._action(file, "Export Anonymized Dataset (Clean for &Audit)…", self.anonymize_dataset_dialog, None, "export")
         self._action(file, "Run Exec / Batch Script (.MTB)…", self.run_mtb_script_dialog, None, "workflow")
         file.addSeparator()
@@ -1380,6 +1383,9 @@ class ModernWindow(QMainWindow):
         self._action(file, "Print Preview…", lambda: self._printing().run("preview"))
         self._action(file, "Export PDF…", lambda: self._printing().run("pdf"))
         self.print_action = self._action(file, "Print…", self.print_current, QKeySequence.StandardKey.Print, "print")
+        self._action(file, "Print Session Window…", self.print_session_window, None, "print")
+        self._action(file, "Print History…", self.print_history, None, "print")
+        self._action(file, "Print ReportPad…", self.print_report_pad, None, "print")
         file.addSeparator()
         self._action(file, "Exit", self.close, QKeySequence.StandardKey.Quit)
 
@@ -1470,6 +1476,7 @@ class ModernWindow(QMainWindow):
         self._action(data, "Stored Constants…", self.stored_constants, None, "constants", True)
         data.addSeparator()
         self._action(data, "Make Indicator Variables…", self.make_indicator_variables_dialog, None, "format_column", True)
+        self._action(data, "Create Indicator Variables from Brushed Rows…", self.create_indicator_from_brushed_dialog)
         self._action(data, "Recall Named Selection…", self.recall_named_selection_dialog, None, "select_all", True)
         self._action(data, "Subset Worksheet from Selection…", self.subset_worksheet_from_selection, None, "subset", True)
         self._action(data, "Subset Worksheet by Condition…", self.subset_by_condition_dialog, None, "subset", True)
@@ -1479,6 +1486,15 @@ class ModernWindow(QMainWindow):
         self.duplicate_sheet_action = self._action(worksheets_menu, "Duplicate Worksheet…", self.duplicate_worksheet, None, "duplicate_sheet")
         self._action(worksheets_menu, "Split Worksheet…", lambda: prepare_dialog(self, "split_worksheet"), None, "split_worksheet", True)
         self.delete_sheet_action = self._action(worksheets_menu, "Delete Worksheet…", self.delete_worksheet, None, "delete_sheet")
+        order_menu = data.addMenu("Order Columns / Constants / Matrices")
+        self._action(order_menu, "Order Columns by ID", self.order_columns_by_id)
+        self._action(order_menu, "Order Columns by Name", self.order_columns_by_name)
+        order_menu.addSeparator()
+        self._action(order_menu, "Order Constants by ID", self.order_constants_by_id)
+        self._action(order_menu, "Order Constants by Name", self.order_constants_by_name)
+        order_menu.addSeparator()
+        self._action(order_menu, "Order Matrices by ID", self.order_matrices_by_id)
+        self._action(order_menu, "Order Matrices by Name", self.order_matrices_by_name)
 
         from .data_prep_dialogs import open_dialog as prepare_dialog
         data.addSeparator()
@@ -1873,10 +1889,17 @@ class ModernWindow(QMainWindow):
         self._action(graph, "Add Reference Line…", self.add_reference_line_dialog)
         self._action(graph, "Add Percentile Line…", self.add_percentile_line_dialog)
         self._action(graph, "Edit Graph Title / Subtitle / Footnote…", self.edit_graph_titles_dialog)
+        self._action(graph, "Insert Graph Text Annotation…", self.insert_graph_text_annotation_dialog)
+        self._action(graph, "Duplicate Graph Annotation", self.duplicate_graph_annotation)
         self._action(graph, "Toggle Gridlines", self.toggle_graph_gridlines_action)
+        self.graph_crosshair_action = QAction("Crosshair Mode", self, checkable=True, checked=getattr(self, "_graph_crosshair_enabled", False))
+        self.graph_crosshair_action.triggered.connect(self.toggle_graph_crosshair)
+        graph.addAction(self.graph_crosshair_action)
+        self._action(graph, "Reset 3D View Defaults", self.reset_graph_3d_view_defaults)
         graph.addSeparator()
         self._action(graph, "Tile With Worksheet", self.tile_with_worksheet)
         self._action(graph, "Append to ReportPad", self.append_active_to_report_pad)
+        self._action(graph, "Create Indicator Variables from Brushed Rows…", self.create_indicator_from_brushed_dialog)
         self._action(graph, "Set Brushing Color…", self.set_brushing_color_dialog)
         self.brushing_palette_action = QAction("Show/Hide Brushing Palette", self, checkable=True, checked=getattr(self, "_brushing_palette_visible", False))
         self.brushing_palette_action.triggered.connect(self.toggle_brushing_palette)
@@ -1980,6 +2003,7 @@ class ModernWindow(QMainWindow):
         tools_menu = bar.addMenu("&Tools")
         self._action(tools_menu, "&Options…", self.options_dialog)
         self._action(tools_menu, "Manage &Profiles…", self.manage_profiles_dialog)
+        self._action(tools_menu, "&Export Dialog Settings…", self.export_dialog_settings_dialog)
         self._action(tools_menu, "&Customize…", self.customize_dialog)
 
         help_menu = bar.addMenu("&Help")
@@ -8362,6 +8386,10 @@ class ModernWindow(QMainWindow):
 
                     graph_frame = GraphFrame(chart, entry)
                     graph_frame.export_hidden.extend(getattr(chart, "export_controls", []))
+                    if hasattr(chart, "_crosshair_enabled") or getattr(self, "_graph_crosshair_enabled", False):
+                        chart._crosshair_enabled = bool(getattr(self, "_graph_crosshair_enabled", False))
+                        if chart._crosshair_enabled:
+                            chart.setMouseTracking(True)
                     if g_idx == 0:
                         self._active_graph_frame = graph_frame
 
@@ -8700,6 +8728,10 @@ class ModernWindow(QMainWindow):
 
         graph_frame = GraphFrame(chart, entry)
         graph_frame.export_hidden.extend(getattr(chart, "export_controls", []))
+        if hasattr(chart, "_crosshair_enabled") or getattr(self, "_graph_crosshair_enabled", False):
+            chart._crosshair_enabled = bool(getattr(self, "_graph_crosshair_enabled", False))
+            if chart._crosshair_enabled:
+                chart.setMouseTracking(True)
         cur_sheet = getattr(self.presenter, "worksheet", None)
         if (
             isinstance(entry, dict)
@@ -12805,6 +12837,408 @@ class ModernWindow(QMainWindow):
             self.brushing_palette_action.setChecked(self._brushing_palette_visible)
         self._update_brushing_palette_status()
         return self._brushing_palette_visible
+
+    # --- Deeper Minitab 22 Parity Pass (Round 5) ---
+
+    def _report_pad_text(self) -> str:
+        """Return plain text currently stored in ReportPad."""
+        pad = getattr(self, "_report_pad_editor", None)
+        if pad is not None:
+            return pad.toPlainText()
+        ws = getattr(self, "_workspace", None)
+        if ws is not None and isinstance(getattr(ws, "state", None), dict):
+            return str(ws.state.get("report_pad", "") or "")
+        return ""
+
+    def save_report_pad_dialog(self, path=None):
+        """Export ReportPad contents to an HTML, text, or Markdown file (#42476)."""
+        import html
+        from . import session_io
+
+        text = self._report_pad_text()
+        if path is None:
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save ReportPad As",
+                "reportpad.html",
+                "HTML Document (*.html);;Text File (*.txt);;Markdown File (*.md)",
+            )
+        if not path:
+            return None
+        target = Path(path)
+        if target.suffix.lower() in (".html", ".htm"):
+            content = (
+                "<!DOCTYPE html>\n"
+                '<html lang="en">\n<head><meta charset="utf-8"><title>ReportPad</title>'
+                "<style>body{font-family:Consolas,'Courier New',monospace;margin:24px;color:#0f172a;}"
+                "pre{white-space:pre-wrap;}</style></head>\n"
+                f"<body><pre>{html.escape(text)}</pre></body>\n</html>\n"
+            )
+        else:
+            content = text
+        saved = session_io._atomic_write_text(target, content)
+        self.statusBar().showMessage(f"Saved ReportPad to {saved}", 5000)
+        return saved
+
+    def print_report_pad(self, show_dialog: bool = True):
+        """Open the print workflow targeting ReportPad (#42477)."""
+        self._commit_editor()
+        text = self._report_pad_text()
+        if not text.strip():
+            QMessageBox.information(self, "Print ReportPad", "ReportPad is currently empty.")
+            return None
+        if hasattr(self, "_workspace") and self._workspace is not None:
+            self._workspace.show_pad()
+        if not show_dialog:
+            return self._printing().snapshot(kind="ReportPad")
+        return self._printing().run("print")
+
+    def close_all_worksheets(self, confirm=None):
+        """Close all worksheets and reset to a clean empty project (#42478)."""
+        if confirm is None and self.presenter.dirty:
+            answer = QMessageBox.question(
+                self,
+                "Close All Worksheets",
+                "Close all worksheets and start a clean project? Unsaved changes will be lost.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return False
+        elif confirm is False:
+            return False
+        self._commit_editor()
+        self.page = 0
+        if hasattr(self, "_hidden_columns"):
+            self._hidden_columns.clear()
+        if hasattr(self, "_selected_columns"):
+            self._selected_columns.clear()
+        if hasattr(self, "_selected_rows"):
+            self._selected_rows.clear()
+        self._call(self.presenter.new)
+        if hasattr(self, "_workspace") and self._workspace is not None:
+            self._workspace.sync_document()
+            self._workspace.rebuild()
+        if hasattr(self, "_show_welcome"):
+            self._show_welcome()
+        self.refresh()
+        self.statusBar().showMessage("Closed all worksheets.", 4000)
+        return True
+
+    def save_all_worksheets_dialog(self, path=None):
+        """Export every worksheet in the project to Excel (.xlsx) or .mpx (#42479)."""
+        self._commit_editor()
+        if path is None:
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save All Worksheets As",
+                "StatCraft_All_Worksheets.xlsx",
+                "Excel Workbook (*.xlsx);;StatCraft Project (*.mpx)",
+            )
+        if not path:
+            return None
+        target = Path(path)
+        if not target.suffix:
+            target = target.with_suffix(".xlsx")
+        if target.suffix.lower() == ".mpx":
+            from .mpx import save_mpx
+            result = self._call(lambda: save_mpx(self.presenter._owned_project(), str(target)))
+        else:
+            result = self._call(lambda: self.presenter.export_excel(str(target), all_worksheets=True))
+        if result:
+            self.statusBar().showMessage(f"Saved all worksheets to {target}", 6000)
+            return target
+        return None
+
+    @staticmethod
+    def _natural_sort_key(text: str):
+        """Return a case-insensitive natural sort key separating text and numbers."""
+        import re
+        parts = re.split(r"(\d+)", str(text or ""))
+        return [(0, int(p), "") if p.isdigit() else (1, 0, p.casefold()) for p in parts]
+
+    def _order_worksheet_items(self, attr: str, by: str, label: str):
+        """Reorder columns, constants, or matrices on the active worksheet by ID or name."""
+        self._commit_editor()
+        sheet = getattr(self.presenter, "worksheet", None)
+        if sheet is None:
+            return []
+        items = list(getattr(sheet, attr, []) or [])
+        if not items:
+            self.statusBar().showMessage(f"No {label.lower()} to order.", 3500)
+            return []
+        for idx, item in enumerate(items):
+            if isinstance(getattr(item, "metadata", None), dict):
+                item.metadata.setdefault("_order_id", idx)
+        if by == "id":
+            def _key(item_pair):
+                idx, item = item_pair
+                meta = item.metadata if isinstance(getattr(item, "metadata", None), dict) else {}
+                raw_id = meta.get("mpx_id")
+                if raw_id is None:
+                    raw_id = meta.get("id")
+                if raw_id is None:
+                    raw_id = meta.get("_order_id", idx)
+                if isinstance(raw_id, (int, float)) and not isinstance(raw_id, bool):
+                    return (0, int(raw_id), ())
+                return (1, self._natural_sort_key(str(raw_id)), idx)
+        else:
+            def _key(item_pair):
+                idx, item = item_pair
+                name = str(getattr(item, "name", "") or "")
+                return (0 if name.strip() else 1, self._natural_sort_key(name), idx)
+        reordered = [item for _, item in sorted(enumerate(items), key=_key)]
+        getattr(sheet, attr)[:] = reordered
+        if attr == "columns" and hasattr(self, "_selected_columns"):
+            self._selected_columns.clear()
+        self.presenter.dirty = True
+        if hasattr(self, "_sheet_versions"):
+            self._sheet_versions.bump(sheet)
+        self.refresh()
+        mode_text = "ID" if by == "id" else "Name"
+        self.statusBar().showMessage(f"Ordered {label.lower()} by {mode_text}.", 4000)
+        return [item.name for item in reordered]
+
+    def order_columns_by_id(self):
+        """Order worksheet columns by stored/original ID (#42483)."""
+        return self._order_worksheet_items("columns", "id", "Columns")
+
+    def order_columns_by_name(self):
+        """Order worksheet columns alphabetically by name (#42484)."""
+        return self._order_worksheet_items("columns", "name", "Columns")
+
+    def order_constants_by_id(self):
+        """Order stored constants by stored/original ID (#42485)."""
+        return self._order_worksheet_items("constants", "id", "Constants")
+
+    def order_constants_by_name(self):
+        """Order stored constants alphabetically by name (#42486)."""
+        return self._order_worksheet_items("constants", "name", "Constants")
+
+    def order_matrices_by_id(self):
+        """Order stored matrices by stored/original ID (#42487)."""
+        return self._order_worksheet_items("matrices", "id", "Matrices")
+
+    def order_matrices_by_name(self):
+        """Order stored matrices alphabetically by name (#42488)."""
+        return self._order_worksheet_items("matrices", "name", "Matrices")
+
+    def _run_text_print_job(self, title: str, text: str, show_dialog: bool = True):
+        """Build and optionally print a ``PrintJob`` containing preformatted text."""
+        import html
+        from .printing import PrintJob
+
+        job = PrintJob(
+            title,
+            ['<pre style="white-space: pre-wrap; font-family: Consolas">' + html.escape(text) + "</pre>"],
+        )
+        if not show_dialog:
+            return job
+        from PySide6.QtPrintSupport import QPrintDialog
+
+        printer = self._printing().printer
+        dlg = QPrintDialog(printer, self)
+        dlg.setOption(QPrintDialog.PrintDialogOption.PrintPageRange, True)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            job.render(printer)
+        return job
+
+    def print_session_window(self, show_dialog: bool = True):
+        """Print all recorded entries in the Session Window (#42461)."""
+        from . import session_io
+
+        entries = list(getattr(self.presenter, "history", []) or [])
+        if not entries:
+            if show_dialog:
+                QMessageBox.information(self, "Print Session Window", "The Session Window is currently empty.")
+                return None
+            return self._run_text_print_job("Session Window", "(Empty session window)", show_dialog=False)
+        body = "\n\n".join(session_io._render_entry_text(e) for e in entries)
+        return self._run_text_print_job("Session Window", body, show_dialog=show_dialog)
+
+    def print_history(self, show_dialog: bool = True):
+        """Print the Command History transcript (#42471)."""
+        lines = list(getattr(self, "_cmd_history", []) or [])
+        if not lines and hasattr(self, "command_history_view"):
+            lines = [ln for ln in self.command_history_view.toPlainText().splitlines() if ln.strip()]
+        if not lines:
+            if show_dialog:
+                QMessageBox.information(self, "Print History", "Command History is currently empty.")
+                return None
+            return self._run_text_print_job("Command History", "(No command history)", show_dialog=False)
+        return self._run_text_print_job("Command History", "\n".join(lines), show_dialog=show_dialog)
+
+    def export_dialog_settings_dialog(self, path=None):
+        """Export persisted desktop and dialog settings to JSON (#43921)."""
+        import json
+        from . import session_io
+
+        if path is None:
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Dialog Settings",
+                "statcraft-dialog-settings.json",
+                "JSON Settings (*.json)",
+            )
+        if not path:
+            return None
+        settings = QSettings("StatCraft", "Desktop")
+        persisted = {key: settings.value(key) for key in settings.allKeys()}
+        payload = {
+            "schema": "statcraft.dialog_settings",
+            "version": 1,
+            "ui_preferences": {
+                "dark_mode": bool(getattr(self, "_dark_mode", False)),
+                "entry_direction": getattr(self, "_entry_direction", "down"),
+                "navigator_order": getattr(self, "_navigator_order", "chronological"),
+                "auto_update_graphs": bool(getattr(self, "_auto_update_graphs", False)),
+                "graph_crosshair_enabled": bool(getattr(self, "_graph_crosshair_enabled", False)),
+                "auto_calculate_formulas": bool(getattr(self.presenter, "auto_calculate_formulas", True)),
+            },
+            "qsettings": persisted,
+        }
+        saved = session_io._atomic_write_text(
+            Path(path),
+            json.dumps(session_io._json_safe(payload), ensure_ascii=False, indent=2),
+        )
+        self.statusBar().showMessage(f"Exported dialog settings to {saved}", 5000)
+        return saved
+
+    def toggle_graph_crosshair(self, checked=None):
+        """Toggle interactive crosshair inspection on the active graph (#44081)."""
+        if checked is None:
+            self._graph_crosshair_enabled = not getattr(self, "_graph_crosshair_enabled", False)
+        else:
+            self._graph_crosshair_enabled = bool(checked)
+        if (
+            hasattr(self, "graph_crosshair_action")
+            and self.graph_crosshair_action.isChecked() != self._graph_crosshair_enabled
+        ):
+            self.graph_crosshair_action.setChecked(self._graph_crosshair_enabled)
+        frame = getattr(self, "_active_graph_frame", None)
+        chart = getattr(frame, "chart", None) if frame is not None else None
+        if chart is not None:
+            chart._crosshair_enabled = self._graph_crosshair_enabled
+            if self._graph_crosshair_enabled:
+                chart.setMouseTracking(True)
+            else:
+                chart._crosshair_pos = None
+            chart.update()
+        state_lbl = "enabled" if self._graph_crosshair_enabled else "disabled"
+        self.statusBar().showMessage(f"Graph crosshair mode {state_lbl}", 4000)
+        return self._graph_crosshair_enabled
+
+    def insert_graph_text_annotation_dialog(self, text=None, x=None, y=None):
+        """Insert a draggable-style normalized text callout on the active graph (#44250)."""
+        entry = self._active_graph_entry()
+        if entry is None:
+            QMessageBox.information(self, "Insert Graph Text Annotation", "Please select or create a graph first.")
+            return False
+        if text is None:
+            from PySide6.QtWidgets import QDoubleSpinBox
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Insert Graph Text Annotation")
+            dlg.setMinimumWidth(360)
+            layout = QVBoxLayout(dlg)
+            form = QFormLayout()
+            txt_edit = QLineEdit()
+            txt_edit.setPlaceholderText("e.g. Spec change implemented")
+            x_spin = QDoubleSpinBox()
+            x_spin.setRange(0.05, 0.95)
+            x_spin.setSingleStep(0.05)
+            x_spin.setValue(0.50 if x is None else float(x))
+            y_spin = QDoubleSpinBox()
+            y_spin.setRange(0.05, 0.95)
+            y_spin.setSingleStep(0.05)
+            y_spin.setValue(0.85 if y is None else float(y))
+            form.addRow("Annotation Text:", txt_edit)
+            form.addRow("Relative X (0.05–0.95):", x_spin)
+            form.addRow("Relative Y (0.05–0.95):", y_spin)
+            layout.addLayout(form)
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+            buttons.accepted.connect(dlg.accept)
+            buttons.rejected.connect(dlg.reject)
+            layout.addWidget(buttons)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return False
+            cleaned = txt_edit.text().strip()
+            pos_x = float(x_spin.value())
+            pos_y = float(y_spin.value())
+        else:
+            cleaned = str(text).strip()
+            pos_x = 0.50 if x is None else float(x)
+            pos_y = 0.85 if y is None else float(y)
+        if not cleaned:
+            return False
+        annotations = list(entry.get("graph_text_annotations") or [])
+        annotations.append({"text": cleaned, "x": max(0.02, min(0.98, pos_x)), "y": max(0.02, min(0.98, pos_y))})
+        entry["graph_text_annotations"] = annotations
+        self.presenter.dirty = True
+        self.show_result(entry)
+        self.statusBar().showMessage(f"Added graph text annotation: {cleaned}", 4000)
+        return True
+
+    def duplicate_graph_annotation(self):
+        """Duplicate the most recent text annotation or reference line on the active graph (#44237)."""
+        entry = self._active_graph_entry()
+        if entry is None:
+            QMessageBox.information(self, "Duplicate Graph Annotation", "Please select or create a graph first.")
+            return False
+        annotations = list(entry.get("graph_text_annotations") or [])
+        if annotations:
+            src = dict(annotations[-1])
+            src["x"] = min(0.95, float(src.get("x", 0.5)) + 0.05)
+            src["y"] = max(0.05, float(src.get("y", 0.85)) - 0.06)
+            annotations.append(src)
+            entry["graph_text_annotations"] = annotations
+            self.presenter.dirty = True
+            self.show_result(entry)
+            self.statusBar().showMessage("Duplicated graph text annotation.", 4000)
+            return True
+        refs = list(entry.get("reference_lines") or [])
+        if refs:
+            from . import graph_ergonomics
+
+            last_ref = refs[-1]
+            lbl = str(last_ref.get("label") or "").strip()
+            copy_lbl = f"{lbl} (Copy)".strip() if lbl else "Copy"
+            graph_ergonomics.add_reference_line(
+                entry,
+                axis=str(last_ref.get("axis", "y")),
+                value=float(last_ref.get("value", 0.0)),
+                label=copy_lbl,
+            )
+            self.presenter.dirty = True
+            self.show_result(entry)
+            self.statusBar().showMessage("Duplicated reference line annotation.", 4000)
+            return True
+        self.statusBar().showMessage("No graph annotation or reference line to duplicate.", 4000)
+        return False
+
+    def reset_graph_3d_view_defaults(self):
+        """Reset 3D surface/scatter graph azimuth, elevation, and zoom to defaults (#44277)."""
+        frame = getattr(self, "_active_graph_frame", None)
+        chart = getattr(frame, "chart", None) if frame is not None else None
+        entry = self._active_graph_entry()
+        reset_done = False
+        if chart is not None and hasattr(chart, "reset_cad_view"):
+            chart.reset_cad_view()
+            reset_done = True
+        if isinstance(entry, dict) and isinstance(entry.get("result"), dict):
+            from .spatial_view import DEFAULT_VIEW
+
+            if "view_state" in entry or "camera" in entry:
+                entry["view_state"] = dict(DEFAULT_VIEW)
+                reset_done = True
+            if "camera" in entry["result"] or "view_state" in entry["result"]:
+                entry["result"]["camera"] = dict(DEFAULT_VIEW)
+                reset_done = True
+        if reset_done:
+            self.statusBar().showMessage("Reset 3D view orientation to defaults.", 4000)
+            return True
+        self.statusBar().showMessage("No active 3D/graph view to reset.", 4000)
+        return False
 
 def main():
     if "--smoke-verify" in sys.argv[1:]:

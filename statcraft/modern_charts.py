@@ -1149,6 +1149,34 @@ class ChartWidget(GraphInteractionMixin,QWidget):
                 for i,(d,area) in enumerate(zip(self.panels,self.panel_areas())):
                     self._panel_index=i;self._draw_panel(p,area,d)
                 self.draw_selection(p)
+                text_boxes = getattr(self, 'annotation_text_boxes', None) or []
+                if text_boxes:
+                    box_area = (getattr(self, '_zoom2d_meta', {}).get(0, {}) or {}).get('plot')
+                    if box_area is None:
+                        box_area = QRectF(24.0, 52.0, max(120.0, self.width() - 48.0), max(80.0, self.height() - 90.0))
+                    p.save()
+                    p.setFont(QFont('Segoe UI', 9, QFont.Weight.DemiBold))
+                    fm = p.fontMetrics()
+                    for ann in text_boxes:
+                        if not isinstance(ann, dict):
+                            continue
+                        txt = str(ann.get('text') or '').strip()
+                        if not txt:
+                            continue
+                        fx = max(0.02, min(0.98, float(ann.get('x', 0.5))))
+                        fy = max(0.02, min(0.98, float(ann.get('y', 0.85))))
+                        cx = box_area.left() + fx * box_area.width()
+                        cy = box_area.bottom() - fy * box_area.height()
+                        w = max(48.0, fm.horizontalAdvance(txt) + 16.0)
+                        h = float(fm.height() + 10.0)
+                        rx = max(box_area.left() + 2.0, min(box_area.right() - w - 2.0, cx - w / 2.0))
+                        ry = max(box_area.top() + 2.0, min(box_area.bottom() - h - 2.0, cy - h / 2.0))
+                        rect = QRectF(rx, ry, w, h)
+                        p.setPen(QPen(QColor('#475569'), 1))
+                        p.setBrush(QColor(255, 255, 255, 238))
+                        p.drawRoundedRect(rect, 4, 4)
+                        self._text(p, rect, txt, INK)
+                    p.restore()
                 if getattr(self, '_crosshair_enabled', False) and getattr(self, '_crosshair_pos', None) is not None and not getattr(self, '_exporting', False):
                     cpos = self._crosshair_pos
                     pidx = self._zoom2d_panel_at(cpos)

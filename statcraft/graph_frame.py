@@ -127,6 +127,7 @@ class GraphFrame(QWidget):
         self.chart.annotation_y_log=bool(settings.get('y_log',False))
         self.chart.annotation_data_labels=bool(settings.get('show_data_labels',False))
         self.chart.annotation_mean_line=bool(settings.get('show_mean_line',False))
+        self.chart.annotation_text_boxes=list(self.entry.get('graph_text_annotations',[]) or [])
         self.chart.panels=copy.deepcopy(self.base_panels)
         if self.entry.get('histogram_settings') is not None:
             from .histogram_options import build_histogram_panel
