@@ -80,6 +80,7 @@ jobs:
   build-macos:
     name: Build macOS (Universal/Apple Silicon & Intel)
     runs-on: macos-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout Code
@@ -221,6 +222,9 @@ jobs:
   publish-release:
     name: Publish Multi-Platform Release
     needs: [build-windows, build-macos, build-linux]
+    # Publish whenever Windows and Linux succeeded; macOS runners can be
+    # unavailable or queued indefinitely and must not block the release.
+    if: ${{ !cancelled() && needs.build-windows.result == 'success' && needs.build-linux.result == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -235,7 +239,8 @@ jobs:
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
           else
-            TAG="v104.0.0"
+            VER=$(grep -oP 'STATCRAFT_VERSION\s*=\s*"\K[^"]+' statcraft/updater.py || true)
+            TAG="v${VER:-104.0.0}"
           fi
           echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV
 
@@ -246,6 +251,7 @@ jobs:
           path: release-all/
 
       - name: Download macOS Artifacts
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: macos-binaries
