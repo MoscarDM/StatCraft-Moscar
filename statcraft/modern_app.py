@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QFormLayout, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
     QMessageBox, QFileDialog, QInputDialog, QCheckBox, QTabBar, QMenu,
     QToolButton, QSlider, QRadioButton, QGroupBox, QGridLayout, QFrame,QTableWidgetSelectionRange,
-    QStackedWidget, QSizePolicy,
+    QStackedWidget, QSizePolicy, QColorDialog,
 )
 from .app import Presenter, format_entry, _display, _number_list
 from .model import Column, finite_number, display_date
@@ -705,6 +705,13 @@ class ModernWindow(QMainWindow):
         self._find_state = {"query": "", "match_case": False, "whole_word": False, "direction": "down"}
         self._navigator_group_by_sheet = True
         self._navigator_sort_mode = "oldest"  # 'newest', 'oldest', 'name'
+        self._navigator_order = "chronological"  # 'chronological', 'worksheet', 'title'
+        self._frozen_rows = 0
+        self._frozen_cols = 0
+        self._auto_update_graphs = False
+        self._updating_graphs = False
+        self._brush_color = "#dc2626"
+        self._brushing_palette_visible = False
         self._zoom_percent = 100
         self._worksheet_zoom = 100
         self._output_zoom_levels = {}
@@ -737,6 +744,10 @@ class ModernWindow(QMainWindow):
         self._restore_ui_preferences()
         self._show_welcome()
         self.set_ui_mode(self._ui_mode)
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(120_000)
+        self._autosave_timer.timeout.connect(self.autosave_now)
+        self._autosave_timer.start()
         QTimer.singleShot(800, self._check_startup_updates)
 
     @property
@@ -1022,7 +1033,16 @@ class ModernWindow(QMainWindow):
             lambda: self.presenter.worksheet,
             lambda: [e.get("command") or e.get("title", "") for e in getattr(self.presenter, "history", [])],
         )
-        cmd_layout.addWidget(label("History", "sectionHeading"))
+        hist_header = QHBoxLayout()
+        hist_header.addWidget(label("History", "sectionHeading"))
+        hist_header.addStretch()
+        self.save_history_btn = QPushButton("Save History As…")
+        self.save_history_btn.clicked.connect(self.save_history_dialog)
+        hist_header.addWidget(self.save_history_btn)
+        self.clear_history_btn = QPushButton("Clear History")
+        self.clear_history_btn.clicked.connect(self.clear_history)
+        hist_header.addWidget(self.clear_history_btn)
+        cmd_layout.addLayout(hist_header)
         self.command_history_view = QPlainTextEdit(); self.command_history_view.setReadOnly(True)
         self.command_history_view.setFont(QFont("Consolas", 8.5))
         def _on_hist_change():
@@ -1244,6 +1264,18 @@ class ModernWindow(QMainWindow):
         self.status_selection_summary.setStyleSheet("color: #38bdf8; font-weight: 500; font-size: 8.5pt; padding: 0 8px;")
         sb.addPermanentWidget(self.status_selection_summary)
 
+        self.status_freeze_label = QLabel("")
+        self.status_freeze_label.setObjectName("statusFreezeLabel")
+        self.status_freeze_label.setStyleSheet("color: #94a3b8; font-weight: 500; font-size: 8.5pt; padding: 0 6px;")
+        self.status_freeze_label.setVisible(False)
+        sb.addPermanentWidget(self.status_freeze_label)
+
+        self.status_brush_label = QLabel("")
+        self.status_brush_label.setObjectName("statusBrushLabel")
+        self.status_brush_label.setStyleSheet("font-weight: 600; font-size: 8.5pt; padding: 0 6px;")
+        self.status_brush_label.setVisible(False)
+        sb.addPermanentWidget(self.status_brush_label)
+
         self.status_entry_dir_btn = QToolButton()
         self.status_entry_dir_btn.setObjectName("statusEntryDirBtn")
         self.status_entry_dir_btn.setText("↓ Down")
@@ -1339,6 +1371,8 @@ class ModernWindow(QMainWindow):
         file.addSeparator()
         self._action(file, "Export Session as Clean &HTML Report…", self.export_session_html_dialog, None, "export")
         self._action(file, "Export Session as &Markdown Report (.md)…", self.export_session_markdown_dialog, None, "export")
+        self._action(file, "Save Session Window…", self.save_session_window_dialog, None, "save")
+        self._action(file, "Save History As…", self.save_history_dialog, None, "save")
         self._action(file, "Export Anonymized Dataset (Clean for &Audit)…", self.anonymize_dataset_dialog, None, "export")
         self._action(file, "Run Exec / Batch Script (.MTB)…", self.run_mtb_script_dialog, None, "workflow")
         file.addSeparator()
@@ -1365,6 +1399,9 @@ class ModernWindow(QMainWindow):
         edit.addSeparator()
         self._action(edit, "Select All Cells in Worksheet", self.select_all_dataset, QKeySequence.StandardKey.SelectAll)
         self._action(edit, "Clear Session Output", self.clear_session_output, None, "clear")
+        self._action(edit, "Clear History", self.clear_history, None, "clear")
+        self._action(edit, "Append to ReportPad", self.append_active_to_report_pad)
+        self._action(edit, "Set Cell Comment…", self.set_cell_comment_dialog, QKeySequence("Ctrl+Shift+M"))
         self.last_dialog_action = self._action(edit, "Edit Last Dialog", self.edit_last_dialog, QKeySequence("Ctrl+E"), "last_dialog")
         edit.addSeparator()
         self.find_action = self._action(edit, "Find…", self.find_dialog, QKeySequence.StandardKey.Find, "find", False)
@@ -1454,7 +1491,7 @@ class ModernWindow(QMainWindow):
         self._action(stack_menu,"Stack Worksheets…",lambda:prepare_dialog(self,'stack_worksheets'),None,"table",True)
         self._action(data,"Unstack Columns…",lambda:prepare_dialog(self,'unstack'),None,"subset",True)
         self._action(data,"Transpose Columns…",lambda:prepare_dialog(self,'transpose'),None,"transpose",True)
-        self._action(data,"Merge Worksheets…",lambda:prepare_dialog(self,'merge'),None,"merge",True)
+        self._action(data,"Merge Worksheets…",self.merge_worksheets_dialog,None,"merge",True)
 
         # 4. Calc menu
         calc = bar.addMenu("&Calc")
@@ -1829,7 +1866,21 @@ class ModernWindow(QMainWindow):
             title, method = item
             self.graph_actions[method] = self._action(graph, title + "…", lambda checked=False, m=method: self.graph(m), None, method, True)
         graph.addSeparator()
+        self.auto_update_graphs_action = QAction("Update Graph Automatically", self, checkable=True, checked=getattr(self, "_auto_update_graphs", False))
+        self.auto_update_graphs_action.triggered.connect(self.toggle_auto_update_graphs)
+        graph.addAction(self.auto_update_graphs_action)
         self.update_all_graphs_action = self._action(graph, "Update All Graphs", self.update_all_graphs, None, "refresh")
+        self._action(graph, "Add Reference Line…", self.add_reference_line_dialog)
+        self._action(graph, "Add Percentile Line…", self.add_percentile_line_dialog)
+        self._action(graph, "Edit Graph Title / Subtitle / Footnote…", self.edit_graph_titles_dialog)
+        self._action(graph, "Toggle Gridlines", self.toggle_graph_gridlines_action)
+        graph.addSeparator()
+        self._action(graph, "Tile With Worksheet", self.tile_with_worksheet)
+        self._action(graph, "Append to ReportPad", self.append_active_to_report_pad)
+        self._action(graph, "Set Brushing Color…", self.set_brushing_color_dialog)
+        self.brushing_palette_action = QAction("Show/Hide Brushing Palette", self, checkable=True, checked=getattr(self, "_brushing_palette_visible", False))
+        self.brushing_palette_action.triggered.connect(self.toggle_brushing_palette)
+        graph.addAction(self.brushing_palette_action)
         self._action(graph, "Close Current Graph", self.close_current_graph)
 
         # 8. View menu (`RT_MENU 8445`: Navigator, Command Line/History, Data and Output, Data Only, Output Only, Zoom)
@@ -1880,6 +1931,22 @@ class ModernWindow(QMainWindow):
         self._action(view,"Close All Output Tabs",lambda:self._workspace.close_all())
         self._action(view, "Close Current Graph", self.close_current_graph)
         self._action(view, "Close All Graphs", self.close_all_graphs)
+        view.addSeparator()
+        self._action(view, "Freeze Panes", self.freeze_panes)
+        self._action(view, "Unfreeze Rows/Cols", self.unfreeze_panes)
+        self._action(view, "Split View", self.split_output_view)
+        self._action(view, "Unsplit View", self.unsplit_output_view)
+        self._action(view, "Tile With Worksheet", self.tile_with_worksheet)
+        view.addAction(self.brushing_palette_action)
+        nav_order_menu = view.addMenu("Navigator Output Ordering")
+        nav_order_group = QActionGroup(self)
+        self.navigator_order_actions = {}
+        for mode_key, mode_label in (("chronological", "Chronological"), ("worksheet", "By Worksheet"), ("title", "By Title")):
+            ord_act = QAction(mode_label, self, checkable=True, checked=(getattr(self, "_navigator_order", "chronological") == mode_key))
+            ord_act.triggered.connect(lambda checked=False, m=mode_key: self.set_navigator_order(m))
+            nav_order_group.addAction(ord_act)
+            nav_order_menu.addAction(ord_act)
+            self.navigator_order_actions[mode_key] = ord_act
         focus_menu = view.addMenu("Focus Window / Pane")
         self._action(focus_menu, "Session Window", self.focus_session_window)
         self._action(focus_menu, "History Window", self.focus_history_window)
@@ -2272,6 +2339,12 @@ class ModernWindow(QMainWindow):
                 if getattr(self, "_last_dialog_action", None) is not None:
                     value.setdefault("_rerun_action", self._last_dialog_action)
             self.refresh()
+            if not result and getattr(self, "_auto_update_graphs", False) and not getattr(self, "_updating_graphs", False):
+                self._updating_graphs = True
+                try:
+                    self.update_all_graphs()
+                finally:
+                    self._updating_graphs = False
             if result and value is not None: self.show_result(value)
             notices = getattr(self.presenter, "notices", [])
             if len(notices) > notices_before:
@@ -2730,7 +2803,11 @@ class ModernWindow(QMainWindow):
         # Populate Navigator tree matching StatCraft (`WORKSHEET 1` top-level nodes with output items directly beneath; no "Commands" header)
         self.navigator.clear()
         entries = [e for e in self.presenter.history if e.get("origin") == "statcraft" or not str(e.get("title", "")).startswith("Native command ")]
-        if self._navigator_sort_mode == "newest":
+        nav_order = getattr(self, "_navigator_order", "chronological")
+        if nav_order != "chronological":
+            from . import session_io
+            entries = session_io.order_navigator_entries(entries, nav_order)
+        elif self._navigator_sort_mode == "newest":
             entries = list(reversed(entries))
         elif self._navigator_sort_mode == "name":
             entries = sorted(entries, key=lambda e: e.get("title", "").casefold())
@@ -2854,6 +2931,7 @@ class ModernWindow(QMainWindow):
         if self.selected_entry is not None: self._update_result_state()
         if getattr(self, "_jmp_panel", None) is not None:
             self._jmp_panel.refresh()
+        self._update_freeze_indicator()
         if hasattr(self, "navigator"): self.navigator.setUpdatesEnabled(True)
         if hasattr(self, "column_names"): self.column_names.setUpdatesEnabled(True)
         if hasattr(self, "table"): self.table.setUpdatesEnabled(True)
@@ -3998,6 +4076,11 @@ class ModernWindow(QMainWindow):
     def closeEvent(self, event):
         if self._confirm_leave():
             self._save_ui_preferences()
+            if hasattr(self, "_autosave_timer") and self._autosave_timer is not None:
+                self._autosave_timer.stop()
+            if not getattr(self.presenter, "dirty", False):
+                from . import session_io
+                session_io.clear_autosave_snapshot(self._autosave_path())
             if hasattr(self, '_startup_worker') and self._startup_worker and self._startup_worker.isRunning():
                 try:
                     self._startup_worker.quit()
@@ -4125,6 +4208,8 @@ class ModernWindow(QMainWindow):
         state=self._workspace.snapshot()
         self.presenter.workspace=state if any(state[k] for k in ("open_ids","closed_ids","views","report_pad")) else None
         self.presenter.save(path);self._workspace.history=self.presenter.history
+        from . import session_io
+        session_io.clear_autosave_snapshot(self._autosave_path())
         self._add_recent_file(path)
         self.refresh(); self.statusBar().showMessage("Project saved", 8000)
         return True
@@ -12415,6 +12500,311 @@ class ModernWindow(QMainWindow):
             self.refresh()
             if idx is not None:
                 self.statusBar().showMessage(f"Copied {len(cnames)} constant(s) to C{idx + 1}", 4000)
+
+    def _update_freeze_indicator(self):
+        rows = max(0, int(getattr(self, "_frozen_rows", 0)))
+        cols = max(0, int(getattr(self, "_frozen_cols", 0)))
+        if hasattr(self, "table"):
+            self.table.setProperty("frozen_rows", rows)
+            self.table.setProperty("frozen_cols", cols)
+        if hasattr(self, "status_freeze_label"):
+            if rows > 0 or cols > 0:
+                self.status_freeze_label.setText(f"Frozen: {rows}R × {cols}C")
+                self.status_freeze_label.setVisible(True)
+            else:
+                self.status_freeze_label.setText("")
+                self.status_freeze_label.setVisible(False)
+
+    def freeze_panes(self):
+        self._frozen_rows = max(0, self.table.currentRow())
+        self._frozen_cols = max(0, self.table.currentColumn())
+        self._update_freeze_indicator()
+        self.statusBar().showMessage(f"Frozen panes: {self._frozen_rows} row(s), {self._frozen_cols} column(s)", 4000)
+
+    def unfreeze_panes(self):
+        self._frozen_rows = 0
+        self._frozen_cols = 0
+        self._update_freeze_indicator()
+        self.statusBar().showMessage("Unfroze rows and columns", 4000)
+
+    def _autosave_path(self) -> Path:
+        base = Path(QSettings("StatCraft", "StatCraft").fileName()).parent
+        return base / "autosave_recovery.json"
+
+    def autosave_now(self):
+        from . import session_io
+        return session_io.autosave_snapshot(self.presenter.worksheet, self.presenter.history, self._autosave_path())
+
+    def recover_autosave_if_present(self, path=None) -> bool:
+        from . import session_io
+        target = Path(path) if path is not None else self._autosave_path()
+        snap = session_io.load_autosave_snapshot(target)
+        if snap is None:
+            return False
+        if snap.get("worksheet") is not None:
+            if self.presenter.native_project is not None and getattr(self.presenter.native_project, "worksheets", None):
+                idx = self.presenter.native_project.active_index
+                self.presenter.native_project.worksheets[idx] = snap["worksheet"]
+            self.presenter.worksheet = snap["worksheet"]
+        if isinstance(snap.get("history"), list):
+            self.presenter.history = snap["history"]
+        self.presenter.dirty = True
+        self.refresh()
+        self.statusBar().showMessage("Recovered session from autosave snapshot", 5000)
+        return True
+
+    def save_history_dialog(self, path=None):
+        if path is None:
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save Command History", "history.mtb", "Minitab Exec (*.mtb);;Text File (*.txt)"
+            )
+        if not path:
+            return None
+        lines = list(getattr(self, "_cmd_history", []) or [])
+        if not lines and hasattr(self, "command_history_view"):
+            lines = [ln for ln in self.command_history_view.toPlainText().splitlines() if ln.strip()]
+        from . import session_io
+        saved = session_io.export_history_script(lines, Path(path))
+        self.statusBar().showMessage(f"Saved command history to {saved}", 5000)
+        return saved
+
+    def clear_history(self):
+        self._cmd_history = []
+        self._cmd_history_idx = 0
+        if hasattr(self, "command_history_view"):
+            self.command_history_view.clear()
+        self.statusBar().showMessage("Command history cleared", 4000)
+
+    def save_session_window_dialog(self, path=None):
+        if path is None:
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save Session Window", "session.html", "HTML Document (*.html);;Text File (*.txt)"
+            )
+        if not path:
+            return None
+        fmt = "txt" if str(path).lower().endswith(".txt") else "html"
+        from . import session_io
+        saved = session_io.export_session_window(list(getattr(self.presenter, "history", []) or []), Path(path), fmt=fmt)
+        self.statusBar().showMessage(f"Saved session window to {saved}", 5000)
+        return saved
+
+    def set_navigator_order(self, mode: str):
+        from . import session_io
+        session_io.order_navigator_entries([], mode)
+        self._navigator_order = mode
+        self._navigator_sort_mode = "oldest"
+        for k, act in getattr(self, "navigator_order_actions", {}).items():
+            act.setChecked(k == mode)
+        self.refresh()
+
+    def split_output_view(self):
+        return self._workspace.split_view()
+
+    def unsplit_output_view(self):
+        return self._workspace.unsplit_view()
+
+    def tile_with_worksheet(self):
+        self.set_view_mode("both")
+        h = sum(self.work_splitter.sizes()) or max(self.work_splitter.height(), 600)
+        self.work_splitter.setSizes([h // 2, h // 2])
+
+    def merge_worksheets_dialog(self):
+        from .data_prep_dialogs import open_dialog
+        return open_dialog(self, "merge")
+
+    def append_active_to_report_pad(self):
+        target = self.selected_entry or (self.presenter.history[-1] if getattr(self.presenter, "history", None) else None)
+        if target is None:
+            self.statusBar().showMessage("No output or graph available to append to ReportPad.", 4000)
+            return False
+        self.append_to_report_pad(target)
+        return True
+
+    def set_cell_comment_dialog(self):
+        self._commit_editor()
+        r = self.page * self.PAGE_SIZE + max(0, self.table.currentRow())
+        c = max(0, min(self.table.currentColumn(), len(self.presenter.worksheet.columns) - 1))
+        col = self.presenter.worksheet.columns[c]
+        existing = col.metadata.get("cell_comments", {}).get(str(r), "")
+        text, accepted = QInputDialog.getMultiLineText(
+            self, f"Set Cell Comment (Row {r + 1}, C{c + 1})", "Comment:", existing
+        )
+        if accepted:
+            self._call(lambda: self.presenter.set_cell_comment(r, c, text))
+            self.refresh()
+
+    def toggle_auto_update_graphs(self, checked=False):
+        self._auto_update_graphs = bool(checked)
+        if hasattr(self, "auto_update_graphs_action") and self.auto_update_graphs_action.isChecked() != self._auto_update_graphs:
+            self.auto_update_graphs_action.setChecked(self._auto_update_graphs)
+        if self._auto_update_graphs:
+            self.update_all_graphs()
+
+    def _active_graph_entry(self):
+        entry = getattr(self, "selected_entry", None)
+        if isinstance(entry, dict) and (entry.get("plots") or entry.get("chart") or entry.get("figures") or entry.get("graph_only") or entry.get("result", {}).get("graphs")):
+            return entry
+        for item in reversed(getattr(self.presenter, "history", []) or []):
+            if isinstance(item, dict) and (item.get("plots") or item.get("chart") or item.get("figures") or item.get("graph_only") or item.get("result", {}).get("graphs")):
+                return item
+        return entry if isinstance(entry, dict) else None
+
+    def add_reference_line_dialog(self):
+        entry = self._active_graph_entry()
+        if entry is None:
+            QMessageBox.information(self, "Add Reference Line", "Please select or create a graph first.")
+            return False
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Add Reference Line")
+        dlg.setMinimumWidth(340)
+        layout = QVBoxLayout(dlg)
+        form = QFormLayout()
+        axis_combo = QComboBox()
+        axis_combo.addItem("Y Axis", "y")
+        axis_combo.addItem("X Axis", "x")
+        val_edit = QLineEdit()
+        val_edit.setPlaceholderText("e.g. 10.5")
+        lbl_edit = QLineEdit()
+        lbl_edit.setPlaceholderText("Optional label")
+        form.addRow("Axis:", axis_combo)
+        form.addRow("Value:", val_edit)
+        form.addRow("Label:", lbl_edit)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            from . import graph_ergonomics
+            try:
+                val = float(val_edit.text().strip())
+                graph_ergonomics.add_reference_line(entry, axis_combo.currentData(), val, lbl_edit.text())
+                self.show_result(entry)
+                return True
+            except ValueError as exc:
+                QMessageBox.warning(self, "Add Reference Line", str(exc))
+        return False
+
+    def add_percentile_line_dialog(self):
+        entry = self._active_graph_entry()
+        if entry is None:
+            QMessageBox.information(self, "Add Percentile Line", "Please select or create a graph first.")
+            return False
+        num_cols = [(i, c) for i, c in enumerate(self.presenter.worksheet.columns) if c.kind == "number"]
+        if not num_cols:
+            QMessageBox.information(self, "Add Percentile Line", "No numeric columns available in the active worksheet.")
+            return False
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Add Percentile Line")
+        dlg.setMinimumWidth(360)
+        layout = QVBoxLayout(dlg)
+        form = QFormLayout()
+        col_combo = QComboBox()
+        for idx, col in num_cols:
+            col_combo.addItem(f"C{idx + 1} ({col.name})", idx)
+        pct_edit = QLineEdit("50")
+        axis_combo = QComboBox()
+        axis_combo.addItem("Y Axis", "y")
+        axis_combo.addItem("X Axis", "x")
+        form.addRow("Data column:", col_combo)
+        form.addRow("Percentile (0–100):", pct_edit)
+        form.addRow("Axis:", axis_combo)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            from . import graph_ergonomics
+            try:
+                col_idx = col_combo.currentData()
+                vals = [float(v) for v in self.presenter.worksheet.columns[col_idx].values if v is not None and math.isfinite(float(v))]
+                pct = float(pct_edit.text().strip())
+                graph_ergonomics.add_percentile_line(entry, vals, pct, axis=axis_combo.currentData())
+                self.show_result(entry)
+                return True
+            except ValueError as exc:
+                QMessageBox.warning(self, "Add Percentile Line", str(exc))
+        return False
+
+    def edit_graph_titles_dialog(self):
+        entry = self._active_graph_entry()
+        if entry is None:
+            QMessageBox.information(self, "Edit Graph Annotations", "Please select or create a graph first.")
+            return False
+        from .graph_presentation import graph_presentation
+        pres = graph_presentation(entry)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Edit Graph Title / Subtitle / Footnote")
+        dlg.setMinimumWidth(400)
+        layout = QVBoxLayout(dlg)
+        form = QFormLayout()
+        title_edit = QLineEdit(str(pres.get("title") or entry.get("title") or ""))
+        sub_edit = QLineEdit(str(pres.get("subtitle") or ""))
+        foot_edit = QLineEdit(str(pres.get("footnote") or ""))
+        form.addRow("Title:", title_edit)
+        form.addRow("Subtitle:", sub_edit)
+        form.addRow("Footnote:", foot_edit)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            from . import graph_ergonomics
+            graph_ergonomics.update_graph_annotations(
+                entry,
+                title=title_edit.text(),
+                subtitle=sub_edit.text(),
+                footnote=foot_edit.text(),
+            )
+            self.show_result(entry)
+            return True
+        return False
+
+    def toggle_graph_gridlines_action(self):
+        entry = self._active_graph_entry()
+        if entry is None:
+            self.statusBar().showMessage("Please select or create a graph first.", 4000)
+            return None
+        from . import graph_ergonomics
+        state = graph_ergonomics.toggle_graph_gridlines(entry)
+        self.show_result(entry)
+        self.statusBar().showMessage("Gridlines enabled" if state else "Gridlines disabled", 4000)
+        return state
+
+    def _update_brushing_palette_status(self):
+        if hasattr(self, "status_brush_label"):
+            if getattr(self, "_brushing_palette_visible", False):
+                n = len(getattr(self, "_brushed_rows", []) or [])
+                color = getattr(self, "_brush_color", "#dc2626")
+                self.status_brush_label.setText(f"Brush: {color} ({n} rows)")
+                self.status_brush_label.setStyleSheet(f"color: {color}; font-weight: 600; font-size: 8.5pt; padding: 0 6px;")
+                self.status_brush_label.setVisible(True)
+            else:
+                self.status_brush_label.setVisible(False)
+
+    def set_brushing_color_dialog(self, color=None):
+        if color is None:
+            chosen = QColorDialog.getColor(QColor(getattr(self, "_brush_color", "#dc2626")), self, "Set Brushing Color")
+            if not chosen.isValid():
+                return None
+            self._brush_color = chosen.name()
+        else:
+            self._brush_color = QColor(color).name()
+        self._update_brushing_palette_status()
+        self.statusBar().showMessage(f"Brushing color set to {self._brush_color}", 4000)
+        return self._brush_color
+
+    def toggle_brushing_palette(self, checked=None):
+        if checked is None:
+            self._brushing_palette_visible = not getattr(self, "_brushing_palette_visible", False)
+        else:
+            self._brushing_palette_visible = bool(checked)
+        if hasattr(self, "brushing_palette_action") and self.brushing_palette_action.isChecked() != self._brushing_palette_visible:
+            self.brushing_palette_action.setChecked(self._brushing_palette_visible)
+        self._update_brushing_palette_status()
+        return self._brushing_palette_visible
 
 def main():
     if "--smoke-verify" in sys.argv[1:]:
