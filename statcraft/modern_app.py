@@ -7,7 +7,7 @@ import math
 import copy
 from pathlib import Path
 import sys
-from PySide6.QtCore import Qt, QSize, QSignalBlocker, QRectF, QPointF, QTimer, QSettings
+from PySide6.QtCore import Qt, QSize, QSignalBlocker, QRectF, QPointF, QTimer, QSettings, QModelIndex, QItemSelectionModel
 from PySide6.QtGui import (
     QAction, QKeySequence, QIcon, QFont, QPalette, QColor, QPixmap,
     QPainter, QPen, QPolygonF, QActionGroup,
@@ -71,8 +71,26 @@ class WelcomeWatermarkWidget(QWidget):
     def __init__(self, on_open, on_new_project, on_new_worksheet, on_try_connect=None, on_overview=None, on_sample_library=None, on_guided_tour=None, parent=None):
         super().__init__(parent)
         self.setObjectName("welcomeStage")
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(24, 20, 24, 20)
+        self.setMinimumSize(0, 0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setMinimumHeight(0)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        scroll.viewport().setStyleSheet("background: transparent;")
+
+        container = QWidget()
+        container.setObjectName("welcomeStage")
+        outer = QVBoxLayout(container)
+        outer.setContentsMargins(16, 10, 16, 10)
         outer.addStretch(2)
 
         center = QWidget()
@@ -119,6 +137,14 @@ class WelcomeWatermarkWidget(QWidget):
 
         outer.addWidget(center, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addStretch(3)
+        scroll.setWidget(container)
+        root_layout.addWidget(scroll)
+
+    def minimumSizeHint(self):
+        return QSize(160, 40)
+
+    def sizeHint(self):
+        return QSize(640, 220)
 
 
 class WelcomeLogoBanner(QWidget):
@@ -941,10 +967,16 @@ class ModernWindow(QMainWindow):
 
         # Center/Right vertical splitter: Output pane on top, Worksheet grid on bottom
         self.work_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.work_splitter.setHandleWidth(6)
+        self.work_splitter.setChildrenCollapsible(True)
 
         # Top right: Output pane + optional Command Line / History side pane
         self.output_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.output_splitter.setMinimumHeight(40)
+        self.output_splitter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         self.output_pane = QWidget(); self.output_pane.setObjectName("outputPane")
+        self.output_pane.setMinimumHeight(40)
+        self.output_pane.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         output_layout = QVBoxLayout(self.output_pane); output_layout.setContentsMargins(0, 0, 0, 0); output_layout.setSpacing(0)
 
         self.output_header_bar = QWidget(); self.output_header_bar.setObjectName("outputHeaderBar")
@@ -962,6 +994,8 @@ class ModernWindow(QMainWindow):
         self.output_header_bar.hide()
 
         self.result_tabs = QTabWidget()
+        self.result_tabs.setMinimumHeight(40)
+        self.result_tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         self.result_tabs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.result_tabs.customContextMenuRequested.connect(lambda pos: self._show_output_context_menu(self.result_tabs.mapToGlobal(pos)))
         self.tab_corner_widget = QWidget()
@@ -1068,6 +1102,7 @@ class ModernWindow(QMainWindow):
         self.worksheet_selector = QComboBox(self.worksheet_pane); self.worksheet_selector.hide()
         self.worksheet_selector.currentIndexChanged.connect(self._select_sheet)
 
+        self._name_row_active = False
         self.column_names = ColumnNamesTable(self._navigate_column_name)
         self.column_names.setObjectName("columnNamesTable")
         self.column_names.selected_columns = set()
@@ -1098,6 +1133,7 @@ class ModernWindow(QMainWindow):
         self.column_names.setFixedHeight(42)
         self.column_names.itemChanged.connect(self._column_name_changed)
         self.column_names.currentCellChanged.connect(self._column_name_current_changed)
+        self.column_names.cellPressed.connect(self._column_name_current_changed)
         self.column_names.cellClicked.connect(self._column_name_current_changed)
         from PySide6.QtWidgets import QAbstractButton
         col_corner = self.column_names.findChild(QAbstractButton)
@@ -1138,6 +1174,8 @@ class ModernWindow(QMainWindow):
         self.table.horizontalScrollBar().valueChanged.connect(self.column_names.horizontalScrollBar().setValue)
         self.column_names.horizontalHeader().sectionResized.connect(lambda index, old, size: self.table.setColumnWidth(index, size))
         self.table.itemChanged.connect(self._cell_changed)
+        self.table.cellPressed.connect(self._on_table_cell_interacted)
+        self.table.cellClicked.connect(self._on_table_cell_interacted)
         self.table.itemSelectionChanged.connect(self._sync_selection_highlights)
         self.table.currentCellChanged.connect(lambda r, c, pr, pc: (self._update_corner_arrow(), self._sync_selection_highlights()))
         self.table.fillHandleDragged.connect(self._on_fill_handle_dragged)
@@ -1208,8 +1246,13 @@ class ModernWindow(QMainWindow):
         tab_row.addWidget(self.sheet_counts)
         sheet_layout.addWidget(chrome_bar)
 
+        self.worksheet_pane.setMinimumHeight(140)
         self.work_splitter.addWidget(self.worksheet_pane)
-        self.work_splitter.setSizes([310, 360])
+        self.work_splitter.setCollapsible(0, True)
+        self.work_splitter.setCollapsible(1, False)
+        self.work_splitter.setStretchFactor(0, 2)
+        self.work_splitter.setStretchFactor(1, 3)
+        self.work_splitter.setSizes([220, 450])
 
         self.work_stack = QStackedWidget()
         self.work_stack.addWidget(self.work_splitter)
@@ -2451,7 +2494,7 @@ class ModernWindow(QMainWindow):
         self.output_splitter.setVisible(mode in ("both", "output"))
         self.worksheet_pane.setVisible(mode in ("both", "data"))
         if mode == "both":
-            self.work_splitter.setSizes([310, 360])
+            self.work_splitter.setSizes([220, 450])
         for m, btn in getattr(self, "view_mode_buttons", {}).items():
             btn.setChecked(m == mode)
         for m, act in getattr(self, "view_mode_actions", {}).items():
@@ -2763,7 +2806,18 @@ class ModernWindow(QMainWindow):
             self.table.setColumnHidden(col_idx, is_hidden)
             self.column_names.setColumnHidden(col_idx, is_hidden)
         if visible and sheet.columns:
-            self.table.setCurrentCell(max(0, min(current_row, visible - 1)), max(0, min(current_col, len(sheet.columns) - 1)))
+            target_r = max(0, min(current_row, visible - 1))
+            target_c = max(0, min(current_col, len(sheet.columns) - 1))
+            if getattr(self, "_name_row_active", False):
+                self._clear_table_cell_selection(target_col=target_c)
+                self.column_names.setCurrentCell(0, target_c)
+            else:
+                self.column_names.clearSelection()
+                if self.column_names.selectionModel() is not None:
+                    self.column_names.selectionModel().setCurrentIndex(
+                        QModelIndex(), QItemSelectionModel.SelectionFlag.Clear
+                    )
+                self.table.setCurrentCell(target_r, target_c)
         if prev_sheet_id == id(sheet) and len(sheet.columns) > prev_col_count > 0:
             new_col_idx = len(sheet.columns) - 1
             new_item = self.table.item(0, new_col_idx)
@@ -2960,15 +3014,57 @@ class ModernWindow(QMainWindow):
         if hasattr(self, "column_names"): self.column_names.setUpdatesEnabled(True)
         if hasattr(self, "table"): self.table.setUpdatesEnabled(True)
 
-    def _column_name_current_changed(self,row,column,*unused):
-        if self._refreshing or column<0:return
-        # Keep the active worksheet column when a menu/toolbar or another
-        # window takes focus away from the separate name-row widget.
+    def _clear_name_row_selection(self):
+        self._name_row_active = False
+        if not hasattr(self, "column_names"):
+            return
+        blocker = QSignalBlocker(self.column_names)
+        self.column_names.clearSelection()
+        sel_model = self.column_names.selectionModel()
+        if sel_model is not None:
+            sel_model.setCurrentIndex(QModelIndex(), QItemSelectionModel.SelectionFlag.Clear)
+        del blocker
+        self.column_names.viewport().update()
+
+    def _clear_table_cell_selection(self, target_col=None):
+        if not hasattr(self, "table"):
+            return
         blocker = QSignalBlocker(self.table)
         self.table.clearSelection()
-        self.table.setCurrentCell(max(0,self.table.currentRow()),column)
+        if target_col is not None and self.table.model() is not None and 0 <= target_col < self.table.columnCount():
+            r = max(0, min(self.table.currentRow(), max(0, self.table.rowCount() - 1)))
+            if self.table.rowCount() > 0:
+                idx = self.table.model().index(r, target_col)
+                sel_model = self.table.selectionModel()
+                if sel_model is not None:
+                    sel_model.setCurrentIndex(idx, QItemSelectionModel.SelectionFlag.NoUpdate)
         del blocker
+        self.table.viewport().update()
+
+    def _activate_column_name_cell(self, row=0, column=0):
+        if self._refreshing or column < 0 or column >= self.column_names.columnCount():
+            return
+        self._name_row_active = True
+        self._selected_columns = set()
+        self._selected_rows = set()
+        blocker = QSignalBlocker(self.column_names)
+        if self.column_names.currentColumn() != column or not self.column_names.selectedRanges():
+            self.column_names.setCurrentCell(0, column)
+        del blocker
+        self._clear_table_cell_selection(target_col=column)
+        self._apply_selection_state()
+
+    def _on_table_cell_interacted(self, row=0, column=0):
+        if self._refreshing:
+            return
+        self._clear_name_row_selection()
+        if 0 <= row < self.table.rowCount() and 0 <= column < self.table.columnCount() and not self.table.selectedRanges():
+            self.table.setCurrentCell(row, column)
+        self._update_corner_arrow()
         self._sync_selection_highlights()
+
+    def _column_name_current_changed(self, row, column, *unused):
+        self._activate_column_name_cell(row, column)
 
     def _column_name_changed(self, item):
         if self._refreshing: return
@@ -3014,15 +3110,16 @@ class ModernWindow(QMainWindow):
                     pass
 
         if direction == 'down':
+            self._clear_name_row_selection()
             self.table.setCurrentCell(0, column)
             self.table.setFocus(Qt.FocusReason.OtherFocusReason)
         elif direction == 'right':
             col = min(columns - 1, column + 1)
-            self.column_names.setCurrentCell(0, col)
+            self._activate_column_name_cell(0, col)
             self.column_names.setFocus(Qt.FocusReason.OtherFocusReason)
         elif direction == 'left':
             col = max(0, column - 1)
-            self.column_names.setCurrentCell(0, col)
+            self._activate_column_name_cell(0, col)
             self.column_names.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _navigate_cell(self, direction, editor=None, delegate=None):
@@ -3096,7 +3193,7 @@ class ModernWindow(QMainWindow):
                     pass
 
         if direction == 'column_name':
-            self.column_names.setCurrentCell(0, column)
+            self._activate_column_name_cell(0, column)
             name_item = self.column_names.item(0, column)
             if name_item is not None:
                 self.column_names.scrollToItem(name_item)
@@ -3104,7 +3201,7 @@ class ModernWindow(QMainWindow):
             return
         elif direction == 'ctrl_up':
             if row == 0:
-                self.column_names.setCurrentCell(0, column)
+                self._activate_column_name_cell(0, column)
                 name_item = self.column_names.item(0, column)
                 if name_item is not None:
                     self.column_names.scrollToItem(name_item)
@@ -3133,7 +3230,7 @@ class ModernWindow(QMainWindow):
             row += 1
         elif direction == 'up':
             if local_row == 0 and self.page == 0:
-                self.column_names.setCurrentCell(0, column)
+                self._activate_column_name_cell(0, column)
                 name_item = self.column_names.item(0, column)
                 if name_item is not None:
                     self.column_names.scrollToItem(name_item)
@@ -3156,6 +3253,7 @@ class ModernWindow(QMainWindow):
         target_page = row // self.PAGE_SIZE
         target_local_row = row % self.PAGE_SIZE
 
+        self._clear_name_row_selection()
         if target_page == self.page and target_local_row < self.table.rowCount():
             self._navigation_row = row
             self.table.setCurrentCell(target_local_row, column)
@@ -3574,7 +3672,7 @@ class ModernWindow(QMainWindow):
         chosen=sorted(index for index in self._selected_columns if 0<=index<count)
         if chosen:return chosen
         focused=QApplication.focusWidget()
-        if self.column_names.hasFocus() or (focused is not None and self.column_names.isAncestorOf(focused)):
+        if getattr(self, "_name_row_active", False) or self.column_names.hasFocus() or (focused is not None and self.column_names.isAncestorOf(focused)):
             chosen=sorted({index for area in self.column_names.selectedRanges() for index in range(area.leftColumn(),area.rightColumn()+1)})
             if chosen:return chosen
             return [max(0,self.column_names.currentColumn())]
@@ -4044,6 +4142,10 @@ class ModernWindow(QMainWindow):
             split_state = s.value("ui/work_splitter")
             if split_state is not None and hasattr(self, "work_splitter"):
                 self.work_splitter.restoreState(split_state)
+                sizes = self.work_splitter.sizes()
+                total_h = sum(sizes)
+                if len(sizes) == 2 and total_h > 0 and sizes[1] < total_h * 0.45 and not self.presenter.history:
+                    self.work_splitter.setSizes([int(total_h * 0.35), int(total_h * 0.65)])
             pinned = s.value("ui/pinned_procedures", [])
             if isinstance(pinned, list):
                 for item in reversed(pinned):
@@ -8801,6 +8903,7 @@ class ModernWindow(QMainWindow):
         if col_index < 0 or col_index >= self.table.columnCount():
             return
         from PySide6.QtWidgets import QTableWidgetSelectionRange
+        self._clear_name_row_selection()
         if not extend:
             self._selected_columns = {col_index}
             self._selected_rows = set()
@@ -8818,6 +8921,7 @@ class ModernWindow(QMainWindow):
         if row_index < 0 or row_index >= self.table.rowCount():
             return
         from PySide6.QtWidgets import QTableWidgetSelectionRange
+        self._clear_name_row_selection()
         if not extend:
             self._selected_rows = {row_index}
             self._selected_columns = set()
@@ -8934,6 +9038,8 @@ class ModernWindow(QMainWindow):
         if self._refreshing:
             return
         ranges = self.table.selectedRanges()
+        if ranges:
+            self._clear_name_row_selection()
         total_rows = max(1, self.table.rowCount())
         total_cols = max(1, self.table.columnCount())
         sel_cols = set()
@@ -8956,9 +9062,15 @@ class ModernWindow(QMainWindow):
         active_rows = set(range(nonempty_rows)) if self._selected_columns else set()
         cur_r = self.table.currentRow()
         cur_c = self.table.currentColumn()
-        if cur_r >= 0 and not self._selected_rows and not self._selected_columns:
-            active_rows.add(cur_r)
-        active_cols = {cur_c} if (cur_c >= 0 and not self._selected_columns and not self._selected_rows) else set()
+        name_active = bool(getattr(self, "_name_row_active", False))
+        if name_active:
+            active_rows = set()
+            cn_col = self.column_names.currentColumn()
+            active_cols = {cn_col} if cn_col >= 0 else ({cur_c} if cur_c >= 0 else set())
+        else:
+            if cur_r >= 0 and not self._selected_rows and not self._selected_columns and self.table.selectedRanges():
+                active_rows.add(cur_r)
+            active_cols = {cur_c} if (cur_c >= 0 and not self._selected_columns and not self._selected_rows) else set()
 
         self.table.selected_columns = set(self._selected_columns)
         self.table.selected_rows = set(self._selected_rows)

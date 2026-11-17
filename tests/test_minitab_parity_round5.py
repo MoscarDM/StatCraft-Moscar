@@ -224,6 +224,52 @@ class MinitabParityRound5Tests(unittest.TestCase):
         self.assertTrue(self.win.reset_graph_3d_view_defaults())
         self.assertEqual(frame.chart.view_state, DEFAULT_VIEW)
 
+    def test_08_exclusive_name_and_cell_selection_and_splitter_range(self):
+        self.win.show()
+        self.app.processEvents()
+
+        # Selecting column name cell (0, 0) must clear table selection and hide fill handle
+        self.win.column_names.setCurrentCell(0, 0)
+        self.app.processEvents()
+        self.assertTrue(self.win._name_row_active)
+        self.assertEqual(len(self.win.column_names.selectedRanges()), 1)
+        self.assertEqual(self.win.table.selectedRanges(), [])
+        self.assertTrue(self.win.table.fill_handle_rect().isNull())
+
+        # Clicking/activating data cell (0, 0) must clear column_names selection and show only table selection
+        self.win._on_table_cell_interacted(0, 0)
+        self.app.processEvents()
+        self.assertFalse(self.win._name_row_active)
+        self.assertEqual(self.win.column_names.selectedRanges(), [])
+        self.assertEqual(len(self.win.table.selectedRanges()), 1)
+        self.assertFalse(self.win.table.fill_handle_rect().isNull())
+
+        # Real mouse clicks on column_names vs table must also keep selection exclusive
+        from PySide6.QtTest import QTest
+        from PySide6.QtCore import Qt
+
+        cn_rect = self.win.column_names.visualRect(self.win.column_names.model().index(0, 1))
+        QTest.mouseClick(self.win.column_names.viewport(), Qt.MouseButton.LeftButton, pos=cn_rect.center())
+        self.app.processEvents()
+        self.assertTrue(self.win._name_row_active)
+        self.assertEqual(len(self.win.column_names.selectedRanges()), 1)
+        self.assertEqual(self.win.table.selectedRanges(), [])
+
+        t_rect = self.win.table.visualRect(self.win.table.model().index(0, 0))
+        QTest.mouseClick(self.win.table.viewport(), Qt.MouseButton.LeftButton, pos=t_rect.center())
+        self.app.processEvents()
+        self.assertFalse(self.win._name_row_active)
+        self.assertEqual(self.win.column_names.selectedRanges(), [])
+        self.assertEqual(len(self.win.table.selectedRanges()), 1)
+
+        # Vertical splitter must allow dragging top output/welcome pane up to <= 80px
+        tot = sum(self.win.work_splitter.sizes())
+        self.win.work_splitter.setSizes([80, max(580, tot - 80)])
+        self.app.processEvents()
+        top_h, bottom_h = self.win.work_splitter.sizes()
+        self.assertLessEqual(top_h, 80)
+        self.assertGreaterEqual(bottom_h, 550)
+
 
 if __name__ == "__main__":
     unittest.main()

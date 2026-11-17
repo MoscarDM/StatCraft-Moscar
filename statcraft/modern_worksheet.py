@@ -183,6 +183,12 @@ class WorksheetDelegate(QStyledItemDelegate):
 
         opt = QStyleOptionViewItem(option)
         is_cell_selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        win = table.window() if table is not None else None
+        name_active = bool(getattr(win, "_name_row_active", False))
+        if self.is_column_names and not name_active:
+            is_cell_selected = False
+        elif (not self.is_column_names) and name_active:
+            is_cell_selected = False
         opt.state &= ~QStyle.StateFlag.State_Selected
         opt.state &= ~QStyle.StateFlag.State_HasFocus
 
@@ -368,7 +374,10 @@ class WorksheetTable(QTableWidget):
                     win = self.window()
                     if getattr(win, "page", 0) == 0 and hasattr(win, "column_names") and self.currentColumn() >= 0:
                         col = self.currentColumn()
-                        win.column_names.setCurrentCell(0, col)
+                        if hasattr(win, "_activate_column_name_cell"):
+                            win._activate_column_name_cell(0, col)
+                        else:
+                            win.column_names.setCurrentCell(0, col)
                         it = win.column_names.item(0, col)
                         if it is not None:
                             win.column_names.scrollToItem(it)
@@ -427,17 +436,17 @@ class WorksheetTable(QTableWidget):
 
 
     def fill_handle_anchor_range(self):
+        win = self.window()
+        if getattr(win, "_name_row_active", False):
+            return None
         ranges = self.selectedRanges()
-        if ranges:
-            top = min(r.topRow() for r in ranges)
-            bottom = max(r.bottomRow() for r in ranges)
-            left = min(r.leftColumn() for r in ranges)
-            right = max(r.rightColumn() for r in ranges)
-            return (top, bottom, left, right)
-        cr, cc = self.currentRow(), self.currentColumn()
-        if cr >= 0 and cc >= 0:
-            return (cr, cr, cc, cc)
-        return None
+        if not ranges:
+            return None
+        top = min(r.topRow() for r in ranges)
+        bottom = max(r.bottomRow() for r in ranges)
+        left = min(r.leftColumn() for r in ranges)
+        right = max(r.rightColumn() for r in ranges)
+        return (top, bottom, left, right)
 
     def fill_handle_rect(self):
         if self.model() is None:
