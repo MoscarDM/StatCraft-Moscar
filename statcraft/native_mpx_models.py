@@ -17,10 +17,14 @@ MAX_MODELS=100
 _RSM_TYPES = ('ResponseSurfaceRegression',)
 _FACTORIAL_TYPES = ('FractionalFactorial', 'FactorialRegression', 'ScreeningRegression', 'TwoLevelFactorial')
 _GLM_TYPES = ('GeneralLinearModel', 'GeneralFactorial', 'OneWayAnova', 'OneWayANOVA')
+_BINARY_LOGISTIC_TYPES = ('BinaryLogisticRegression', 'LogisticRegression')
+_POISSON_TYPES = ('PoissonRegression',)
 _FAMILY_MAP = {
     **{t: 'response_surface' for t in _RSM_TYPES},
     **{t: 'factorial' for t in _FACTORIAL_TYPES},
     **{t: 'general_linear_model' for t in _GLM_TYPES},
+    **{t: 'binary_logistic' for t in _BINARY_LOGISTIC_TYPES},
+    **{t: 'poisson_regression' for t in _POISSON_TYPES},
 }
 _MODEL_TYPE_MAP = {
     'response_surface_regression': 'response_surface',
@@ -32,6 +36,11 @@ _MODEL_TYPE_MAP = {
     'general_factorial': 'general_linear_model',
     'one_way_anova': 'general_linear_model',
     'anova': 'general_linear_model',
+    'binary_logistic_regression': 'binary_logistic',
+    'logistic_regression': 'binary_logistic',
+    'binary_logistic': 'binary_logistic',
+    'poisson_regression': 'poisson_regression',
+    'poisson': 'poisson_regression',
 }
 _OBJ_TYPE_MAP = {
     'response_surface': 'response_surface',
@@ -45,6 +54,11 @@ _OBJ_TYPE_MAP = {
     'general_factorial': 'general_linear_model',
     'one_way_anova': 'general_linear_model',
     'anova': 'general_linear_model',
+    'binary_logistic': 'binary_logistic',
+    'binary_logistic_regression': 'binary_logistic',
+    'logistic_regression': 'binary_logistic',
+    'poisson_regression': 'poisson_regression',
+    'poisson': 'poisson_regression',
 }
 
 
@@ -112,8 +126,8 @@ def _decode(project, model, uri, declared_id, commands, family_type='ResponseSur
     if declared_id is not None and _integer(declared_id,'declared model identity')!=model_id:raise ValueError('Native model identities disagree.')
     sheet=project.worksheets[project.worksheet_ids.index(wid)];sources=_source_columns(sheet)
     variables=_dict(model.get('variables'),'model variables');target=_dict(variables.get('target'),'response variable')
-    if expected_family == 'general_linear_model':
-        allowed_roles = {'target', 'predictors', 'factors', 'covariates', 'block'}
+    if expected_family in ('general_linear_model', 'binary_logistic', 'poisson_regression'):
+        allowed_roles = {'target', 'predictors', 'factors', 'covariates', 'block'} if expected_family == 'general_linear_model' else {'target', 'predictors', 'factors', 'covariates'}
         if set(variables) - allowed_roles:
             raise ValueError('The native model uses additional unsupported variable roles.')
         if 'predictors' in variables:
@@ -123,7 +137,7 @@ def _decode(project, model, uri, declared_id, commands, family_type='ResponseSur
             raw_covs = _items(variables.get('covariates', []), 'covariates', 8)
             predictors = raw_factors + raw_covs
         if not 1 <= len(predictors) <= 8:
-            raise ValueError('General linear model refitting supports 1–8 predictors.')
+            raise ValueError('Model refitting supports 1–8 predictors.')
     elif expected_family == 'factorial':
         if set(variables) - {'target', 'predictors', 'block'}:
             raise ValueError('The native model uses additional unsupported variable roles.')
@@ -145,7 +159,16 @@ def _decode(project, model, uri, declared_id, commands, family_type='ResponseSur
         internal[internal_id]=identity;index=sources[identity];indices.append(index)
         vtype = variable.get('type')
         if position == 0:
-            expected = 'continuous'
+            if expected_family == 'binary_logistic':
+                if vtype not in ('continuous', 'categorical'):
+                    raise ValueError('The native model contains an unsupported response type.')
+                expected = vtype
+            elif expected_family == 'poisson_regression':
+                if vtype not in ('continuous', 'count'):
+                    raise ValueError('The native model contains an unsupported response type.')
+                expected = vtype
+            else:
+                expected = 'continuous'
         elif block is not None and position == len(roles) - 1:
             expected = 'categorical'
         elif expected_family == 'response_surface':
@@ -158,7 +181,11 @@ def _decode(project, model, uri, declared_id, commands, family_type='ResponseSur
             predictor_roles.append(expected)
         if vtype!=expected:raise ValueError('The native model contains an unsupported predictor type.')
         if variable.get('data_type')!=('text' if sheet.columns[index].kind=='text' else 'numeric'):raise ValueError('The source data type conflicts with its saved native variable type.')
-        if (expected=='continuous' and sheet.columns[index].kind!='number') or (expected=='categorical' and sheet.columns[index].kind not in ('number','text')):raise ValueError('The source column type no longer matches its saved model role.')
+        if position == 0 and expected_family == 'binary_logistic':
+            if sheet.columns[index].kind not in ('number', 'text'):
+                raise ValueError('The source column type no longer matches its saved model role.')
+        elif (expected in ('continuous', 'count') and sheet.columns[index].kind!='number') or (expected=='categorical' and sheet.columns[index].kind not in ('number','text')):
+            raise ValueError('The source column type no longer matches its saved model role.')
     response=indices[0];factors=indices[1:1+len(predictors)];block_index=indices[-1] if block is not None else None
     state=_dict(_dict(model.get('model_information'),'model information').get('input_state'),'input state')
     obj=_dict(_dict(model.get('post_analysis_data'),'post-analysis data').get('model_object'),'model object')
@@ -170,18 +197,51 @@ def _decode(project, model, uri, declared_id, commands, family_type='ResponseSur
         if raw_coding not in ('effects', 'effect', 'reference'):
             raise ValueError('Only native effects or reference coding is supported for refitting.')
         model_coding = 'reference' if raw_coding == 'reference' else 'effect'
+    elif expected_family in ('binary_logistic', 'poisson_regression'):
+        if raw_coding != 'reference':
+            raise ValueError('Only native reference coding is supported for refitting.')
+        model_coding = 'reference'
     else:
         if raw_coding not in ('effects', 'effect'):
             raise ValueError('Only the observed native effects coding is supported for refitting.')
         model_coding = 'effect'
     if state.get('standardized') is not False:raise ValueError('Native standardized predictor models are not yet supported.')
-    if state.get('link_function_type')!='none' or obj.get('link_function_type')!='none':raise ValueError('Native linked/generalized response models are not supported here.')
+    if expected_family == 'binary_logistic':
+        if state.get('link_function_type') != 'logit' or obj.get('link_function_type') != 'logit':
+            raise ValueError('Only logit link is supported for binary logistic refitting.')
+    elif expected_family == 'poisson_regression':
+        if state.get('link_function_type') != 'log' or obj.get('link_function_type') != 'log':
+            raise ValueError('Only log link is supported for poisson regression refitting.')
+    else:
+        if state.get('link_function_type')!='none' or obj.get('link_function_type')!='none':raise ValueError('Native linked/generalized response models are not supported here.')
     if state.get('confidence_interval')!='two_sided':raise ValueError('Native one-sided model inference is not supported here.')
     if state.get('selection_method')!='none' or state.get('validation_type')!='none':raise ValueError('Native model selection or validation procedures cannot be replayed by a fixed-model refit.')
-    continuous=_dict(state.get('continuous_response_model_data'),'continuous-response settings')
-    if continuous.get('box_cox') is not False or obj.get('lambda')!=1:raise ValueError('Native transformed responses are not supported for this refit.')
-    if obj.get('has_weights') is not False or obj.get('weights_column_id') not in (0,0.0):raise ValueError('Native weighted models are not supported for this refit.')
-    if obj.get('is_categorical_response') is not False or obj.get('is_event_trial') is not False or obj.get('is_mle') is not False:raise ValueError('Native non-OLS response models are not supported here.')
+    if expected_family in ('binary_logistic', 'poisson_regression'):
+        continuous = state.get('continuous_response_model_data') or {}
+        if (isinstance(continuous, dict) and continuous.get('box_cox', False) is not False) or obj.get('lambda', 1) != 1:
+            raise ValueError('Native transformed responses are not supported for this refit.')
+    else:
+        continuous=_dict(state.get('continuous_response_model_data'),'continuous-response settings')
+        if continuous.get('box_cox') is not False or obj.get('lambda')!=1:raise ValueError('Native transformed responses are not supported for this refit.')
+    if obj.get('has_weights') is not False or obj.get('weights_column_id') not in (0,0.0,None):raise ValueError('Native weighted models are not supported for this refit.')
+    if expected_family == 'binary_logistic':
+        if obj.get('is_mle') is not True or obj.get('is_categorical_response') is not True or obj.get('is_event_trial') is not False:
+            raise ValueError('Native event/trial or non-MLE logistic models are not supported here.')
+    elif expected_family == 'poisson_regression':
+        if obj.get('is_mle') is not True or obj.get('is_categorical_response') is not False or obj.get('is_event_trial') is not False:
+            raise ValueError('Native non-MLE or categorical Poisson models are not supported here.')
+        if (state.get('has_offset') is True or obj.get('has_offset') is True
+                or state.get('offset_column_id') not in (None, 0, 0.0)
+                or obj.get('offset_column_id') not in (None, 0, 0.0)):
+            raise ValueError('Native offset models are not supported for this refit.')
+        if (state.get('overdispersion') not in (None, False, 'none')
+                or obj.get('overdispersion') not in (None, False, 'none')
+                or state.get('is_quasi_poisson') is True or obj.get('is_quasi_poisson') is True
+                or state.get('dispersion_parameter') not in (None, 1, 1.0)
+                or obj.get('dispersion_parameter') not in (None, 1, 1.0)):
+            raise ValueError('Overdispersed or quasi-Poisson models are not supported for this refit.')
+    else:
+        if obj.get('is_categorical_response') is not False or obj.get('is_event_trial') is not False or obj.get('is_mle') is not False:raise ValueError('Native non-OLS response models are not supported here.')
     rows=_dict(_dict(obj.get('rows_to_use'),'row selection').get('rows'),'row selection')
     if rows.get('use_all_rows') is not True:raise ValueError('Native row-subset models need a supported row-selection workflow before refitting.')
     confidence=state.get('confidence')
@@ -334,6 +394,50 @@ def _decode(project, model, uri, declared_id, commands, family_type='ResponseSur
                 'covariates': [ids[1 + i] for i in cov_pos],
                 'block': None,
             }
+    elif expected_family == 'binary_logistic':
+        cat_pos = [i for i, r in enumerate(predictor_roles) if r == 'categorical']
+        cov_pos = [i for i, r in enumerate(predictor_roles) if r == 'continuous']
+        cat_indices = [factors[i] for i in cat_pos]
+        cont_indices = [factors[i] for i in cov_pos]
+        pos_map = {pos: idx for idx, pos in enumerate(cat_pos)}
+        for idx, pos in enumerate(cov_pos):
+            pos_map[pos] = len(cat_indices) + idx
+        logistic_terms = [sorted(pos_map[p] for p in t) for t in input_terms]
+        validate_glm_terms(logistic_terms, len(cat_indices) + len(cont_indices))
+        event = state.get('event') if state.get('event') is not None else obj.get('event') if obj.get('event') is not None else target.get('event')
+        from .logistic import settings as logistic_settings
+        lo = logistic_settings()
+        lo.update(
+            confidence=confidence,
+            graphs='four' if graphs.get('display_fourpack') or any(graphs.get(k) for k in ('display_histogram', 'display_normal', 'display_fits', 'display_order')) else 'none',
+        )
+        for key, saved_key in [('method', 'display_method_table'), ('response_information', 'display_response_table'), ('model_summary', 'display_summary_table'), ('coefficients', 'display_coefficients'), ('odds_ratios', 'display_odds_ratios'), ('equation', 'display_equation')]:
+            if type(tables.get(saved_key)) is bool:
+                lo[key] = tables[saved_key]
+        lo['diagnostics'] = 'all' if tables.get('all_diagnostic_rows') else 'unusual' if tables.get('display_diagnostics_table', True) else 'none'
+        recipe = {'action': 'fit_binary_logistic', 'parameters': dict(
+            response_index=response, continuous_indices=cont_indices, categorical_indices=cat_indices,
+            event=event, trials_index=None, terms=logistic_terms, options=lo,
+        )}
+        source_column_ids = {
+            'response': ids[0],
+            'continuous': [ids[1 + i] for i in cov_pos],
+            'categorical': [ids[1 + i] for i in cat_pos],
+        }
+    elif expected_family == 'poisson_regression':
+        if any(len(t) != 1 for t in input_terms) or {t[0] for t in input_terms} != set(range(len(factors))):
+            raise ValueError('Poisson regression refitting supports additive main-effects models only.')
+        cat_pos = [i for i, r in enumerate(predictor_roles) if r == 'categorical']
+        cov_pos = [i for i, r in enumerate(predictor_roles) if r == 'continuous']
+        recipe = {'action': 'poisson_regression', 'parameters': dict(
+            response_index=response, continuous_indices=[factors[i] for i in cov_pos],
+            categorical_indices=[factors[i] for i in cat_pos], offset_index=None, confidence=confidence,
+        )}
+        source_column_ids = {
+            'response': ids[0],
+            'continuous': [ids[1 + i] for i in cov_pos],
+            'categorical': [ids[1 + i] for i in cat_pos],
+        }
     else:
         cat_pos = [i for i, r in enumerate(predictor_roles) if r == 'categorical']
         cov_pos = [i for i, r in enumerate(predictor_roles) if r == 'continuous']
@@ -358,12 +462,20 @@ def _decode(project, model, uri, declared_id, commands, family_type='ResponseSur
         }
     from .recipes import columns
     columns(recipe)
-    mse=obj.get('mean_square_error');df=_integer(obj.get('error_degrees_of_freedom'),'error degrees of freedom')
-    if not _number(mse) or mse<0 or df<1:raise ValueError('Invalid native residual inference state.')
+    df=_integer(obj.get('error_degrees_of_freedom'),'error degrees of freedom')
+    if expected_family in ('binary_logistic', 'poisson_regression'):
+        ll = obj.get('log_likelihood'); dev = obj.get('deviance')
+        if df < 1 or (ll is not None and not _number(ll)) or (dev is not None and (not _number(dev) or dev < 0)):
+            raise ValueError('Invalid native likelihood inference state.')
+        verification_ref = {'coefficients':reference_terms,'log_likelihood':ll,'deviance':dev,'df_error':df,'row_count':_integer(rows.get('row_count'),'saved row count'),'coding':model_coding}
+    else:
+        mse=obj.get('mean_square_error')
+        if not _number(mse) or mse<0 or df<1:raise ValueError('Invalid native residual inference state.')
+        verification_ref = {'coefficients':reference_terms,'mse':mse,'df_error':df,'row_count':_integer(rows.get('row_count'),'saved row count'),'coding':model_coding}
     return {'supported':True,'family':expected_family,'command_id':cid,'worksheet_id':wid,'worksheet_name':sheet.name,'model_id':model_id,'model_uri':uri,'recipe':recipe,
             'source_column_map':{str(index):identity for index,identity in zip(indices,ids)},
             'source_column_ids':source_column_ids,
-            'verification_reference':{'coefficients':reference_terms,'mse':mse,'df_error':df,'row_count':_integer(rows.get('row_count'),'saved row count'),'coding':model_coding},
+            'verification_reference':verification_ref,
             'warnings':['Refit is an independent StatCraft calculation using current worksheet values; saved native output remains unchanged.']}
 
 
@@ -421,8 +533,10 @@ def compare_native_model(result,descriptor,relative_tolerance=1e-7,absolute_tole
     is_rsm = isinstance(result, dict) and result.get('analysis') == 'response_surface'
     is_glm = isinstance(result, dict) and result.get('analysis') == 'general_linear_model'
     is_factorial = isinstance(result, dict) and 'factor_coding' in result and 'selected_terms' in result
-    if not (is_rsm or is_glm or is_factorial):
-        raise ValueError('Compare a fitted response-surface, factorial, or general linear model result.')
+    is_logistic = isinstance(result, dict) and result.get('analysis') == 'binary_logistic'
+    is_poisson = isinstance(result, dict) and result.get('analysis') == 'poisson_regression'
+    if not (is_rsm or is_glm or is_factorial or is_logistic or is_poisson):
+        raise ValueError('Compare a fitted response-surface, factorial, general linear, binary logistic, or Poisson regression model result.')
     if not _number(relative_tolerance) or not _number(absolute_tolerance) or relative_tolerance<0 or absolute_tolerance<0:raise ValueError('Comparison tolerances must be finite and nonnegative.')
     coefficients=result.get('coefficients',[])
     comparisons=[]
@@ -454,13 +568,27 @@ def compare_native_model(result,descriptor,relative_tolerance=1e-7,absolute_tole
             else:
                 continue
             append(label, actual.get('estimate'), item['estimate']); append(label + ' SE', actual.get('standard_error'), item['standard_error'])
+    elif is_logistic or is_poisson:
+        est_key, se_key = ('coef', 'se_coef') if is_poisson else ('estimate', 'standard_error')
+        for item in reference['coefficients']:
+            if item['kind'] == 'constant':
+                actual = coefficients[0] if coefficients else {}
+                append('Constant', actual.get(est_key), item['estimate'])
+                append('Constant SE', actual.get(se_key), item['standard_error'])
+        if reference.get('log_likelihood') is not None:
+            append('Log-Likelihood', result.get('log_likelihood'), reference['log_likelihood'])
+        if reference.get('deviance') is not None:
+            append('Deviance', result.get('deviance'), reference['deviance'])
+        actual_df = result.get('df_residual') if is_poisson else result.get('df_error')
+        append('Error DF', actual_df, reference['df_error'])
     else:
         for item in reference['coefficients']:
             if item['kind'] == 'constant':
                 actual = coefficients[0] if coefficients else {}
                 append('Constant', actual.get('estimate'), item['estimate'])
                 append('Constant SE', actual.get('standard_error'), item['standard_error'])
-    append('MSE',result.get('ms_error'),reference['mse']);append('Error DF',result.get('df_error'),reference['df_error'])
+    if not (is_logistic or is_poisson):
+        append('MSE',result.get('ms_error'),reference['mse']);append('Error DF',result.get('df_error'),reference['df_error'])
     return {'matches_saved_native':bool(comparisons) and all(v['matches'] for v in comparisons),'comparisons':comparisons,'relative_tolerance':relative_tolerance,'absolute_tolerance':absolute_tolerance,'scope':'Saved native coefficients, free coefficient standard errors, residual mean square and error degrees of freedom; independent fresh fit, not native execution.'}
 
 
@@ -474,9 +602,13 @@ def resolve_model_recipe(project,descriptor):
     identities=descriptor['source_column_ids'];recipe=copy.deepcopy(descriptor['recipe']);p=recipe['parameters']
     try:
         p['response_index']=columns[identities['response']]
-        p['factor_indices']=[columns[identity] for identity in identities['factors']]
-        if identities.get('covariates') is not None:p['covariate_indices']=[columns[identity] for identity in identities['covariates']]
-        if identities.get('block') is not None:p['block_index']=columns[identities['block']]
+        if recipe.get('action') in ('fit_binary_logistic', 'poisson_regression'):
+            p['continuous_indices']=[columns[identity] for identity in identities.get('continuous', [])]
+            p['categorical_indices']=[columns[identity] for identity in identities.get('categorical', [])]
+        else:
+            p['factor_indices']=[columns[identity] for identity in identities['factors']]
+            if identities.get('covariates') is not None:p['covariate_indices']=[columns[identity] for identity in identities['covariates']]
+            if identities.get('block') is not None:p['block_index']=columns[identities['block']]
     except KeyError as exc:raise ValueError('A recovered native model source column was deleted or lost its identity.') from exc
     from .recipes import columns as recipe_columns
     recipe_columns(recipe)
@@ -506,12 +638,18 @@ def resolve_entry_recipe(entry, worksheet=None):
                 p = recipe['parameters']
                 if identities.get('response') in cols:
                     p['response_index'] = cols[identities['response']]
-                if identities.get('factors'):
-                    p['factor_indices'] = [cols[fid] for fid in identities['factors'] if fid in cols]
-                if identities.get('covariates'):
-                    p['covariate_indices'] = [cols[cid] for cid in identities['covariates'] if cid in cols]
-                if identities.get('block') and identities['block'] in cols:
-                    p['block_index'] = cols[identities['block']]
+                if recipe.get('action') in ('fit_binary_logistic', 'poisson_regression'):
+                    if 'continuous' in identities:
+                        p['continuous_indices'] = [cols[cid] for cid in identities['continuous'] if cid in cols]
+                    if 'categorical' in identities:
+                        p['categorical_indices'] = [cols[cid] for cid in identities['categorical'] if cid in cols]
+                else:
+                    if identities.get('factors'):
+                        p['factor_indices'] = [cols[fid] for fid in identities['factors'] if fid in cols]
+                    if identities.get('covariates'):
+                        p['covariate_indices'] = [cols[cid] for cid in identities['covariates'] if cid in cols]
+                    if identities.get('block') and identities['block'] in cols:
+                        p['block_index'] = cols[identities['block']]
             except Exception:
                 pass
         return recipe

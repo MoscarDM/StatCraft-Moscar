@@ -138,7 +138,7 @@ class NativeModelRecoveryTests(unittest.TestCase):
         p,m=fixture();p.metadata['Models']['Items']=3;self.assertEqual(read_native_models(p),{})
         p,m=fixture();p.metadata['Commands']=None;self.assertFalse(read_native_models(p)['command']['supported'])
     def test_unrelated_model_families_and_none_project_are_ignored(self):
-        p,m=fixture();p.metadata['Models']['Items'][0]['Type']='BinaryLogisticRegression'
+        p,m=fixture();p.metadata['Models']['Items'][0]['Type']='CoxRegression'
         self.assertEqual(read_native_models(p),{});self.assertEqual(read_native_models(None),{})
     def test_rejects_unsafe_member_references(self):
         p,m=fixture();p.metadata['Models']['Items'][0]['Items'][0]['Data']='/models/../unrelated/'

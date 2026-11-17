@@ -245,6 +245,20 @@ def _atomic_bytes(path, payload):
         if temporary and os.path.exists(temporary): os.unlink(temporary)
 
 
+def _allocate_numeric_blob_member(original_members, changed_members):
+    """Allocate a fresh unique /blobs/blobM member name not in original or changed members."""
+    used = set(original_members) | set(changed_members)
+    max_index = 0
+    for name in used:
+        match = re.fullmatch(r'/blobs/blob([1-9][0-9]*)', name)
+        if match is not None:
+            max_index = max(max_index, int(match.group(1)))
+    candidate = max_index + 1
+    while f'/blobs/blob{candidate}' in used:
+        candidate += 1
+    return f'/blobs/blob{candidate}'
+
+
 def save_mpx(project, path, session_records=None):
     """Save-copy: same-size edits, typed numeric resizing and numeric append.
 
@@ -337,9 +351,15 @@ def save_mpx(project, path, session_records=None):
                         reference=body['NumericData']; member=io._numeric_blob_reference(reference,len(baseline.values))
                         from .mpx_rows import numeric_blob_uses
                         uses=numeric_blob_uses(project._original_members,member)
-                        if uses!=1: raise io.UnsupportedFormatError("Edits to shared numeric blobs are unsupported; no project copy was written.")
-                        changed_members[member]=struct.pack('<'+str(len(values))+'d',*values)
-                        body['NumericData']=member+'?size='+str(len(values))
+                        if uses!=1:
+                            target_member=_allocate_numeric_blob_member(project._original_members,changed_members)
+                        else:
+                            target_member=member
+                        changed_members[target_member]=struct.pack('<'+str(len(values))+'d',*values)
+                        new_ref=target_member+'?size='+str(len(values))
+                        body['NumericData']=new_ref
+                        if isinstance(body.get('DateTimeData'),str):
+                            body['DateTimeData']=new_ref
                     else: body["NumericData"]=values
                     if resized:
                         from .mpx_rows import update_numeric_bounds

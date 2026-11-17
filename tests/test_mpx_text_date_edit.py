@@ -166,7 +166,7 @@ class MpxTextDateEditTests(unittest.TestCase):
             with self.assertRaises(UnsupportedFormatError):
                 save_mpx(p, Path(tmp) / "meta_mismatch.mpx")
 
-            # 7. Shared blob in date column
+            # 7. Shared blob in date column uses copy-on-write
             shared = Path(tmp) / "shared_date.mpx"
             _date_blob_fixture(shared)
             def share_blob(members, _extra):
@@ -178,8 +178,11 @@ class MpxTextDateEditTests(unittest.TestCase):
             _rewrite_mpx(shared, share_blob)
             p = load_mpx(shared)
             p.worksheets[0].columns[1].values = [44000.0, 44001.0]
-            with self.assertRaises(UnsupportedFormatError):
-                save_mpx(p, Path(tmp) / "shared_out.mpx")
+            shared_out = Path(tmp) / "shared_out.mpx"
+            save_mpx(p, shared_out)
+            reloaded_shared = load_mpx(shared_out)
+            self.assertEqual(reloaded_shared.worksheets[0].columns[1].values, [44000.0, 44001.0])
+            self.assertEqual(reloaded_shared.worksheets[0].columns[0].values, [43831.0, 43832.5])
 
             # 8. Absent CharCt metadata when growing text
             no_charct = Path(tmp) / "no_charct.mpx"

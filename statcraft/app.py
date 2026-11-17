@@ -8167,6 +8167,10 @@ class Presenter:
                 fresh = self.analyze_factorial_terms(**params)
             elif action == 'general_linear_model':
                 fresh = self.general_linear_model(**params)
+            elif action == 'fit_binary_logistic':
+                fresh = self.fit_binary_logistic(**params)
+            elif action == 'poisson_regression':
+                fresh = self.poisson_regression(params)
             else:
                 raise ValueError('Unsupported recovered native model recipe action: ' + str(action))
         except Exception:
