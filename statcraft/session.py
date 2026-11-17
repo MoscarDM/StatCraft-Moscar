@@ -76,3 +76,23 @@ def decode(raw, worksheet_ids):
         raise io.UnsupportedFormatError('Unsupported StatCraft session schema/version.')
     validate(document['results'], worksheet_ids)
     return copy.deepcopy(document['results'])
+
+
+def prune(records, worksheet_ids):
+    """Return a deep copy of records whose worksheet_id is in worksheet_ids, plus removed entry_ids."""
+    allowed = set(worksheet_ids)
+    kept, removed_ids = [], set()
+    for entry in records:
+        if isinstance(entry, dict) and entry.get('worksheet_id') not in allowed:
+            if isinstance(entry.get('entry_id'), str):
+                removed_ids.add(entry['entry_id'])
+            continue
+        kept.append(copy.deepcopy(entry))
+    return kept, removed_ids
+
+
+def sync_worksheet_names(records, name_by_id):
+    """Update worksheet_name on session records whose worksheet was renamed."""
+    for entry in records:
+        if isinstance(entry, dict) and entry.get('worksheet_id') in name_by_id:
+            entry['worksheet_name'] = name_by_id[entry['worksheet_id']]

@@ -221,6 +221,12 @@ class Presenter:
         before_rev = self._revision
         item = sheets.pop(from_idx)
         sheets.insert(to_idx, item)
+        if len(self.native_project.worksheet_ids) == len(sheets):
+            wid = self.native_project.worksheet_ids.pop(from_idx)
+            self.native_project.worksheet_ids.insert(to_idx, wid)
+        if len(self.native_project.worksheet_uris) == len(sheets):
+            wuri = self.native_project.worksheet_uris.pop(from_idx)
+            self.native_project.worksheet_uris.insert(to_idx, wuri)
         self.native_project.active_index = to_idx
         self.worksheet = sheets[to_idx]
         self._push_project_undo("reorder_worksheets", before_state, before_rev)
@@ -8175,6 +8181,12 @@ class Presenter:
                 fresh = self.ordinal_logistic_regression(params)
             elif action == 'nominal_logistic_regression':
                 fresh = self.nominal_logistic_regression(params)
+            elif action == 'reliability_distribution':
+                fresh = self.reliability_distribution(**params)
+            elif action == 'arima':
+                fresh = self.arima(**params)
+            elif action == 'fit_mixed_reml':
+                fresh = self.fit_mixed_reml(**params)
             else:
                 raise ValueError('Unsupported recovered native model recipe action: ' + str(action))
         except Exception:

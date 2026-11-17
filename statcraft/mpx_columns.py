@@ -10,17 +10,22 @@ NEW_ID = 'statcraft_native_column_id'
 def preflight(project, sheet):
     """Fail before modifying a sheet containing unknown native dependencies."""
     index = next(i for i, candidate in enumerate(project.worksheets) if candidate is sheet)
-    document = project._original_sheets[project.worksheet_uris[index] + '.json']
+    wid = project.worksheet_ids[index]
+    if wid not in project._original_ids:
+        return index
+    orig_index = project._original_ids.index(wid)
+    orig_uri = project._original_uris[orig_index]
+    document = project._original_sheets[orig_uri + '.json']
     validate_plain(document)
     for column in sheet.columns:
         native = column.metadata.get('imported_variable_metadata', {})
         wrapper = native.get('WorksheetVarBody', {})
         if native.get('ReadOnly', False) or wrapper.get('VarData', {}).get('Locked', False):
             raise io.UnsupportedFormatError('Structural edits involving locked native columns are unsupported.')
-    original=project._baseline[index]
-    extent=max(original.row_count,max((len(c.values) for c in sheet.columns if any(c.metadata==b.metadata for b in original.columns)),default=0))
-    prepare_columns(copy.deepcopy(document),sheet.columns,original.columns,extent,
-                    copy.deepcopy(project._appended_ids),project.worksheet_uris[index])
+    original = project._baseline[orig_index]
+    extent = max(original.row_count, max((len(c.values) for c in sheet.columns if any(c.metadata == b.metadata for b in original.columns)), default=0))
+    prepare_columns(copy.deepcopy(document), sheet.columns, original.columns, extent,
+                    copy.deepcopy(project._appended_ids), orig_uri)
     return index
 
 
