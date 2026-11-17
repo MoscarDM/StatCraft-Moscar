@@ -21,6 +21,8 @@ from statcraft.native_mpx_models import (
     read_native_models,
     resolve_model_recipe,
 )
+from statcraft.nominal_logistic import fit_nominal_logistic_regression
+from statcraft.ordinal_logistic import fit_ordinal_logistic_regression
 from statcraft.poisson_regression import fit_poisson_regression
 
 
@@ -342,6 +344,292 @@ def _poisson_project_fixture():
     return project, model, fit_res
 
 
+def _ordinal_logistic_project_fixture(model_family="OrdinalLogisticRegression"):
+    rng = np.random.default_rng(11)
+    n = 60
+    x = rng.normal(0.0, 1.0, n)
+    cat = ["A" if i % 2 == 0 else "B" for i in range(n)]
+    score = 0.8 * x + np.where(np.array(cat) == "A", 0.5, 0.0) + rng.normal(0.0, 0.8, n)
+    y = ["Low" if s < -0.4 else "Med" if s < 0.5 else "High" for s in score]
+    y[0], y[1], y[2] = "Low", "Med", "High"
+
+    sheet = Worksheet(
+        "OrdinalData",
+        columns=[
+            Column("Rating", "text", y),
+            Column("Dose", "number", x.tolist()),
+            Column("Group", "text", cat),
+        ],
+    )
+    for idx, col in enumerate(sheet.columns):
+        col.metadata["imported_variable_metadata"] = {"Id": f"ocol-{idx}", "VarId": idx + 1}
+
+    fit_res = fit_ordinal_logistic_regression(
+        response=y,
+        continuous_predictors=[x.tolist()],
+        categorical_predictors=[cat],
+        continuous_names=["Dose"],
+        categorical_names=["Group"],
+        response_name="Rating",
+        confidence=0.95,
+    )
+    coefs = fit_res["coefficients"]
+    thresholds = [c for c in coefs if c.get("is_threshold")]
+    slopes = [c for c in coefs if not c.get("is_threshold")]
+
+    def var_ref(idx, role):
+        return {
+            "id": f"ocol-{idx}",
+            "variable_id": float(idx + 1),
+            "name": sheet.columns[idx].name,
+            "type": role,
+            "data_type": "text" if sheet.columns[idx].kind == "text" else "numeric",
+        }
+
+    factors = [var_ref(1, "continuous"), var_ref(2, "categorical")]
+    factors[1]["classes"] = ["A", "B"]
+
+    pred_defs = [
+        {"predictor_type": "constant", "predictor_id": -1.0, "column_id": 0.0},
+        {
+            "predictor_type": "continuous",
+            "predictor_id": 0.0,
+            "column_id": 2.0,
+            "was_predictor_fit": True,
+            "is_random": False,
+            "is_hard_to_change": False,
+            "nesting_predictor_ids": [],
+        },
+        {
+            "predictor_type": "categorical",
+            "predictor_id": 1.0,
+            "column_id": 3.0,
+            "text_levels": ["A", "B"],
+            "was_predictor_fit": True,
+            "is_random": False,
+            "is_hard_to_change": False,
+            "nesting_predictor_ids": [],
+        },
+    ]
+    post_terms = [
+        {
+            "predictor_ids": [-1.0],
+            "coefficients": [float(t["coef"]) for t in thresholds],
+            "standard_error_coefficients": [float(t["se_coef"]) for t in thresholds],
+        },
+        {
+            "predictor_ids": [0.0],
+            "coefficients": [float(slopes[0]["coef"])],
+            "standard_error_coefficients": [float(slopes[0]["se_coef"])],
+        },
+        {
+            "predictor_ids": [1.0],
+            "coefficients": [float(slopes[1]["coef"])],
+            "standard_error_coefficients": [float(slopes[1]["se_coef"])],
+        },
+    ]
+    gof_dev = next(g for g in fit_res["goodness_of_fit"] if g["method"] == "Deviance")
+    obj = {
+        "model_object_type": "ordinal_logistic",
+        "model_analysis_type": "ordinal_logistic",
+        "link_function_type": "logit",
+        "lambda": 1.0,
+        "has_weights": False,
+        "weights_column_id": 0.0,
+        "has_offset": False,
+        "offset_column_id": 0.0,
+        "is_categorical_response": True,
+        "is_event_trial": False,
+        "is_mle": True,
+        "confidence": 0.95,
+        "model_term_list": {"model_predictors": pred_defs, "model_terms": post_terms},
+        "rows_to_use": {"rows": {"use_all_rows": True, "row_count": float(n)}},
+        "log_likelihood": float(fit_res["log_likelihood"]),
+        "deviance": float(gof_dev["chi_square"]),
+        "error_degrees_of_freedom": float(gof_dev["df"]),
+    }
+    state = {
+        "include_constant_term": True,
+        "coding": "reference",
+        "standardized": False,
+        "link_function_type": "logit",
+        "confidence_interval": "two_sided",
+        "selection_method": "none",
+        "validation_type": "none",
+        "confidence": 0.95,
+        "termlist": {
+            "fixed_factor_columns": factors,
+            "model_terms": [{"term_columns": [factors[0]]}, {"term_columns": [factors[1]]}],
+        },
+    }
+    model = {
+        "metadata": {
+            "command_id": "cmd-ord",
+            "worksheet_id": "ws-o",
+            "model_id": 3.0,
+            "model_type": "ordinal_logistic_regression",
+            "tables": {},
+            "graphs": {},
+        },
+        "variables": {"target": var_ref(0, "categorical"), "predictors": factors},
+        "model_information": {"input_state": state},
+        "post_analysis_data": {"model_object": obj},
+    }
+    project = SimpleNamespace(
+        metadata={
+            "Models": {"Items": [{"Type": model_family, "Items": [{"Id": 3, "Data": "/models/3/"}]}]},
+            "Commands": {"Items": [{"Id": "cmd-ord", "InputWorksheet": "ws-o", "OutputWorksheet": "ws-o"}]},
+        },
+        retained_members={"/models/3/.json": json.dumps({"Model": model}).encode()},
+        worksheets=[sheet],
+        worksheet_ids=["ws-o"],
+    )
+    return project, model, fit_res
+
+
+def _nominal_logistic_project_fixture(model_family="NominalLogisticRegression"):
+    rng = np.random.default_rng(23)
+    n = 60
+    x = rng.normal(0.0, 1.0, n)
+    cat = ["A" if i % 2 == 0 else "B" for i in range(n)]
+    y = ["Red" if x[i] > 0.4 else "Blue" if x[i] < -0.4 else "Green" for i in range(n)]
+    y[0], y[1], y[2] = "Red", "Blue", "Green"
+
+    sheet = Worksheet(
+        "NominalData",
+        columns=[
+            Column("Color", "text", y),
+            Column("Dose", "number", x.tolist()),
+            Column("Group", "text", cat),
+        ],
+    )
+    for idx, col in enumerate(sheet.columns):
+        col.metadata["imported_variable_metadata"] = {"Id": f"ncol-{idx}", "VarId": idx + 1}
+
+    fit_res = fit_nominal_logistic_regression(
+        response=y,
+        continuous_predictors=[x.tolist()],
+        categorical_predictors=[cat],
+        continuous_names=["Dose"],
+        categorical_names=["Group"],
+        reference_level="Blue",
+        response_name="Color",
+        confidence=0.95,
+    )
+    logits = fit_res["logits"]
+
+    def var_ref(idx, role):
+        return {
+            "id": f"ncol-{idx}",
+            "variable_id": float(idx + 1),
+            "name": sheet.columns[idx].name,
+            "type": role,
+            "data_type": "text" if sheet.columns[idx].kind == "text" else "numeric",
+        }
+
+    factors = [var_ref(1, "continuous"), var_ref(2, "categorical")]
+    factors[1]["classes"] = ["A", "B"]
+
+    pred_defs = [
+        {"predictor_type": "constant", "predictor_id": -1.0, "column_id": 0.0},
+        {
+            "predictor_type": "continuous",
+            "predictor_id": 0.0,
+            "column_id": 2.0,
+            "was_predictor_fit": True,
+            "is_random": False,
+            "is_hard_to_change": False,
+            "nesting_predictor_ids": [],
+        },
+        {
+            "predictor_type": "categorical",
+            "predictor_id": 1.0,
+            "column_id": 3.0,
+            "text_levels": ["A", "B"],
+            "was_predictor_fit": True,
+            "is_random": False,
+            "is_hard_to_change": False,
+            "nesting_predictor_ids": [],
+        },
+    ]
+    post_terms = [
+        {
+            "predictor_ids": [-1.0],
+            "coefficients": [float(lg["coefficients"][0]["coef"]) for lg in logits],
+            "standard_error_coefficients": [float(lg["coefficients"][0]["se_coef"]) for lg in logits],
+        },
+        {
+            "predictor_ids": [0.0],
+            "coefficients": [float(lg["coefficients"][1]["coef"]) for lg in logits],
+            "standard_error_coefficients": [float(lg["coefficients"][1]["se_coef"]) for lg in logits],
+        },
+        {
+            "predictor_ids": [1.0],
+            "coefficients": [float(lg["coefficients"][2]["coef"]) for lg in logits],
+            "standard_error_coefficients": [float(lg["coefficients"][2]["se_coef"]) for lg in logits],
+        },
+    ]
+    gof_dev = next(g for g in fit_res["goodness_of_fit"] if g["method"] == "Deviance")
+    obj = {
+        "model_object_type": "nominal_logistic",
+        "model_analysis_type": "nominal_logistic",
+        "link_function_type": "logit",
+        "lambda": 1.0,
+        "has_weights": False,
+        "weights_column_id": 0.0,
+        "has_offset": False,
+        "offset_column_id": 0.0,
+        "is_categorical_response": True,
+        "is_event_trial": False,
+        "is_mle": True,
+        "confidence": 0.95,
+        "reference_level": "Blue",
+        "model_term_list": {"model_predictors": pred_defs, "model_terms": post_terms},
+        "rows_to_use": {"rows": {"use_all_rows": True, "row_count": float(n)}},
+        "log_likelihood": float(fit_res["log_likelihood"]),
+        "deviance": float(gof_dev["chi_square"]),
+        "error_degrees_of_freedom": float(gof_dev["df"]),
+    }
+    state = {
+        "include_constant_term": True,
+        "coding": "reference",
+        "standardized": False,
+        "link_function_type": "logit",
+        "confidence_interval": "two_sided",
+        "selection_method": "none",
+        "validation_type": "none",
+        "confidence": 0.95,
+        "reference_level": "Blue",
+        "termlist": {
+            "fixed_factor_columns": factors,
+            "model_terms": [{"term_columns": [factors[0]]}, {"term_columns": [factors[1]]}],
+        },
+    }
+    model = {
+        "metadata": {
+            "command_id": "cmd-nom",
+            "worksheet_id": "ws-n",
+            "model_id": 4.0,
+            "model_type": "nominal_logistic_regression",
+            "tables": {},
+            "graphs": {},
+        },
+        "variables": {"target": var_ref(0, "categorical"), "predictors": factors},
+        "model_information": {"input_state": state},
+        "post_analysis_data": {"model_object": obj},
+    }
+    project = SimpleNamespace(
+        metadata={
+            "Models": {"Items": [{"Type": model_family, "Items": [{"Id": 4, "Data": "/models/4/"}]}]},
+            "Commands": {"Items": [{"Id": "cmd-nom", "InputWorksheet": "ws-n", "OutputWorksheet": "ws-n"}]},
+        },
+        retained_members={"/models/4/.json": json.dumps({"Model": model}).encode()},
+        worksheets=[sheet],
+        worksheet_ids=["ws-n"],
+    )
+    return project, model, fit_res
+
+
 class SharedBlobCopyOnWriteTests(unittest.TestCase):
     def test_shared_numeric_blob_copy_on_write_preserves_other_column(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as tmp:
@@ -539,4 +827,100 @@ class NativeLogisticAndPoissonRecoveryTests(unittest.TestCase):
                 mutate(model)
                 project.retained_members["/models/2/.json"] = json.dumps({"Model": model}).encode()
                 desc = read_native_models(project)["cmd-pois"]
+                self.assertFalse(desc["supported"])
+
+    def test_recover_ordinal_logistic_and_refit(self):
+        project, _, _ = _ordinal_logistic_project_fixture()
+        recovered = read_native_models(project)
+        desc = recovered["cmd-ord"]
+        self.assertTrue(desc["supported"], desc.get("error"))
+        self.assertEqual(desc["family"], "ordinal_logistic")
+        self.assertEqual(desc["recipe"]["action"], "ordinal_logistic_regression")
+        params = desc["recipe"]["parameters"]
+        self.assertEqual(params["response_index"], 0)
+        self.assertEqual(params["continuous_indices"], [1])
+        self.assertEqual(params["categorical_indices"], [2])
+
+        sheet = project.worksheets[0]
+        moved = sheet.columns.pop(2)
+        sheet.columns.insert(0, moved)
+        resolved = resolve_model_recipe(project, desc)
+        self.assertEqual(resolved["parameters"]["categorical_indices"], [0])
+        self.assertEqual(resolved["parameters"]["response_index"], 1)
+        self.assertEqual(resolved["parameters"]["continuous_indices"], [2])
+
+        p = Presenter()
+        p.native_project = SimpleNamespace(
+            worksheets=project.worksheets,
+            worksheet_ids=project.worksheet_ids,
+            active_index=0,
+        )
+        p.worksheet = project.worksheets[0]
+        entry = {"origin": "native", "native_model": desc}
+        p.history.append(entry)
+        fresh = p.refit_native_model(entry)
+        self.assertEqual(fresh["result"]["analysis"], "ordinal_logistic_regression")
+        self.assertTrue(fresh["native_model_source"]["comparison"]["matches_saved_native"])
+
+    def test_ordinal_logistic_unsupported_guards(self):
+        cases = [
+            ("weighted", lambda m: m["post_analysis_data"]["model_object"].__setitem__("has_weights", True)),
+            ("has_offset", lambda m: m["post_analysis_data"]["model_object"].__setitem__("has_offset", True)),
+            ("probit_link", lambda m: m["post_analysis_data"]["model_object"].__setitem__("link_function_type", "probit")),
+            ("incomplete_terms", lambda m: m["post_analysis_data"]["model_object"]["model_term_list"]["model_terms"].pop()),
+        ]
+        for label, mutate in cases:
+            with self.subTest(case=label):
+                project, model, _ = _ordinal_logistic_project_fixture()
+                mutate(model)
+                project.retained_members["/models/3/.json"] = json.dumps({"Model": model}).encode()
+                desc = read_native_models(project)["cmd-ord"]
+                self.assertFalse(desc["supported"])
+
+    def test_recover_nominal_logistic_and_refit(self):
+        project, _, _ = _nominal_logistic_project_fixture()
+        recovered = read_native_models(project)
+        desc = recovered["cmd-nom"]
+        self.assertTrue(desc["supported"], desc.get("error"))
+        self.assertEqual(desc["family"], "nominal_logistic")
+        self.assertEqual(desc["recipe"]["action"], "nominal_logistic_regression")
+        params = desc["recipe"]["parameters"]
+        self.assertEqual(params["response_index"], 0)
+        self.assertEqual(params["continuous_indices"], [1])
+        self.assertEqual(params["categorical_indices"], [2])
+        self.assertEqual(params["reference_level"], "Blue")
+
+        sheet = project.worksheets[0]
+        moved = sheet.columns.pop(1)
+        sheet.columns.append(moved)
+        resolved = resolve_model_recipe(project, desc)
+        self.assertEqual(resolved["parameters"]["continuous_indices"], [2])
+        self.assertEqual(resolved["parameters"]["categorical_indices"], [1])
+
+        p = Presenter()
+        p.native_project = SimpleNamespace(
+            worksheets=project.worksheets,
+            worksheet_ids=project.worksheet_ids,
+            active_index=0,
+        )
+        p.worksheet = project.worksheets[0]
+        entry = {"origin": "native", "native_model": desc}
+        p.history.append(entry)
+        fresh = p.refit_native_model(entry)
+        self.assertEqual(fresh["result"]["analysis"], "nominal_logistic_regression")
+        self.assertTrue(fresh["native_model_source"]["comparison"]["matches_saved_native"])
+
+    def test_nominal_logistic_unsupported_guards(self):
+        cases = [
+            ("weighted", lambda m: m["post_analysis_data"]["model_object"].__setitem__("has_weights", True)),
+            ("has_offset", lambda m: m["post_analysis_data"]["model_object"].__setitem__("has_offset", True)),
+            ("probit_link", lambda m: m["post_analysis_data"]["model_object"].__setitem__("link_function_type", "probit")),
+            ("incomplete_terms", lambda m: m["post_analysis_data"]["model_object"]["model_term_list"]["model_terms"].pop()),
+        ]
+        for label, mutate in cases:
+            with self.subTest(case=label):
+                project, model, _ = _nominal_logistic_project_fixture()
+                mutate(model)
+                project.retained_members["/models/4/.json"] = json.dumps({"Model": model}).encode()
+                desc = read_native_models(project)["cmd-nom"]
                 self.assertFalse(desc["supported"])

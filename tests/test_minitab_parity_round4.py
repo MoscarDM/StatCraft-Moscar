@@ -198,6 +198,38 @@ class MinitabParityRound4Tests(unittest.TestCase):
             settings_scope._sandbox_workspace = prev_ws
             set_custom_lists(orig)
 
+    def test_worksheet_zoom_preference_persistence(self):
+        import tempfile
+        from statcraft import settings_scope
+
+        prev_ws = settings_scope._sandbox_workspace
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                settings_scope.configure_sandbox_process(Path(tmpdir))
+                self.win.set_zoom(130)
+                self.win._save_ui_preferences()
+
+                self.win.set_zoom(100)
+                self.assertEqual(self.win._worksheet_zoom, 100)
+
+                self.win._restore_ui_preferences()
+                self.assertEqual(self.win._worksheet_zoom, 130)
+                self.assertEqual(self.win._zoom_percent, 130)
+
+                # Invalid / out-of-range zoom values should be ignored cleanly
+                s = settings_scope.settings_for_process()
+                s.setValue("ui/zoom_percent", 999)
+                self.win.set_zoom(100)
+                self.win._restore_ui_preferences()
+                self.assertEqual(self.win._worksheet_zoom, 100)
+
+                s.setValue("ui/zoom_percent", "not-a-number")
+                self.win._restore_ui_preferences()
+                self.assertEqual(self.win._worksheet_zoom, 100)
+        finally:
+            settings_scope._sandbox_workspace = prev_ws
+            self.win.set_zoom(100)
+
     def test_box_cox_no_scipy_future_warning(self):
         import warnings
         import numpy as np

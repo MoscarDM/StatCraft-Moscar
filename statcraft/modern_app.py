@@ -3949,6 +3949,15 @@ class ModernWindow(QMainWindow):
                         cb = getattr(self, item)
                         lbl = item.replace("_", " ").title()
                         self._pinned_procedures.pin(lbl, cb)
+            zoom_val = s.value("ui/zoom_percent")
+            if zoom_val is not None and not isinstance(zoom_val, bool):
+                try:
+                    zp = int(zoom_val)
+                    if 50 <= zp <= 200 and zp != getattr(self, "_worksheet_zoom", 100):
+                        if hasattr(self, "table") and hasattr(self, "zoom_slider"):
+                            self.set_zoom(zp)
+                except (TypeError, ValueError):
+                    pass
         except Exception:
             pass
 
@@ -3982,6 +3991,7 @@ class ModernWindow(QMainWindow):
                 if name and hasattr(self, name):
                     pinned_names.append(name)
             s.setValue("ui/pinned_procedures", pinned_names)
+            s.setValue("ui/zoom_percent", int(getattr(self, "_worksheet_zoom", 100)))
         except Exception:
             pass
 
