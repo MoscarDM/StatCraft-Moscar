@@ -218,14 +218,17 @@ class MinitabParityRound4Tests(unittest.TestCase):
 
         self.win.presenter.worksheet.columns = [Column("X", "number", [10.0, 10.2, 9.9, 10.1, 10.0, 40.0])]
         self.win.presenter.apply_conditional_formatting(0, "out_of_control", color="#f8d7da")
-        self.win.set_dark_mode(True)
-        self.win.refresh()
-        item = self.win.table.item(5, 0)
-        self.assertIsNotNone(item)
-        fg = item.data(Qt.ItemDataRole.ForegroundRole)
-        color = fg.color() if isinstance(fg, QBrush) else fg
-        self.assertIsInstance(color, QColor)
-        self.assertEqual(color.name().lower(), "#111827")
+        try:
+            self.win.set_dark_mode(True)
+            self.win.refresh()
+            item = self.win.table.item(5, 0)
+            self.assertIsNotNone(item)
+            fg = item.data(Qt.ItemDataRole.ForegroundRole)
+            color = fg.color() if isinstance(fg, QBrush) else fg
+            self.assertIsInstance(color, QColor)
+            self.assertEqual(color.name().lower(), "#111827")
+        finally:
+            self.win.set_dark_mode(False)
 
 
 if __name__ == "__main__":
