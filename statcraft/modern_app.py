@@ -2636,9 +2636,15 @@ class ModernWindow(QMainWindow):
                 comments = column.metadata.get("cell_comments", {})
                 bg_hex = conditional_colors.get(col,{}).get(str(source_row),highlights.get(str(source_row)))
                 if bg_hex:
-                    item.setData(Qt.ItemDataRole.BackgroundRole, QColor(bg_hex))
-                elif item.data(Qt.ItemDataRole.BackgroundRole) is not None:
-                    item.setData(Qt.ItemDataRole.BackgroundRole, None)
+                    bg_color = QColor(bg_hex)
+                    item.setData(Qt.ItemDataRole.BackgroundRole, bg_color)
+                    lum = 0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()
+                    item.setData(Qt.ItemDataRole.ForegroundRole, QColor("#111827" if lum >= 145 else "#f8fafc"))
+                else:
+                    if item.data(Qt.ItemDataRole.BackgroundRole) is not None:
+                        item.setData(Qt.ItemDataRole.BackgroundRole, None)
+                    if item.data(Qt.ItemDataRole.ForegroundRole) is not None:
+                        item.setData(Qt.ItemDataRole.ForegroundRole, None)
                 comment_str = comments.get(str(source_row))
                 if comment_str:
                     item.setData(Qt.ItemDataRole.UserRole + 2, comment_str)
