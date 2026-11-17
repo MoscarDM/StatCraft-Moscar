@@ -855,14 +855,17 @@ class ModernWindow(QMainWindow):
     def _create_sandbox_banner(self, layout):
         self.sandbox_banner = QFrame()
         self.sandbox_banner.setObjectName("sandboxBanner")
+        self.sandbox_banner.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         b_lay = QHBoxLayout(self.sandbox_banner)
         b_lay.setContentsMargins(10, 4, 10, 4)
         b_lay.setSpacing(10)
 
-        self.sandbox_badge = QLabel("<b>🧪 LIVE SANDBOX · v112.0.0-dev</b>")
+        from . import __version__
+        self.sandbox_badge = QLabel(f"<b>🧪 LIVE SANDBOX · v{__version__}-dev</b>")
         b_lay.addWidget(self.sandbox_badge)
 
-        self.sandbox_msg = QLabel("Running directly from local repository source. Code edits apply immediately upon restart.")
+        message = "Packaged preview build." if getattr(sys, "frozen", False) else "Local source preview. Restart to apply code changes."
+        self.sandbox_msg = QLabel(message)
         b_lay.addWidget(self.sandbox_msg, 1)
 
         btn_diag = QPushButton("📋 Copy Diagnostics")
@@ -888,7 +891,8 @@ class ModernWindow(QMainWindow):
 
     def _copy_sandbox_diagnostics(self):
         import platform
-        text = f"StatCraft Live Sandbox v112.0.0-dev\nPlatform: {platform.platform()}\nPython: {sys.executable}\nSource: {Path(__file__).resolve().parent}"
+        from . import __version__
+        text = f"StatCraft Live Sandbox v{__version__}-dev\nPlatform: {platform.platform()}\nPython: {sys.executable}\nSource: {Path(__file__).resolve().parent}"
         cb = QApplication.clipboard()
         if cb is not None:
             cb.setText(text)
@@ -8551,10 +8555,10 @@ class ModernWindow(QMainWindow):
                         pass
                 elif target_tab == "Report":
                     chosen_tab = 0
-                elif has_tables:
-                    chosen_tab = 0
                 elif graph_tab_indices:
                     chosen_tab = graph_tab_indices[0]
+                elif has_tables:
+                    chosen_tab = 0
                 elif has_report_text:
                     chosen_tab = 0
                 else:
@@ -12672,7 +12676,16 @@ class ModernWindow(QMainWindow):
         self.statusBar().showMessage("Unfroze rows and columns", 4000)
 
     def _autosave_path(self) -> Path:
-        base = Path(QSettings("StatCraft", "StatCraft").fileName()).parent
+        from PySide6.QtCore import QStandardPaths
+        from .settings_scope import settings_for_process
+        scoped = settings_for_process()
+        if getattr(self, 'sandbox_mode', False):
+            base = self.sandbox_workspace
+        elif scoped.format() == QSettings.Format.IniFormat:
+            base = Path(scoped.fileName()).parent
+        else:
+            base = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)) / 'StatCraft'
+        base.mkdir(parents=True, exist_ok=True)
         return base / "autosave_recovery.json"
 
     def autosave_now(self):

@@ -27,6 +27,7 @@ if str(_ROOT) not in sys.path:
 
 import numpy as np
 from PySide6.QtCore import QTimer, Qt
+from PySide6 import QtCore
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog
@@ -214,7 +215,7 @@ def _scenario_dialogs(win, app: QApplication, out_dir: Path, _quick: bool) -> di
     )
 
     if not shot_path.exists() or shot_path.stat().st_size == 0:
-        _grab_widget(win, shot_path)
+        raise RuntimeError('Expected modal dialog screenshot was not captured')
     return {"screenshot": str(shot_path)}
 
 
@@ -222,6 +223,8 @@ def _scenario_mpx_and_session(win, app: QApplication, out_dir: Path, _quick: boo
     """Scenario 5: Load .mpx project, run MTB > commands, and cycle prev/next history."""
     mpx_fixture = _ROOT / "tests" / "fixtures" / "statcraft-profile-v3.mpx"
     loaded_mpx = False
+    if not mpx_fixture.is_file():
+        raise FileNotFoundError(f'Required MPX fixture is missing: {mpx_fixture}')
     if mpx_fixture.exists():
         win.presenter.dirty = False
         win.load_path(str(mpx_fixture))
@@ -278,8 +281,29 @@ def run_suite(out_dir: Path, quick: bool = False, exe_path: Path | None = None) 
         orig_excepthook(exc_type, exc_value, exc_tb)
 
     sys.excepthook = _capture_excepthook
+    original_settings = QtCore.QSettings
+    class TestSettings(original_settings):
+        def __init__(self, *args, **kwargs):
+            if len(args) >= 2 and isinstance(args[0], str) and isinstance(args[1], str):
+                super().__init__(str(out_dir / 'test-settings.ini'), original_settings.Format.IniFormat)
+                self.setFallbacksEnabled(False)
+            else:
+                super().__init__(*args, **kwargs)
+    QtCore.QSettings = TestSettings
+    from statcraft import settings_scope
+    previous_workspace = settings_scope._sandbox_workspace
+    settings_aliases = []
+    for module in list(sys.modules.values()):
+        if getattr(module, '__name__', '').startswith('statcraft') and getattr(module, 'QSettings', None) is original_settings:
+            settings_aliases.append((module, original_settings))
+            module.QSettings = TestSettings
+    win = None
     try:
         app = QApplication.instance() or QApplication([])
+        from statcraft.verification_fonts import load_verification_fonts
+        load_verification_fonts(app)
+        from statcraft.settings_scope import configure_sandbox_process
+        configure_sandbox_process(out_dir)
         from statcraft.modern_app import ModernWindow
 
         win = ModernWindow()
@@ -320,6 +344,7 @@ def run_suite(out_dir: Path, quick: bool = False, exe_path: Path | None = None) 
                 )
 
         manifest = {
+            "visual_review_status": "PENDING",
             "quick": quick,
             "platform": os.environ.get("QT_QPA_PLATFORM", "native"),
             "unhandled_exceptions": len(unhandled),
@@ -335,6 +360,19 @@ def run_suite(out_dir: Path, quick: bool = False, exe_path: Path | None = None) 
         app.processEvents()
         return manifest
     finally:
+        if win is not None:
+            win.presenter.dirty = False
+            win.presenter._results_dirty = False
+            win.close()
+            win.deleteLater()
+            app.processEvents()
+        settings_scope._sandbox_workspace = previous_workspace
+        for module in list(sys.modules.values()):
+            if getattr(module, '__name__', '').startswith('statcraft') and getattr(module, 'QSettings', None) is TestSettings:
+                module.QSettings = original_settings
+        for module, original in settings_aliases:
+            module.QSettings = original
+        QtCore.QSettings = original_settings
         sys.excepthook = orig_excepthook
 
 
@@ -351,6 +389,8 @@ def main(argv: list[str] | None = None) -> int:
         exe_path=Path(args.exe) if args.exe else None,
     )
     ok = manifest["unhandled_exceptions"] == 0 and all(s["status"] == "ok" for s in manifest["scenarios"])
+    if "exe_smoke" in manifest:
+        ok = ok and manifest['exe_smoke']['alive_after_launch']
     return 0 if ok else 1
 
 

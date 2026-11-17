@@ -19,6 +19,8 @@ def generate_executive_summary(entry: Dict[str, Any], worksheet: Optional[Worksh
     recipe = entry.get("recipe", {})
     action = recipe.get("action", "")
     analysis = result.get("analysis", action)
+    if analysis == "native_saved_output":
+        return [f"Imported saved output: {title}. StatCraft has not recalculated this result."]
     params = recipe.get("parameters", {})
 
     bullets: List[str] = []

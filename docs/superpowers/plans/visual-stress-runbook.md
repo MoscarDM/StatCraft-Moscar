@@ -30,12 +30,12 @@ Launch the interactive desktop application from Python source:
 
 Launch the packaged `StatCraft.exe` directly on the Windows desktop:
 ```powershell
-Start-Process .\dist\StatCraft\StatCraft.exe
+Start-Process .\dist\StatCraft.exe
 ```
 
 Or run the visual stress suite with a live `StatCraft.exe` startup smoke check attached:
 ```powershell
-..\statcraft-build-env\Scripts\python.exe scripts\visual_stress_suite.py --out-dir artifacts\visual_qa --exe .\dist\StatCraft\StatCraft.exe
+..\statcraft-build-env\Scripts\python.exe scripts\visual_stress_suite.py --out-dir artifacts\visual_qa --exe .\dist\StatCraft.exe
 ```
 
 ---
