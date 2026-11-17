@@ -535,11 +535,11 @@ git commit -m "docs(qa): add Codex visual stress-testing inspection runbook"
 ## Next Horizon (Track 7+: Remaining Deeper Parity)
 
 ### Task 11: Native MPX Structural Worksheet Edits (Add / Delete / Reorder Sheets)
-- [ ] Safely support adding, renaming, deleting, and reordering worksheets in `.mpx` copies (`mpx.py`, `session.py`, `workspace_state.py`), updating `worksheet_ids`, `worksheet_uris`, and ZIP members atomically while preserving retained native output links.
+- [x] Safely support adding, renaming, deleting, and reordering worksheets in `.mpx` copies (`mpx.py`, `session.py`, `workspace_state.py`, `mpx_columns.py`, `app.py`), updating `worksheet_ids`, `worksheet_uris`, and ZIP members atomically while preserving retained native output links (`tests/test_mpx_worksheet_ops.py`).
 
 ### Task 12: Remaining Native MPX Model Recovery (Reliability, ARIMA, Mixed Models)
-- [ ] Extend `native_mpx_models.py` and `Presenter.refit_native_model` to recover Parametric Distribution/Reliability, ARIMA, and Mixed-Effects native model recipes with strict unsupported-option diagnostics.
+- [x] Extend `native_mpx_models.py` and `Presenter.refit_native_model` to recover Parametric Distribution/Reliability, ARIMA, and Mixed-Effects native model recipes with strict unsupported-option diagnostics (`tests/test_native_mpx_models_phase2.py`).
 
 ### Task 13: External Numerical Reference Parity Phase 3 (Mixed Models, ARIMA, Nonnormal Capability, Predictive ML)
-- [ ] Add `tests/test_numerical_reference_parity_phase3.py` validating REML Mixed Models, Seasonal ARIMA (`CLS` & `ML`), Nonnormal Capability (Johnson/Box-Cox/Weibull), and Predictive ML (CART/Random Forest/MARS) against external Minitab 22 / R / analytical reference fixtures.
+- [x] Add `tests/test_numerical_reference_parity_phase3.py` validating REML Mixed Models, Seasonal ARIMA (`CLS` & `ML`), Nonnormal Capability (Johnson/Box-Cox/Weibull), and Predictive ML (CART/Random Forest) against external analytical/reference fixtures.
 
