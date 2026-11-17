@@ -23,6 +23,10 @@ _RANGE_RE = re.compile(r'^[cC]([1-9][0-9]*)\s*[-–]\s*[cC]([1-9][0-9]*)$')
 _TOKENS = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[^\s\'\"]+')
 
 
+def _column_has_data(column) -> bool:
+    return any(v is not None and (not isinstance(v, str) or v.strip() != "") for v in getattr(column, "values", ()))
+
+
 def format_variable_reference(index, worksheet):
     """Readable positional identity; the quoted label never selects by name."""
     column = worksheet.columns[index]
@@ -332,29 +336,30 @@ class ProcedureDialog(QDialog):
         self.var_filter.setPlaceholderText("Filter variables...")
         self.var_filter.setClearButtonEnabled(True)
         self.var_filter.textChanged.connect(self._filter_available_variables)
-        left.addWidget(self.var_filter)
+        filter_row = QHBoxLayout()
+        filter_row.setContentsMargins(0, 0, 0, 0)
+        filter_row.setSpacing(4)
+        filter_row.addWidget(self.var_filter, 1)
         from .micro_innovations import global_mru_columns
-        mru_refs = global_mru_columns().items(3)
+        mru_refs = global_mru_columns().items(4)
         if mru_refs and self.selectors:
-            mru_row = QHBoxLayout()
-            mru_row.setSpacing(4)
-            mru_lbl = QLabel("Recent:")
-            mru_lbl.setStyleSheet("font-size: 8pt; color: #64748b;")
-            mru_row.addWidget(mru_lbl)
+            from PySide6.QtWidgets import QMenu
+            mru_btn = QToolButton()
+            mru_btn.setText("Recent ▾")
+            mru_btn.setToolTip("Quick-insert recently used columns")
+            mru_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            mru_menu = QMenu(mru_btn)
             for ref in mru_refs:
-                chip = QPushButton(ref.split(":")[0])
-                chip.setAutoDefault(False)
-                chip.setToolTip(f"Insert {ref}")
-                chip.setStyleSheet("font-size: 7.8pt; padding: 1px 6px;")
-                chip.clicked.connect(lambda checked=False, r=ref: self._insert_mru_ref(r))
-                mru_row.addWidget(chip)
-            mru_row.addStretch()
-            left.addLayout(mru_row)
+                mru_menu.addAction(ref, lambda checked=False, r=ref: self._insert_mru_ref(r))
+            mru_btn.setMenu(mru_menu)
+            filter_row.addWidget(mru_btn)
+        left.addLayout(filter_row)
         left.addWidget(self.available)
         self.select_button=QPushButton('Select'); self.select_button.setAutoDefault(False)
         self.select_button.clicked.connect(self.transfer); left.addWidget(self.select_button)
         self.available.itemDoubleClicked.connect(lambda item:self.transfer())
         self.available.itemSelectionChanged.connect(lambda:self.select_button.setEnabled(bool(self.available.selectedItems())))
+        self.available.installEventFilter(self)
         if self.selectors: body.addLayout(left,1)
         form=QFormLayout(); form.setVerticalSpacing(14)
         for spec in self.selectors:
@@ -447,6 +452,14 @@ class ProcedureDialog(QDialog):
             self.activate(self.selectors[0]['key'])
             self.controls[self.active_key].setFocus()
 
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj is getattr(self, 'available', None) and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.available.selectedItems():
+                self.transfer()
+                return True
+        return super().eventFilter(obj, event)
+
     def _filter_available_variables(self, text):
         query = text.strip().lower()
         for i in range(self.available.count()):
@@ -458,7 +471,14 @@ class ProcedureDialog(QDialog):
         self.active_key=key; self.available.clear()
         if hasattr(self, 'error'): self.error.setVisible(False)
         spec=next(s for s in self.selectors if s['key']==key)
+        any_populated = any(_column_has_data(c) for c in self.worksheet.columns)
+        parent = self.parent()
+        hidden_cols = set(getattr(parent, '_hidden_columns', ()) or ()) if parent is not None and not getattr(parent, '_use_hidden_in_dialogs', False) else set()
         for i,column in enumerate(self.worksheet.columns):
+            if i in hidden_cols:
+                continue
+            if any_populated and not _column_has_data(column) and column.name == f"C{i + 1}":
+                continue
             if column.kind in spec.get('kinds',('number',)):
                 label=format_variable_reference(i,self.worksheet)
                 item=QListWidgetItem(label); item.setToolTip(label); item.setData(Qt.ItemDataRole.UserRole,i); self.available.addItem(item)
@@ -628,6 +648,17 @@ def load_dialog_state(worksheet, key_name: str) -> dict | None:
     return copy.deepcopy(saved) if saved is not None else None
 
 
+def default_confidence_percent() -> float:
+    from PySide6.QtCore import QSettings
+    try:
+        val = float(QSettings("StatCraft", "Desktop").value("options/default_confidence", 95.0))
+        if 50.0 <= val <= 99.99:
+            return val
+    except (TypeError, ValueError):
+        pass
+    return 95.0
+
+
 class ScatterTypeDialog(QDialog):
     def __init__(self,parent,default_mode=None):
         from .scatter import MODES
@@ -707,6 +738,14 @@ class ScatterDialog(QDialog):
         buttons.accepted.connect(self.validate); buttons.rejected.connect(self.reject); layout.addWidget(buttons)
         self._restore_dialog_state()
 
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj is getattr(self, 'available', None) and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.available.selectedItems():
+                self.transfer()
+                return True
+        return super().eventFilter(obj, event)
+
     def _filter_available_variables(self, text):
         query = text.strip().lower()
         for i in range(self.available.count()):
@@ -777,7 +816,10 @@ class ScatterDialog(QDialog):
     def activate(self,role):
         if self.active==role: return
         self.active=role; self.available.clear()
+        any_populated = any(_column_has_data(c) for c in self.worksheet.columns)
         for i,column in enumerate(self.worksheet.columns):
+            if any_populated and not _column_has_data(column) and column.name == f"C{i + 1}":
+                continue
             if column.kind=='number' or role=='group' and column.kind=='text':
                 label=format_variable_reference(i,self.worksheet); item=QListWidgetItem(label); item.setToolTip(label)
                 item.setData(Qt.ItemDataRole.UserRole,i); self.available.addItem(item)

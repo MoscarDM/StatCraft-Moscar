@@ -121,8 +121,9 @@ def analyze_factorial(worksheet,response_index,factor_indices,max_order=2,confid
     Missing responses/factors omit a row jointly. Rank/saturated models error.
     """
     if not isinstance(worksheet,Worksheet):raise ValueError('A Worksheet is required.')
+    from .fractional import _FACTOR_LETTERS
     factors=list(factor_indices);k=len(factors)
-    _integer(k,2,8,'Factor count');_integer(max_order,1,3,'Maximum interaction order')
+    _integer(k,2,15,'Factor count');_integer(max_order,1,3,'Maximum interaction order')
     _integer(response_index,0,len(worksheet.columns)-1,'Response index')
     for index in factors:_integer(index,0,len(worksheet.columns)-1,'Factor index')
     if len(set(factors))!=k or response_index in factors:raise ValueError('Select distinct factor columns and a separate response.')
@@ -145,7 +146,7 @@ def analyze_factorial(worksheet,response_index,factor_indices,max_order=2,confid
             levels=sorted(set(v for v in observed if v is not None))
             if len(levels) not in (2,3):raise ValueError('Each factor needs two observed levels, optionally their common center setting.')
             code=_coding(column.name,levels[0],levels[-1]);code['source']='Observed levels'
-        code['column_index']=index;code['letter']=chr(65+len(coding));coding.append(code)
+        code['column_index']=index;code['letter']=_FACTOR_LETTERS[len(coding)];coding.append(code)
     used=[];coded_rows=[];ys=[]
     for row in range(n):
         y=_level_or_missing(response.values[row]) if row<len(response.values) else None

@@ -12,9 +12,74 @@ import re
 from .doe import _integer, _coding
 from .model import Column, Worksheet
 
+# Positional factor letters skip 'I', which is reserved for the Identity element.
+_FACTOR_LETTERS = 'ABCDEFGHJKLMNOP'
+_RESOLUTION_ROMAN = {3: 'III', 4: 'IV', 5: 'V', 6: 'VI', 7: 'VII', 8: 'VIII'}
+
+
+def resolution_roman(resolution):
+    """Return the Roman-numeral representation of a design resolution (or 'Full')."""
+    if resolution is None:
+        return 'Full'
+    return _RESOLUTION_ROMAN.get(resolution, str(resolution))
+
+
+# Published principal-fraction generators for the supported base designs (k = 3..15).
+# https://support.minitab.com/en-us/minitab/help-and-how-to/statistical-modeling/doe/supporting-topics/factorial-and-screening-designs/design-generators-for-2-level-designs/
+_DEFAULT_PRODUCTS = {
+    3: {4: ('AB',)},
+    4: {8: ('ABC',)},
+    5: {8: ('AB', 'AC'), 16: ('ABCD',)},
+    6: {8: ('AB', 'AC', 'BC'), 16: ('ABC', 'BCD'), 32: ('ABCDE',)},
+    7: {8: ('AB', 'AC', 'BC', 'ABC'), 16: ('ABC', 'BCD', 'ACD'),
+        32: ('ABCD', 'ABDE'), 64: ('ABCDEF',)},
+    8: {16: ('BCD', 'ACD', 'ABC', 'ABD'), 32: ('ABC', 'ABD', 'BCDE'),
+        64: ('ABCD', 'ABEF'), 128: ('ABCDEFG',)},
+    9: {16: ('AB', 'AC', 'AD', 'BCD', 'ABCD'),
+        32: ('ABC', 'ABD', 'ACE', 'ADE'),
+        64: ('ABC', 'ABD', 'ACDEF'),
+        128: ('ABCDE', 'ABCFG')},
+    10: {16: ('AB', 'AC', 'BC', 'AD', 'BCD', 'ABCD'),
+         32: ('ABC', 'ABD', 'ACE', 'ADE', 'ABCDE'),
+         64: ('ABC', 'ADE', 'BDF', 'CEF'),
+         128: ('ABCDE', 'ABCFG', 'ABDF')},
+    11: {16: ('AB', 'AC', 'BC', 'AD', 'BD', 'ACD', 'BCD'),
+         32: ('ABC', 'ABD', 'ACD', 'ABE', 'ACE', 'ADE'),
+         64: ('ABCDE', 'ABF', 'ACD', 'CEF', 'BCD'),
+         128: ('ABCDE', 'ABCFG', 'ABDF', 'ACEG')},
+    12: {16: ('AB', 'AC', 'BC', 'AD', 'BD', 'ACD', 'BCD', 'ABCD'),
+         32: ('ABC', 'ABD', 'ACD', 'BCD', 'ABE', 'ACE', 'ADE'),
+         64: ('ABCDE', 'ABF', 'ACD', 'CEF', 'BCD', 'ABCEF'),
+         128: ('ABCDE', 'ABCFG', 'ABDF', 'ACEG', 'ADEFG')},
+    13: {16: ('AB', 'AC', 'BC', 'ABC', 'AD', 'BD', 'ABD', 'CD', 'ACD'),
+         32: ('ABC', 'ABD', 'ACD', 'BCD', 'ABE', 'ACE', 'BCE', 'ADE'),
+         64: ('ABCDE', 'ABF', 'ACD', 'CEF', 'BCD', 'ABCEF', 'ACE'),
+         128: ('ABCDE', 'ABCFG', 'ABDF', 'ACEG', 'ADEFG', 'ACD')},
+    14: {16: ('AB', 'AC', 'BC', 'ABC', 'AD', 'BD', 'ABD', 'CD', 'ACD', 'BCD'),
+         32: ('ABC', 'ABD', 'ACD', 'BCD', 'ABE', 'ACE', 'BCE', 'ADE', 'BDE'),
+         64: ('ABCDE', 'ABF', 'ACD', 'CEF', 'BCD', 'ABCEF', 'ACF', 'ACDEF'),
+         128: ('ABCDE', 'ABCFG', 'ABDF', 'ACEG', 'ADEFG', 'ACD', 'AEF')},
+    15: {16: ('AB', 'AC', 'BC', 'ABC', 'AD', 'BD', 'ABD', 'CD', 'ACD', 'BCD', 'ABCD'),
+         32: ('ABC', 'ABD', 'ACD', 'BCD', 'ABE', 'ACE', 'BCE', 'ADE', 'BDE', 'CDE'),
+         64: ('ABCDE', 'ABF', 'ACD', 'CEF', 'BCD', 'ABCEF', 'ACF', 'ACDEF', 'ABD'),
+         128: ('ABCDE', 'ABCFG', 'ABDF', 'ACEG', 'ADEFG', 'ACD', 'AEF', 'ABG')},
+}
+
+
+def default_designs(factor_count):
+    """Return corner runs, unblocked resolution and generators for each base design."""
+    _integer(factor_count, 2, 15, 'Factor count')
+    designs = [(2**factor_count, None, {})] if factor_count <= 8 else []
+    for runs, products in sorted(_DEFAULT_PRODUCTS.get(factor_count, {}).items(), reverse=True):
+        base_count = factor_count - len(products)
+        generators = {_FACTOR_LETTERS[base_count + i]: product for i, product in enumerate(products)}
+        resolution = alias_structure(generators, factor_count)['resolution']
+        designs.append((runs, resolution, generators))
+    return designs
+
 
 def _term(mask,factor_count):
-    return ''.join(chr(65+i) for i in range(factor_count) if mask&(1<<i)) or 'I'
+    return ''.join(_FACTOR_LETTERS[i] for i in range(factor_count) if mask&(1<<i)) or 'I'
 
 
 def _record(mask,sign,k):
@@ -22,12 +87,12 @@ def _record(mask,sign,k):
 
 
 def _parse(generators,factor_count):
-    _integer(factor_count,2,8,'Factor count')
+    _integer(factor_count,2,15,'Factor count')
     if not isinstance(generators,dict) or not generators:
         raise ValueError('A regular fraction requires at least one generated factor.')
-    labels=[chr(65+i) for i in range(factor_count)]
+    labels=list(_FACTOR_LETTERS[:factor_count])
     if any(not isinstance(k,str) or len(k)!=1 or k not in labels for k in generators):
-        raise ValueError('Generated-factor keys must be uppercase positional letters A..H within the factor count.')
+        raise ValueError('Generated-factor keys must be uppercase positional letters within the factor count (skipping I).')
     bases=[letter for letter in labels if letter not in generators]
     if len(bases)<2:raise ValueError('At least two independent base factors are required.')
     occupied={1<<labels.index(letter) for letter in bases}
@@ -36,7 +101,7 @@ def _parse(generators,factor_count):
         expression=generators[letter]
         if not isinstance(expression,str):raise ValueError('Generator products must be signed base-factor strings.')
         expression=expression.strip().upper()
-        if not re.fullmatch(r'[+-]?[A-H](?:\*?[A-H])*',expression):
+        if not re.fullmatch(r'[+-]?[A-HJ-P](?:\*?[A-HJ-P])*',expression):
             raise ValueError('Use a signed product of base-factor letters, for example ABC or -A*B*C.')
         sign=-1 if expression.startswith('-') else 1
         product=expression.lstrip('+-').replace('*','')
@@ -80,7 +145,8 @@ def alias_structure(generators,factor_count,max_order=3):
         expression=_term(seed,factor_count)+''.join(' = '+('-' if a['sign']<0 else '')+a['term'] for a in other)
         rows.append(dict(term=_term(seed,factor_count),mask=seed,aliases=aliases,expression=expression))
     return dict(factor_count=factor_count,base_factors=bases,generators=normalized,
-                defining_relation=defining,resolution=resolution,max_order=min(max_order,factor_count),rows=rows,
+                defining_relation=defining,resolution=resolution,resolution_roman=resolution_roman(resolution),
+                max_order=min(max_order,factor_count),rows=rows,
                 convention='Each seed term equals signed aliases on fraction corner runs; centers excluded.',native_parity=False)
 
 
@@ -157,6 +223,7 @@ def create_fractional(factors,generators,replicates=1,centers=0,randomize=True,s
         schema='statcraft-regular-fractional-v1',origin='Original StatCraft design',
         design='regular two-level fractional factorial',factors=coding,base_factors=bases,
         generators=normalized,defining_relation=alias['defining_relation'],resolution=alias['resolution'],
+        resolution_roman=alias['resolution_roman'],
         alias_structure=alias,replicates=replicates,centers=centers,randomize=randomize,seed=seed,blocks=blocks,
         standard_order='Runs grouped by block; first base factor fastest within block; centers per block.',
         point_types={'factorial':1,'center':0},native_parity=False)})

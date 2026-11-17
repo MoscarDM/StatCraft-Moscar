@@ -7,7 +7,8 @@ import math
 import random
 import unittest
 
-from statcraft.doe_catalog_designs import create_design,PB_RUNS,TAGUCHI_ARRAYS
+from statcraft.doe_catalog_designs import create_design,PB_RUNS,TAGUCHI_ARRAYS,two_level_design_spec
+from statcraft.doe_planner import build_plan
 
 
 def numeric_factors(k,levels=(0,1)):
@@ -183,6 +184,42 @@ class DOECatalogDesignTests(unittest.TestCase):
         factors=numeric_factors(2);factors[0]={'name':'Material','kind':'text','levels':['A','B']}
         with self.assertRaises(ValueError):create_design('general_factorial',factors,centers=1)
         with self.assertRaises(ValueError):create_design('general_factorial',numeric_factors(2,[0,1,2]),centers=1)
+
+    def test_nine_factor_resolution_iv_design(self):
+        spec = two_level_design_spec(num_factors=9, runs=32)
+        self.assertEqual(spec['resolution'], 4)
+        self.assertEqual(spec['resolution_roman'], 'IV')
+        self.assertEqual(len(spec['generators']), 4)
+        self.assertNotIn('I', spec['generators'])
+
+    def test_extended_two_level_catalog_9_to_15_factors(self):
+        expected_resolutions = {
+            9:  {16: (3, 'III'), 32: (4, 'IV'), 64: (4, 'IV'), 128: (6, 'VI')},
+            10: {16: (3, 'III'), 32: (4, 'IV'), 64: (4, 'IV'), 128: (5, 'V')},
+            11: {16: (3, 'III'), 32: (4, 'IV'), 64: (4, 'IV'), 128: (5, 'V')},
+            12: {16: (3, 'III'), 32: (4, 'IV'), 64: (4, 'IV'), 128: (4, 'IV')},
+            13: {16: (3, 'III'), 32: (4, 'IV'), 64: (4, 'IV'), 128: (4, 'IV')},
+            14: {16: (3, 'III'), 32: (4, 'IV'), 64: (4, 'IV'), 128: (4, 'IV')},
+            15: {16: (3, 'III'), 32: (4, 'IV'), 64: (4, 'IV'), 128: (4, 'IV')},
+        }
+        for k, runs_map in expected_resolutions.items():
+            factors = [dict(name=f'X{i+1}', low=-1, high=1) for i in range(k)]
+            for runs, (res_int, res_roman) in runs_map.items():
+                with self.subTest(k=k, runs=runs):
+                    spec = two_level_design_spec(num_factors=k, runs=runs)
+                    self.assertEqual(spec['resolution'], res_int)
+                    self.assertEqual(spec['resolution_roman'], res_roman)
+                    self.assertNotIn('I', spec['generators'])
+                    sheet = build_plan('fractional_factorial', factors, randomize=False, options={'generators': spec['generators']})
+                    self.assertEqual(sheet.row_count, runs)
+                    matrix = rows(sheet)
+                    self.assertEqual(len(set(matrix)), runs)
+                    for a, b in combinations(range(k), 2):
+                        self.assertEqual(sum(row[a] * row[b] for row in matrix), 0)
+        with self.assertRaises(ValueError):
+            two_level_design_spec(num_factors=16, runs=32)
+        with self.assertRaises(ValueError):
+            two_level_design_spec(num_factors=9, runs=24)
 
 
 if __name__=='__main__':unittest.main()

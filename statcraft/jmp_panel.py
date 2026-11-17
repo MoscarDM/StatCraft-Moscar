@@ -768,6 +768,7 @@ def populate_jmp_menubar(win: ModernWindow, bar: QMenuBar) -> QMenuBar:
     doe_m.addSeparator()
     _act(doe_m, "Analyze Definitive Screening Design…", win.analyze_dsd_dialog)
     _act(doe_m, "Analyze Factorial Design…", win.analyze_factorial)
+    _act(doe_m, "Analyze Split-Plot Design…", win.analyze_split_plot)
     _act(doe_m, "DOE Planner…", win.doe_planner)
     diag_m = doe_m.addMenu("Design Diagnostics")
     _act(diag_m, "Color Map on Correlations…", win.evaluate_design_dialog)

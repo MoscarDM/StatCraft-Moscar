@@ -255,3 +255,36 @@ def create_design(kind,factors,replicates=1,centers=0,randomize=True,seed=1,bloc
               'standard_order':'Grouped by complete-replicate block; first general-factorial factor changes fastest; centers last within each block.',
               'point_types':{'design':1,'center':0},'warnings':warnings,'native_parity':False}
     return Worksheet(name.strip(),columns,metadata={'doe':metadata})
+
+
+def two_level_design_spec(num_factors, runs):
+    """Return the published 2-level design spec (resolution & generators) for (num_factors, runs)."""
+    from .fractional import _FACTOR_LETTERS, alias_structure, default_designs, resolution_roman
+    _integer(num_factors, 2, 15, 'Factor count')
+    _integer(runs, 4, MAX_RUNS, 'Run count')
+    choices = default_designs(num_factors)
+    match = next(((r, res, gens) for r, res, gens in choices if r == runs), None)
+    if match is None:
+        supported = ', '.join(str(r) for r, _, _ in choices)
+        raise ValueError(f'Unsupported run count {runs} for {num_factors} factors. Choose one of: {supported}.')
+    _, resolution, generators = match
+    if generators:
+        structure = alias_structure(generators, num_factors)
+        return {
+            'num_factors': num_factors,
+            'runs': runs,
+            'resolution': structure['resolution'],
+            'resolution_roman': structure['resolution_roman'],
+            'generators': dict(structure['generators']),
+            'base_factors': list(structure['base_factors']),
+            'defining_relation': list(structure['defining_relation']),
+        }
+    return {
+        'num_factors': num_factors,
+        'runs': runs,
+        'resolution': resolution,
+        'resolution_roman': resolution_roman(resolution),
+        'generators': {},
+        'base_factors': list(_FACTOR_LETTERS[:num_factors]),
+        'defining_relation': [{'term': 'I', 'sign': 1, 'order': 0, 'mask': 0}],
+    }

@@ -52,3 +52,17 @@ def prune(state,known,strict=True):
     state['views']={key:value for key,value in state['views'].items() if key in known}
     if state['active'] not in state['open_ids']:state['active']=state['open_ids'][-1] if state['open_ids'] else None
     return state
+
+
+def prune_ids(state, removed_ids, strict=True):
+    """Remove specific output entry IDs from workspace tabs/views without touching REPORT or native tabs."""
+    state = validate(state) if strict else copy.deepcopy(state)
+    removed = set(removed_ids) - {REPORT}
+    if not removed:
+        return state
+    for field in ('open_ids', 'closed_ids'):
+        state[field] = [key for key in state[field] if key not in removed]
+    state['views'] = {key: value for key, value in state['views'].items() if key not in removed}
+    if state['active'] not in state['open_ids']:
+        state['active'] = state['open_ids'][-1] if state['open_ids'] else None
+    return state

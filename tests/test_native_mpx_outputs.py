@@ -28,6 +28,50 @@ def update(members, path, obj):
 
 
 class NativeSavedOutputTests(unittest.TestCase):
+    def test_optimizer_saved_curves_split_by_factor(self):
+        meta, members, graph, figure, _ = fixture()
+        figure.clear()
+        figure.update(NumFactors=2, NumResponses=1, NumPlotPoints=[3,2],
+                      FactLabels=['Temperature','Speed'], ResponseLabels=['Yield'],
+                      Goals=['Maximum'], YHat=[81.8], D=[1.0],
+                      MROpt={'FactorLevels': [[150.], [1.75]]},
+                      XPoints=[[100.,150.,200.,1.,2.]],
+                      YPoints=[[70.,81.8,75.,78.,81.8]])
+        update(members, '/commands/1/graphs/3/graph.json', graph)
+        before=copy.deepcopy(members)
+        result=read_outputs(meta,members)[0]['result']['graphs'][0]
+        self.assertEqual(len(result['panels']),2)
+        self.assertEqual(result['panels'][0]['series'][0]['x'],[100.,150.,200.])
+        self.assertEqual(result['panels'][1]['series'][0]['y'],[78.,81.8])
+        self.assertEqual(result['panels'][1]['x_label'],'Speed')
+        self.assertEqual([(r['axis'],r['pos']) for r in result['panels'][1]['ref_lines']],
+                         [('y',81.8),('x',1.75)])
+        self.assertEqual(result['panels'][0]['bounds'][2:],result['panels'][1]['bounds'][2:])
+        self.assertIn('saved',result['panels'][0]['note'].lower())
+        self.assertEqual(members,before)
+
+    def test_malformed_optimizer_keeps_unsupported_warning(self):
+        meta,members,graph,figure,_=fixture()
+        figure.clear()
+        figure.update(NumFactors=2,NumResponses=1,NumPlotPoints=[3,2],
+                      FactLabels=['A','B'],ResponseLabels=['Y'],
+                      XPoints=[[1.,2.]],YPoints=[[3.,4.]])
+        update(members,'/commands/1/graphs/3/graph.json',graph)
+        result=read_outputs(meta,members)[0]['result']['graphs'][0]
+        self.assertEqual(result['panels'],[])
+        self.assertTrue(result['warnings'])
+
+    def test_optimizer_multiple_responses_keep_separate_curves(self):
+        from statcraft.native_mpx_outputs import _optimizer_panels
+        figure=dict(NumFactors=1,NumResponses=2,NumPlotPoints=[2],
+                    FactLabels=['Heat'],ResponseLabels=['Yield','Cost'],
+                    XPoints=[[1.,2.],[1.,2.]],YPoints=[[10.,20.],[90.,80.]])
+        panels=_optimizer_panels(figure)
+        self.assertEqual([p['y_label'] for p in panels],['Yield','Cost'])
+        self.assertEqual(panels[1]['series'][0]['y'],[90.,80.])
+        figure['YPoints'][1][0]=float('nan')
+        self.assertEqual(_optimizer_panels(figure),[])
+
     def test_group_identity_order_and_native_origin(self):
         meta, members, *_ = fixture()
         e = read_outputs(meta, members)[0]

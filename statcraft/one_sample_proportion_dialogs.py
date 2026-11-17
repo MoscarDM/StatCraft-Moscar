@@ -111,6 +111,8 @@ class OneSampleProportionDialog(QDialog):
         self.result_payload: Optional[Dict[str, Any]] = None
 
         self.settings = one_sample_proportion_settings()
+        from .variable_dialogs import default_confidence_percent
+        self.settings["confidence_level"] = default_confidence_percent()
         self.setMinimumSize(560, 420)
         self.resize(560, 420)
         self.setSizeGripEnabled(True)
@@ -318,3 +320,26 @@ class OneSampleProportionDialog(QDialog):
 
         self.result_payload = dict(self.settings)
         self.accept()
+
+    def get_state(self) -> dict:
+        import copy
+        return {
+            "data_idx": self.combo_data.currentIndex(),
+            "sample_cols": self.sample_cols_edit.text(),
+            "events": self.events_edit.text(),
+            "trials": self.trials_edit.text(),
+            "hyp": self.hyp_edit.text(),
+            "settings": copy.deepcopy(self.settings),
+        }
+
+    def set_state(self, state: dict) -> None:
+        import copy
+        if not isinstance(state, dict):
+            return
+        if "data_idx" in state:
+            self.combo_data.setCurrentIndex(int(state["data_idx"]))
+        for attr, key in (("sample_cols_edit", "sample_cols"), ("events_edit", "events"), ("trials_edit", "trials"), ("hyp_edit", "hyp")):
+            if key in state:
+                getattr(self, attr).setText(str(state[key]))
+        if isinstance(state.get("settings"), dict):
+            self.settings.update(copy.deepcopy(state["settings"]))

@@ -126,11 +126,19 @@ COMMAND_SIGNATURES: dict[str, str] = {
 class CommandLineAssistant(QObject):
     """Attaches verb + column autocomplete and live syntax hints to command_editor."""
 
-    def __init__(self, editor: Any, hint_label: QLabel, get_worksheet: Callable[[], Any]) -> None:
+    def __init__(
+        self,
+        editor: Any,
+        hint_label: QLabel,
+        get_worksheet: Callable[[], Any],
+        get_history: Callable[[], list[str]] | None = None,
+    ) -> None:
         super().__init__(editor)
         self.editor = editor
         self.hint_label = hint_label
         self.get_worksheet = get_worksheet
+        self.get_history = get_history
+        self._history_pos = -1
         self._model = QStringListModel(sorted(COMMAND_SIGNATURES.keys()), self)
         self._completer: QCompleter | None = None
         editor.textChanged.connect(self._on_text_changed)
@@ -197,7 +205,31 @@ class CommandLineAssistant(QObject):
         cursor.insertText(completion + " ")
         self.editor.setTextCursor(cursor)
 
+    def cycle_history(self, step: int) -> bool:
+        if not callable(self.get_history):
+            return False
+        cmds = [c for c in self.get_history() if c and c.strip()]
+        if not cmds:
+            return False
+        if self._history_pos < 0:
+            self._history_pos = len(cmds) - 1 if step < 0 else 0
+        else:
+            self._history_pos = max(0, min(len(cmds) - 1, self._history_pos + step))
+        self.editor.setPlainText(cmds[self._history_pos])
+        return True
+
     def eventFilter(self, obj: QObject, event: Any) -> bool:
+        if obj is self.editor and event.type() == event.Type.KeyPress:
+            mods = event.modifiers()
+            if (mods & Qt.KeyboardModifier.AltModifier) and event.key() in (Qt.Key.Key_Up, Qt.Key.Key_F2):
+                if self.cycle_history(-1):
+                    return True
+            if (mods & Qt.KeyboardModifier.AltModifier) and event.key() == Qt.Key.Key_Down:
+                if self.cycle_history(1):
+                    return True
+            if mods == Qt.KeyboardModifier.NoModifier and event.key() == Qt.Key.Key_F2:
+                if self.cycle_history(1):
+                    return True
         if obj is self.editor and self._completer is not None and event.type() == event.Type.KeyPress:
             popup = self._completer.popup()
             if popup.isVisible() and event.key() in (
@@ -412,57 +444,54 @@ class BackgroundComputeManager(QObject):
 # 6. Floating Quick-Bar on Every Chart
 # ---------------------------------------------------------------------------
 def build_chart_quick_bar(graph_frame: Any, chart: Any, entry: dict[str, Any], window: Any) -> QWidget:
-    """Compact header quick-bar for Grid, Log Y, CI/PI toggles, and 1-click SVG/PNG copy."""
-    bar = QWidget(graph_frame)
+    """Compact Tools dropdown button for Grid, Log Y, CI/PI toggles, Crosshair, and SVG/PNG copy."""
+    bar = QToolButton(graph_frame)
     bar.setObjectName("chartQuickBar")
-    row = QHBoxLayout(bar)
-    row.setContentsMargins(0, 0, 0, 0)
-    row.setSpacing(3)
-
-    def _mk_btn(text: str, tip: str, checkable: bool = False) -> QToolButton:
-        b = QToolButton(bar)
-        b.setText(text)
-        b.setToolTip(tip)
-        b.setCheckable(checkable)
-        b.setStyleSheet(
-            "QToolButton { font-size: 7.8pt; padding: 2px 6px; border: 1px solid #cbd5e1; border-radius: 3px; }"
-            "QToolButton:checked { background-color: #0284c7; color: white; border-color: #0369a1; }"
-        )
-        return b
-
-    grid_btn = _mk_btn("Grid", "Toggle chart gridlines", checkable=True)
-    grid_btn.setChecked(True)
+    bar.setText("Tools ▾")
+    bar.setToolTip("Quick chart toggles & copy actions")
+    bar.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    menu = QMenu(bar)
 
     def _toggle_grid(checked: bool) -> None:
+        chart.annotation_grid = checked
         fig = getattr(chart, "figure", None)
-        if fig is None:
-            return
-        for ax in fig.get_axes():
-            ax.grid(checked, alpha=0.25 if checked else 0.0)
-        if hasattr(chart, "canvas"):
-            chart.canvas.draw_idle()
+        if fig is not None:
+            for ax in fig.get_axes():
+                ax.grid(checked, alpha=0.25 if checked else 0.0)
+            if hasattr(chart, "canvas"):
+                chart.canvas.draw_idle()
+        if hasattr(chart, "update"):
+            chart.update()
 
-    grid_btn.toggled.connect(_toggle_grid)
-    row.addWidget(grid_btn)
-
-    log_btn = _mk_btn("Log Y", "Toggle logarithmic Y axis", checkable=True)
+    grid_act = menu.addAction("Show Gridlines")
+    grid_act.setCheckable(True)
+    grid_act.setChecked(bool(getattr(chart, "annotation_grid", True)))
+    grid_act.toggled.connect(_toggle_grid)
 
     def _toggle_log_y(checked: bool) -> None:
+        chart.annotation_y_log = checked
         fig = getattr(chart, "figure", None)
-        if fig is None:
-            return
-        for ax in fig.get_axes():
-            try:
-                ax.set_yscale("log" if checked else "linear")
-            except Exception:
-                pass
-        if hasattr(chart, "canvas"):
-            chart.canvas.draw_idle()
+        if fig is not None:
+            for ax in fig.get_axes():
+                try:
+                    ax.set_yscale("log" if checked else "linear")
+                except Exception:
+                    pass
+            if hasattr(chart, "canvas"):
+                chart.canvas.draw_idle()
+        if hasattr(chart, "update"):
+            chart.update()
+        if checked and hasattr(chart, "_zoom2d_meta"):
+            meta0 = chart._zoom2d_meta.get(0, {})
+            yb = meta0.get("yb")
+            if yb and yb[0] <= 0 and hasattr(window, "statusBar"):
+                window.statusBar().showMessage("Log Y scale requires all Y bounds > 0.", 3500)
 
-    log_btn.toggled.connect(_toggle_log_y)
-    row.addWidget(log_btn)
+    log_act = menu.addAction("Logarithmic Y Scale")
+    log_act.setCheckable(True)
+    log_act.setChecked(bool(getattr(chart, "annotation_y_log", False)))
+    log_act.toggled.connect(_toggle_log_y)
 
-    # Show CI / PI quick toggles when the chart has fitted-line/regression bands
     meta = entry.get("result", {}) if isinstance(entry, dict) else {}
     raw_graphs = meta.get("graphs", []) if isinstance(meta, dict) else []
     if isinstance(raw_graphs, dict):
@@ -473,38 +502,68 @@ def build_chart_quick_bar(graph_frame: Any, chart: Any, entry: dict[str, Any], w
         g0 = {}
     bands = g0.get("bands") or g0.get("fitted_bands")
     if isinstance(bands, dict) or "Fitted Line" in str(entry.get("title", "")):
-        for band_key, label_txt in (("show_ci", "CI"), ("show_pi", "PI")):
-            b_btn = _mk_btn(label_txt, f"Toggle 95% {label_txt} band", checkable=True)
-            b_btn.setChecked(bool(g0.get(band_key, True)))
+        for band_key, label_txt in (("show_ci", "Show 95% CI"), ("show_pi", "Show 95% PI")):
+            b_act = menu.addAction(label_txt)
+            b_act.setCheckable(True)
+            b_act.setChecked(bool(g0.get(band_key, True)))
 
             def _toggle_band(checked: bool, k: str = band_key) -> None:
                 if isinstance(g0, dict):
                     g0[k] = checked
+                if isinstance(meta, dict):
+                    meta[k] = checked
+                if hasattr(chart, "_prepare"):
+                    try:
+                        chart._prepare()
+                    except Exception:
+                        pass
                 if hasattr(chart, "render"):
                     try:
                         chart.render()
                     except Exception:
                         pass
+                if hasattr(chart, "update"):
+                    chart.update()
 
-            b_btn.toggled.connect(_toggle_band)
-            row.addWidget(b_btn)
+            b_act.toggled.connect(_toggle_band)
 
-    svg_btn = _mk_btn("SVG", "Copy chart as SVG")
-    svg_btn.clicked.connect(lambda: getattr(window, "copy_chart_svg", lambda *_: None)())
-    row.addWidget(svg_btn)
+    def _toggle_crosshair(checked: bool) -> None:
+        chart._crosshair_enabled = checked
+        if hasattr(chart, "setMouseTracking"):
+            chart.setMouseTracking(True)
+        if not checked:
+            chart._crosshair_pos = None
+        chart.setCursor(Qt.CursorShape.CrossCursor if checked else Qt.CursorShape.ArrowCursor)
+        if hasattr(chart, "update"):
+            chart.update()
+        if hasattr(window, "statusBar"):
+            window.statusBar().showMessage(
+                "Crosshair mode enabled — hover plot to inspect coordinates." if checked else "Crosshair mode disabled.",
+                3000,
+            )
 
-    png_btn = _mk_btn("PNG", "Copy chart image to clipboard")
+    cross_act = menu.addAction("Crosshair Mode")
+    cross_act.setCheckable(True)
+    cross_act.setChecked(bool(getattr(chart, "_crosshair_enabled", False)))
+    cross_act.toggled.connect(_toggle_crosshair)
+    menu.addSeparator()
+
+    def _copy_svg() -> None:
+        fn = getattr(window, "copy_active_chart_svg", None) or getattr(window, "copy_chart_svg", None)
+        if callable(fn):
+            fn(entry)
+
+    menu.addAction("Copy as SVG", _copy_svg)
 
     def _copy_png() -> None:
-        canvas = getattr(chart, "canvas", None)
-        if canvas is not None:
-            QApplication.clipboard().setPixmap(canvas.grab())
+        target = getattr(chart, "canvas", None) or chart
+        if hasattr(target, "grab"):
+            QApplication.clipboard().setPixmap(target.grab())
             if hasattr(window, "statusBar"):
                 window.statusBar().showMessage("Copied chart PNG to clipboard.", 3500)
 
-    png_btn.clicked.connect(_copy_png)
-    row.addWidget(png_btn)
-
+    menu.addAction("Copy as PNG", _copy_png)
+    bar.setMenu(menu)
     graph_frame.export_hidden.append(bar)
     return bar
 

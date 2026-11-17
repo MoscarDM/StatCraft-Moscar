@@ -28,7 +28,8 @@ class SimilarGraphTests(unittest.TestCase):
     def tearDown(self):
         from PySide6.QtCore import QCoreApplication,QEvent
         for widget in self.app.topLevelWidgets():
-            widget.close();widget.deleteLater()
+            if type(widget).__name__ != 'ModernWindow':
+                widget.close();widget.deleteLater()
         QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete)
 
     def test_scatter_role_grid_and_options_preload_and_new_result(self):

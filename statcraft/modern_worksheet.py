@@ -183,6 +183,12 @@ class WorksheetDelegate(QStyledItemDelegate):
 
         opt = QStyleOptionViewItem(option)
         is_cell_selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        win = table.window() if table is not None else None
+        name_active = bool(getattr(win, "_name_row_active", False))
+        if self.is_column_names and not name_active:
+            is_cell_selected = False
+        elif (not self.is_column_names) and name_active:
+            is_cell_selected = False
         opt.state &= ~QStyle.StateFlag.State_Selected
         opt.state &= ~QStyle.StateFlag.State_HasFocus
 
@@ -258,6 +264,16 @@ class WorksheetTable(QTableWidget):
             mods = event.modifiers()
             # Ctrl+Space / Ctrl+Home / Ctrl+End / Ctrl+Up
             if (mods & Qt.KeyboardModifier.ControlModifier) and not (mods & (Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier | Qt.KeyboardModifier.ShiftModifier)):
+                if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    if self.columnCount() > 0:
+                        next_col = min(self.columnCount() - 1, max(0, self.currentColumn()) + 1)
+                        self.setCurrentCell(0, next_col)
+                        return True
+                if key == Qt.Key.Key_Insert:
+                    win = self.window()
+                    if hasattr(win, "copy_cells"):
+                        win.copy_cells()
+                        return True
                 if key == Qt.Key.Key_Space:
                     win = self.window()
                     if hasattr(win, "select_worksheet_column") and self.currentColumn() >= 0:
@@ -281,18 +297,92 @@ class WorksheetTable(QTableWidget):
                 if key == Qt.Key.Key_Right:
                     self.navigate('ctrl_right')
                     return True
+            elif (mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)) == (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier) and not (mods & (Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)):
+                ctrl_shift_map = {
+                    Qt.Key.Key_Up: 'ctrl_up',
+                    Qt.Key.Key_Down: 'ctrl_down',
+                    Qt.Key.Key_Left: 'ctrl_left',
+                    Qt.Key.Key_Right: 'ctrl_right',
+                }
+                if key in ctrl_shift_map:
+                    r0, c0 = max(0, self.currentRow()), max(0, self.currentColumn())
+                    self.navigate(ctrl_shift_map[key])
+                    r1, c1 = max(0, self.currentRow()), max(0, self.currentColumn())
+                    from PySide6.QtWidgets import QTableWidgetSelectionRange
+                    self.clearSelection()
+                    self.setRangeSelected(QTableWidgetSelectionRange(min(r0, r1), min(c0, c1), max(r0, r1), max(c0, c1)), True)
+                    return True
             elif (mods & Qt.KeyboardModifier.ShiftModifier) and not (mods & (Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier | Qt.KeyboardModifier.ControlModifier)):
+                if key == Qt.Key.Key_Home and self.columnCount() > 0:
+                    r = max(0, self.currentRow())
+                    cur_c = max(0, self.currentColumn())
+                    from PySide6.QtWidgets import QTableWidgetSelectionRange
+                    self.setCurrentCell(r, 0)
+                    self.clearSelection()
+                    self.setRangeSelected(QTableWidgetSelectionRange(r, 0, r, cur_c), True)
+                    return True
+                if key == Qt.Key.Key_End and self.columnCount() > 0:
+                    r = max(0, self.currentRow())
+                    cur_c = max(0, self.currentColumn())
+                    last_c = cur_c
+                    for c in range(self.columnCount() - 1, -1, -1):
+                        it = self.item(r, c)
+                        if it is not None and it.text().strip():
+                            last_c = c
+                            break
+                    from PySide6.QtWidgets import QTableWidgetSelectionRange
+                    lo, hi = min(cur_c, last_c), max(cur_c, last_c)
+                    self.setCurrentCell(r, last_c)
+                    self.clearSelection()
+                    self.setRangeSelected(QTableWidgetSelectionRange(r, lo, r, hi), True)
+                    return True
+                if key == Qt.Key.Key_Insert:
+                    win = self.window()
+                    if hasattr(win, "paste_cells"):
+                        win.paste_cells()
+                        return True
                 if key == Qt.Key.Key_Space:
                     win = self.window()
                     if hasattr(win, "select_worksheet_row") and self.currentRow() >= 0:
                         win.select_worksheet_row(self.currentRow())
                         return True
             elif not mods:
+                if key == Qt.Key.Key_F2:
+                    item = self.currentItem()
+                    if item is not None:
+                        self.editItem(item)
+                        return True
+                if key == Qt.Key.Key_Home:
+                    if self.columnCount() > 0:
+                        self.setCurrentCell(max(0, self.currentRow()), 0)
+                        return True
+                if key == Qt.Key.Key_End:
+                    r = max(0, self.currentRow())
+                    last_c = 0
+                    for c in range(self.columnCount() - 1, -1, -1):
+                        it = self.item(r, c)
+                        if it is not None and it.text().strip():
+                            last_c = c
+                            break
+                    self.setCurrentCell(r, last_c)
+                    return True
                 scroll = self.verticalScrollBar()
                 if key == Qt.Key.Key_Down and self.currentRow() == self.rowCount() - 1:
                     self.navigate('down')
                     return True
                 if key == Qt.Key.Key_Up and self.currentRow() == 0:
+                    win = self.window()
+                    if getattr(win, "page", 0) == 0 and hasattr(win, "column_names") and self.currentColumn() >= 0:
+                        col = self.currentColumn()
+                        if hasattr(win, "_activate_column_name_cell"):
+                            win._activate_column_name_cell(0, col)
+                        else:
+                            win.column_names.setCurrentCell(0, col)
+                        it = win.column_names.item(0, col)
+                        if it is not None:
+                            win.column_names.scrollToItem(it)
+                        win.column_names.setFocus(Qt.FocusReason.OtherFocusReason)
+                        return True
                     self.navigate('up')
                     return True
                 if self.page_rows and ((key == Qt.Key.Key_PageDown and scroll.value() == scroll.maximum()) or (key == Qt.Key.Key_PageUp and scroll.value() == scroll.minimum())):
@@ -303,9 +393,18 @@ class WorksheetTable(QTableWidget):
                 self.navigate(direction)
                 return True
 
-            # Task 5 & 6: Backspace clears & edits; printable character type-over entry
+            # Task 5 & 6: Backspace clears multi-selection (Minitab ID 57632) or edits single cell; printable character type-over entry
             if not (mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)):
                 if key == Qt.Key.Key_Backspace:
+                    win = self.window()
+                    ranges = self.selectedRanges()
+                    multi_cells = sum(
+                        (a.bottomRow() - a.topRow() + 1) * (a.rightColumn() - a.leftColumn() + 1)
+                        for a in ranges
+                    )
+                    if multi_cells > 1 and hasattr(win, "clear_cells"):
+                        win.clear_cells()
+                        return True
                     item = self.currentItem()
                     if item:
                         self.editItem(item)
@@ -337,17 +436,17 @@ class WorksheetTable(QTableWidget):
 
 
     def fill_handle_anchor_range(self):
+        win = self.window()
+        if getattr(win, "_name_row_active", False):
+            return None
         ranges = self.selectedRanges()
-        if ranges:
-            top = min(r.topRow() for r in ranges)
-            bottom = max(r.bottomRow() for r in ranges)
-            left = min(r.leftColumn() for r in ranges)
-            right = max(r.rightColumn() for r in ranges)
-            return (top, bottom, left, right)
-        cr, cc = self.currentRow(), self.currentColumn()
-        if cr >= 0 and cc >= 0:
-            return (cr, cr, cc, cc)
-        return None
+        if not ranges:
+            return None
+        top = min(r.topRow() for r in ranges)
+        bottom = max(r.bottomRow() for r in ranges)
+        left = min(r.leftColumn() for r in ranges)
+        right = max(r.rightColumn() for r in ranges)
+        return (top, bottom, left, right)
 
     def fill_handle_rect(self):
         if self.model() is None:

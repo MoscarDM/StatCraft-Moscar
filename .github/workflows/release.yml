@@ -57,6 +57,13 @@ jobs:
           pyinstaller --noconfirm --distpath dist/app --workpath build/app StatCraft.spec
           pyinstaller --noconfirm --distpath dist/setup --workpath build/setup installer.spec
 
+      - name: Verify Built Windows Executable (Smoke & SHA-256)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          STATCRAFT_TESTING: '1'
+        run: |
+          python scripts/verify_built_executable.py --exe dist/app/StatCraft.exe
+
       - name: Stage Windows Binaries
         shell: pwsh
         run: |
@@ -122,10 +129,17 @@ jobs:
         run: |
           mkdir -p artifacts
           cd dist/app
-          # Create DMG
-          hdiutil create -volname "StatCraft" -srcfolder "StatCraft.app" -ov -format UDZO "../../artifacts/StatCraft-v${STATCRAFT_VER}-macOS.dmg"
+          # Create DMG (use HFS+ and retry; fall back to ZIP-only if runner blocks hdiutil)
+          for attempt in 1 2 3; do
+            hdiutil create -fs HFS+ -volname "StatCraft" -srcfolder "StatCraft.app" -ov -format UDZO "../../artifacts/StatCraft-v${STATCRAFT_VER}-macOS.dmg" && break
+            echo "hdiutil attempt $attempt failed, retrying in 5s..."
+            sleep 5
+          done
+          if [ ! -f "../../artifacts/StatCraft-v${STATCRAFT_VER}-macOS.dmg" ]; then
+            echo "::warning::DMG creation failed on runner; continuing with macOS ZIP bundle."
+          fi
           # Create ZIP
-          zip -r "../../artifacts/StatCraft-v${STATCRAFT_VER}-macOS.zip" "StatCraft.app"
+          ditto -c -k --sequesterRsrc --keepParent "StatCraft.app" "../../artifacts/StatCraft-v${STATCRAFT_VER}-macOS.zip"
           cd ../..
 
       - name: Upload macOS Artifacts

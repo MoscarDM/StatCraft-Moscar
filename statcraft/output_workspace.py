@@ -2,13 +2,17 @@
 import copy
 from PySide6.QtCore import Qt,QSignalBlocker,QTimer
 from PySide6.QtGui import QKeySequence,QShortcut
-from PySide6.QtWidgets import QWidget,QHBoxLayout,QTabBar,QComboBox,QMenu,QPlainTextEdit
+from PySide6.QtWidgets import (
+    QWidget, QHBoxLayout, QVBoxLayout, QTabBar, QComboBox, QMenu,
+    QPlainTextEdit, QSplitter, QLabel, QToolButton, QFrame,
+)
 from . import workspace_state as ws
 
 
 class OutputWorkspace:
     def __init__(self,window,layout):
-        self.window=window;self.history=window.presenter.history;self.state=ws.empty();self.busy=False
+        self.window=window;self.layout=layout;self.history=window.presenter.history;self.state=ws.empty();self.busy=False
+        self._split_splitter=None;self._secondary_pane=None;self._secondary_key=None
         self.row=QWidget();box=QHBoxLayout(self.row);box.setContentsMargins(0,0,4,0);box.setSpacing(4)
         self.tabs=QTabBar();self.tabs.setExpanding(False);self.tabs.setMovable(True);self.tabs.setTabsClosable(True)
         self.tabs.setElideMode(Qt.TextElideMode.ElideRight);self.tabs.setUsesScrollButtons(True)
@@ -30,6 +34,7 @@ class OutputWorkspace:
 
     def sync_document(self):
         if self.history is self.window.presenter.history:return
+        self.unsplit_view()
         self.history=self.window.presenter.history;self.state=ws.empty()
         self.window._output_zoom_levels.clear()
         with QSignalBlocker(self.pad):self.pad.clear()
@@ -44,6 +49,13 @@ class OutputWorkspace:
                 i=self.tabs.addTab(title);self.tabs.setTabData(i,key);self.tabs.setTabToolTip(i,title)
             if self.state['active'] in self.state['open_ids']:self.tabs.setCurrentIndex(self.state['open_ids'].index(self.state['active']))
         self.row.setVisible(bool(self.state['open_ids']));self.sync_views()
+        if self.is_split():
+            if len(self.state['open_ids'])<2:
+                self.unsplit_view()
+            else:
+                if self._secondary_key not in self.state['open_ids'] or self._secondary_key==self.state['active']:
+                    self._secondary_key=next((k for k in self.state['open_ids'] if k!=self.state['active']),None)
+                self._refresh_secondary_pane()
 
     def remember(self):
         if self.busy:return
@@ -166,7 +178,108 @@ class OutputWorkspace:
         menu.addAction('Close',lambda:self.close_index(self.state['open_ids'].index(key)))
         menu.addAction('Close Other Tabs',lambda:self.close_all(key));menu.addAction('Close All Tabs',self.close_all)
         menu.addAction('Reopen Closed Tab',self.reopen).setEnabled(bool(self.state['closed_ids']))
+        menu.addSeparator()
+        if self.tabs.count()>=2:
+            menu.addAction('Split View',lambda idx=index:self.split_view(idx))
+        if self.is_split():
+            menu.addAction('Unsplit View',self.unsplit_view)
         menu.exec(self.tabs.mapToGlobal(point))
+
+    def is_split(self) -> bool:
+        return self._split_splitter is not None
+
+    def split_view(self, secondary_index=None) -> bool:
+        """Show a second open output tab side-by-side with the active result pane."""
+        count = self.tabs.count()
+        if count < 2:
+            return False
+        active_idx = self.tabs.currentIndex()
+        if active_idx < 0:
+            active_idx = 0
+        if secondary_index is None:
+            secondary_index = (active_idx + 1) % count
+        else:
+            if not (0 <= secondary_index < count):
+                return False
+            if secondary_index == active_idx:
+                secondary_index = (active_idx + 1) % count
+        sec_key = self.tabs.tabData(secondary_index)
+        if sec_key is None:
+            return False
+        self._secondary_key = sec_key
+        if self._split_splitter is None:
+            w = self.window
+            idx = self.layout.indexOf(w.result_tabs)
+            if idx < 0:
+                return False
+            self._split_splitter = QSplitter(Qt.Orientation.Horizontal)
+            self._secondary_pane = self._build_secondary_pane()
+            self.layout.removeWidget(w.result_tabs)
+            self._split_splitter.addWidget(w.result_tabs)
+            self._split_splitter.addWidget(self._secondary_pane)
+            self.layout.insertWidget(idx, self._split_splitter, 1)
+            self._split_splitter.setSizes([500, 500])
+            w.result_tabs.show()
+            self._secondary_pane.show()
+        self._refresh_secondary_pane()
+        return True
+
+    def unsplit_view(self) -> bool:
+        """Restore single-pane output view."""
+        if self._split_splitter is None:
+            return False
+        w = self.window
+        idx = self.layout.indexOf(self._split_splitter)
+        if idx < 0:
+            idx = self.layout.count()
+        w.result_tabs.setParent(None)
+        self.layout.insertWidget(idx, w.result_tabs, 1)
+        w.result_tabs.show()
+        self._split_splitter.hide()
+        self._split_splitter.deleteLater()
+        self._split_splitter = None
+        self._secondary_pane = None
+        self._secondary_key = None
+        return True
+
+    def _build_secondary_pane(self):
+        pane = QFrame()
+        pane.setObjectName("splitSecondaryPane")
+        vbox = QVBoxLayout(pane)
+        vbox.setContentsMargins(6, 4, 6, 6)
+        vbox.setSpacing(4)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        self._secondary_title = QLabel("Secondary View")
+        self._secondary_title.setStyleSheet("font-weight: 600;")
+        close_btn = QToolButton()
+        close_btn.setText("×")
+        close_btn.setToolTip("Unsplit View")
+        close_btn.clicked.connect(self.unsplit_view)
+        header.addWidget(self._secondary_title, 1)
+        header.addWidget(close_btn)
+        vbox.addLayout(header)
+        self._secondary_body = QPlainTextEdit()
+        self._secondary_body.setReadOnly(True)
+        vbox.addWidget(self._secondary_body, 1)
+        return pane
+
+    def _refresh_secondary_pane(self):
+        if self._secondary_pane is None:
+            return
+        key = self._secondary_key
+        if key == ws.REPORT:
+            self._secondary_title.setText("ReportPad")
+            self._secondary_body.setPlainText(self.pad.toPlainText())
+            return
+        entry = self.entries().get(key)
+        if entry is None:
+            self._secondary_title.setText("Result")
+            self._secondary_body.setPlainText("")
+            return
+        self._secondary_title.setText(entry.get("title", "Result"))
+        from .office_export import report_text
+        self._secondary_body.setPlainText(report_text(entry))
 
     def attach_pad(self):
         w=self.window

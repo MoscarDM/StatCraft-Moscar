@@ -114,6 +114,23 @@ class ARIMADialog(_TimeSeriesBaseDialog):
         self.chk_constant.setChecked(True)
         right_layout.addWidget(self.chk_constant)
 
+        # Estimation & Transformation
+        grp_opts = QGroupBox("Estimation & Transformation")
+        form_opts = QFormLayout(grp_opts)
+
+        self.combo_method = QComboBox()
+        self.combo_method.addItem("Conditional Least Squares (CLS)", "CLS")
+        self.combo_method.addItem("Maximum Likelihood (ML)", "ML")
+        form_opts.addRow("Estimation &method:", self.combo_method)
+
+        self.combo_transform = QComboBox()
+        self.combo_transform.addItem("None", None)
+        self.combo_transform.addItem("Log", "log")
+        self.combo_transform.addItem("Box-Cox", "boxcox")
+        form_opts.addRow("Series &transform:", self.combo_transform)
+
+        right_layout.addWidget(grp_opts)
+
         # Forecasts
         grp_fc = QGroupBox("Forecasts")
         lay_fc = QHBoxLayout(grp_fc)
@@ -180,6 +197,8 @@ class ARIMADialog(_TimeSeriesBaseDialog):
             "Q": Q,
             "S": S,
             "include_constant": self.chk_constant.isChecked(),
+            "method": self.combo_method.currentData(),
+            "transform": self.combo_transform.currentData(),
             "forecasts": self.spin_fc.value() if self.chk_fc.isChecked() else 0,
             "store_fits": self.chk_store_fits.isChecked(),
             "store_residuals": self.chk_store_residuals.isChecked(),

@@ -366,6 +366,7 @@ class CapabilityDialog(QDialog):
         self.selected_params: Optional[Dict[str, Any]] = None
 
         # Options state
+        from .variable_dialogs import default_confidence_percent
         self.options: Dict[str, Any] = {
             "tolerance_k": 6.0,
             "target": None,
@@ -373,7 +374,7 @@ class CapabilityDialog(QDialog):
             "display_unit": "ppm",
             "show_ccpk": False,
             "include_ci": False,
-            "confidence_level": 95.0,
+            "confidence_level": default_confidence_percent(),
             "ci_type": "two_sided",
             "title": "",
             "estimate_method_gt1": "pooled",
@@ -664,3 +665,44 @@ class CapabilityDialog(QDialog):
             "options": dict(self.options),
         }
         self.accept()
+
+    def get_state(self) -> Dict[str, Any]:
+        import copy
+        return {
+            "single_col_mode": self.rb_single_col.isChecked(),
+            "single_col": self.edit_single_col.text(),
+            "sub_size": self.edit_sub_size.text(),
+            "across_rows": self.edit_across_rows.text(),
+            "lsl": self.edit_lsl.text(),
+            "lsl_bound": self.chk_lsl_bound.isChecked(),
+            "usl": self.edit_usl.text(),
+            "usl_bound": self.chk_usl_bound.isChecked(),
+            "hmean": self.edit_hmean.text(),
+            "hsd": self.edit_hsd.text(),
+            "options": copy.deepcopy(self.options),
+        }
+
+    def set_state(self, state: Dict[str, Any]) -> None:
+        import copy
+        if not isinstance(state, dict):
+            return
+        if "single_col_mode" in state:
+            self.rb_single_col.setChecked(bool(state["single_col_mode"]))
+            self.rb_across_rows.setChecked(not bool(state["single_col_mode"]))
+        for attr, key in (
+            ("edit_single_col", "single_col"),
+            ("edit_sub_size", "sub_size"),
+            ("edit_across_rows", "across_rows"),
+            ("edit_lsl", "lsl"),
+            ("edit_usl", "usl"),
+            ("edit_hmean", "hmean"),
+            ("edit_hsd", "hsd"),
+        ):
+            if key in state:
+                getattr(self, attr).setText(str(state[key]))
+        if "lsl_bound" in state:
+            self.chk_lsl_bound.setChecked(bool(state["lsl_bound"]))
+        if "usl_bound" in state:
+            self.chk_usl_bound.setChecked(bool(state["usl_bound"]))
+        if isinstance(state.get("options"), dict):
+            self.options.update(copy.deepcopy(state["options"]))

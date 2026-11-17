@@ -350,3 +350,22 @@ class MultivariateChartDialog(QDialog):
             config["decomp"] = getattr(self, "chk_decomp", None) and self.chk_decomp.isChecked()
 
         return config
+
+    def get_state(self) -> dict:
+        import copy
+        return {
+            "vars_text": self.edit_vars.text(),
+            "subgroup": self.edit_subgroup.text(),
+            "options": copy.deepcopy(self.options),
+        }
+
+    def set_state(self, state: dict) -> None:
+        import copy
+        if not isinstance(state, dict):
+            return
+        if "vars_text" in state:
+            self.edit_vars.setText(str(state["vars_text"]))
+        if "subgroup" in state:
+            self.edit_subgroup.setText(str(state["subgroup"]))
+        if isinstance(state.get("options"), dict):
+            self.options.update(copy.deepcopy(state["options"]))

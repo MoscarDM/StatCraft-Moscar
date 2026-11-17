@@ -1040,7 +1040,17 @@ class ChartWidget(GraphInteractionMixin,QWidget):
                 self._cad_hint_visible = is_near
                 self.update()
 
+        if getattr(self, '_crosshair_enabled', False):
+            self._crosshair_pos = pos
+            self.update()
+
         super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        if getattr(self, '_crosshair_pos', None) is not None:
+            self._crosshair_pos = None
+            self.update()
+        super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event):
         if getattr(self, '_zoom2d_pan_start', None) is not None:
@@ -1082,18 +1092,16 @@ class ChartWidget(GraphInteractionMixin,QWidget):
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event):
-        if self._has_3d_panel():
-            steps = event.angleDelta().y() / 120.0
-            if steps:
-                self.zoom_cad_view(steps)
+        steps = event.angleDelta().y() / 120.0
+        if self._has_3d_panel() and steps:
+            self.zoom_cad_view(steps)
+            event.accept()
+            return
+        if (event.modifiers() & Qt.KeyboardModifier.ControlModifier) and self._has_2d_zoomable_panel() and steps:
+            if self._apply_2d_wheel_zoom(event.position(), steps):
                 event.accept()
                 return
-        elif self._has_2d_zoomable_panel() and not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
-            steps = event.angleDelta().y() / 120.0
-            if steps and self._apply_2d_wheel_zoom(event.position(), steps):
-                event.accept()
-                return
-        super().wheelEvent(event)
+        event.ignore()
 
     def contextMenuEvent(self, event):
         if self._has_3d_panel():
@@ -1108,6 +1116,16 @@ class ChartWidget(GraphInteractionMixin,QWidget):
             return
         if self._has_2d_zoom() and self._zoom2d_panel_at(event.position()) is not None and self.object_at(event.position()) in (None, 'grid'):
             self.reset_2d_zoom()
+            event.accept()
+            return
+        obj = self.object_at(event.position())
+        if obj is not None:
+            self.objectActivated.emit(str(obj))
+            event.accept()
+            return
+        win = self.window()
+        if hasattr(win, "edit_graph_dialog"):
+            win.edit_graph_dialog()
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
@@ -1131,6 +1149,62 @@ class ChartWidget(GraphInteractionMixin,QWidget):
                 for i,(d,area) in enumerate(zip(self.panels,self.panel_areas())):
                     self._panel_index=i;self._draw_panel(p,area,d)
                 self.draw_selection(p)
+                text_boxes = getattr(self, 'annotation_text_boxes', None) or []
+                if text_boxes:
+                    box_area = (getattr(self, '_zoom2d_meta', {}).get(0, {}) or {}).get('plot')
+                    if box_area is None:
+                        box_area = QRectF(24.0, 52.0, max(120.0, self.width() - 48.0), max(80.0, self.height() - 90.0))
+                    p.save()
+                    p.setFont(QFont('Segoe UI', 9, QFont.Weight.DemiBold))
+                    fm = p.fontMetrics()
+                    for ann in text_boxes:
+                        if not isinstance(ann, dict):
+                            continue
+                        txt = str(ann.get('text') or '').strip()
+                        if not txt:
+                            continue
+                        fx = max(0.02, min(0.98, float(ann.get('x', 0.5))))
+                        fy = max(0.02, min(0.98, float(ann.get('y', 0.85))))
+                        cx = box_area.left() + fx * box_area.width()
+                        cy = box_area.bottom() - fy * box_area.height()
+                        w = max(48.0, fm.horizontalAdvance(txt) + 16.0)
+                        h = float(fm.height() + 10.0)
+                        rx = max(box_area.left() + 2.0, min(box_area.right() - w - 2.0, cx - w / 2.0))
+                        ry = max(box_area.top() + 2.0, min(box_area.bottom() - h - 2.0, cy - h / 2.0))
+                        rect = QRectF(rx, ry, w, h)
+                        p.setPen(QPen(QColor('#475569'), 1))
+                        p.setBrush(QColor(255, 255, 255, 238))
+                        p.drawRoundedRect(rect, 4, 4)
+                        self._text(p, rect, txt, INK)
+                    p.restore()
+                if getattr(self, '_crosshair_enabled', False) and getattr(self, '_crosshair_pos', None) is not None and not getattr(self, '_exporting', False):
+                    cpos = self._crosshair_pos
+                    pidx = self._zoom2d_panel_at(cpos)
+                    if pidx is not None and pidx in getattr(self, '_zoom2d_meta', {}):
+                        cmeta = self._zoom2d_meta[pidx]
+                        cplot = cmeta['plot']
+                        if cplot.contains(cpos):
+                            p.save()
+                            cpen = QPen(QColor('#0f766e'), 1, Qt.PenStyle.DashLine)
+                            p.setPen(cpen)
+                            p.drawLine(QPointF(cpos.x(), cplot.top()), QPointF(cpos.x(), cplot.bottom()))
+                            p.drawLine(QPointF(cplot.left(), cpos.y()), QPointF(cplot.right(), cpos.y()))
+                            xb_c, yb_c = cmeta['xb'], cmeta['yb']
+                            xf = (cpos.x() - cplot.left()) / max(1.0, cplot.width())
+                            yf = (cplot.bottom() - cpos.y()) / max(1.0, cplot.height())
+                            xv = 10 ** (math.log10(xb_c[0]) + xf * (math.log10(xb_c[1]) - math.log10(xb_c[0]))) if cmeta.get('x_log') else xb_c[0] + xf * (xb_c[1] - xb_c[0])
+                            yv = 10 ** (math.log10(yb_c[0]) + yf * (math.log10(yb_c[1]) - math.log10(yb_c[0]))) if cmeta.get('y_log') else yb_c[0] + yf * (yb_c[1] - yb_c[0])
+                            badge_txt = f"X: {_fmt(xv)}   Y: {_fmt(yv)}"
+                            p.setFont(QFont('Segoe UI', 8, QFont.Weight.DemiBold))
+                            tw = p.fontMetrics().horizontalAdvance(badge_txt) + 14
+                            bx = min(cplot.right() - tw - 4, max(cplot.left() + 4, cpos.x() + 10))
+                            by = max(cplot.top() + 4, cpos.y() - 24)
+                            brect = QRectF(bx, by, tw, 20)
+                            p.setPen(QPen(QColor('#0f766e'), 1))
+                            p.setBrush(QColor(255, 255, 255, 230))
+                            p.drawRoundedRect(brect, 4, 4)
+                            self._text(p, brect, badge_txt, INK)
+                            p.restore()
                 if self._has_2d_zoom() and not getattr(self, '_exporting', False):
                     btn = QRectF(max(24.0, self.width() - 106.0), 16.0, 84.0, 22.0)
                     self._reset_zoom_rect = btn

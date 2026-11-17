@@ -63,7 +63,7 @@ class SurfaceDialogTests(unittest.TestCase):
         with patch.object(CreateSurfaceSettings,'exec',return_value=0) as modal:
             d.option_buttons['Display Available Designs'].click()
         modal.assert_called_once()
-        self.assertEqual(d.centers,6)
+        self.assertEqual(d.centers,5)
         d.deleteLater()
 
     def test_box_behnken_counts_and_centers_update(self):
@@ -91,7 +91,7 @@ class SurfaceDialogTests(unittest.TestCase):
         self.assertEqual(c.changes['replicates'],2)
         self.assertEqual(c.changes['alpha_mode'],'custom')
         self.assertEqual(c.changes['alpha'],1.7)
-        self.assertEqual(d.centers,6)
+        self.assertEqual(d.centers,5)
         c.deleteLater();d.deleteLater()
 
     def test_blocked_design_row_applies_splits_and_replication_to_real_creation(self):
@@ -137,7 +137,7 @@ class SurfaceDialogTests(unittest.TestCase):
         analysis.deleteLater();d.deleteLater()
 
     def test_cancel_design_options_does_not_apply(self):
-        d=CreateSurfaceDialog(self.w);c=CreateSurfaceSettings(d,'Designs');c.controls['centers'].setValue(12);self.assertEqual(c.run_count.text(),'20');c.reject();self.assertEqual(d.centers,6);self.assertEqual(c.changes,{})
+        d=CreateSurfaceDialog(self.w);c=CreateSurfaceSettings(d,'Designs');c.controls['centers'].setValue(12);self.assertEqual(c.run_count.text(),'20');c.reject();self.assertEqual(d.centers,5);self.assertEqual(c.changes,{})
 
     def test_separate_project_creation_leaves_source_window_unchanged(self):
         original=self.p.worksheet;d=CreateSurfaceDialog(self.w);d.destination.setCurrentText('New project');d.validate()

@@ -48,8 +48,8 @@ class NativeGraphTabsTests(unittest.TestCase):
         self.assertIn('Residuals vs Order', tab_names)
         self.assertIn('Text export', tab_names)
 
-        # Factorial Regression has text report, so default tab is Report
-        self.assertEqual(self.w.result_tabs.tabText(self.w.result_tabs.currentIndex()), 'Report')
+        # Imported graphs open visually; Report remains available explicitly
+        self.assertEqual(self.w.result_tabs.tabText(self.w.result_tabs.currentIndex()), 'Effects Pareto')
 
         # Check Navigator child items
         nav = self.w.navigator

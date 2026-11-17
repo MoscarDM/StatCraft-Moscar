@@ -138,7 +138,7 @@ class NativeModelRecoveryTests(unittest.TestCase):
         p,m=fixture();p.metadata['Models']['Items']=3;self.assertEqual(read_native_models(p),{})
         p,m=fixture();p.metadata['Commands']=None;self.assertFalse(read_native_models(p)['command']['supported'])
     def test_unrelated_model_families_and_none_project_are_ignored(self):
-        p,m=fixture();p.metadata['Models']['Items'][0]['Type']='BinaryLogisticRegression'
+        p,m=fixture();p.metadata['Models']['Items'][0]['Type']='CoxRegression'
         self.assertEqual(read_native_models(p),{});self.assertEqual(read_native_models(None),{})
     def test_rejects_unsafe_member_references(self):
         p,m=fixture();p.metadata['Models']['Items'][0]['Items'][0]['Data']='/models/../unrelated/'
@@ -174,6 +174,227 @@ class NativeModelRecoveryTests(unittest.TestCase):
         # Test StatCraft entry
         sc_entry = {'origin': 'statcraft', 'recipe': {'action': 'multiple_regression', 'parameters': {}}}
         self.assertEqual(resolve_entry_recipe(sc_entry, sheet), sc_entry['recipe'])
+
+    def test_recover_factorial_numeric_model_setup_and_compare(self):
+        from statcraft.doe import create_factorial as create_doe, analyze_factorial
+        sheet = create_doe([{'name': 'Temp', 'low': 100., 'high': 200.}, {'name': 'Time', 'low': 10., 'high': 30.}], replicates=2, randomize=False)
+        x1 = np.asarray(sheet.columns[4].values)
+        x2 = np.asarray(sheet.columns[5].values)
+        z1 = (x1 - 150.) / 50.
+        z2 = (x2 - 20.) / 10.
+        y = 50. + 4. * z1 - 2.5 * z2 + 1.5 * z1 * z2 + 0.1 * np.sin(np.arange(len(z1)) + 1)
+        sheet.columns.append(Column('Yield', values=y.tolist()))
+        for idx, col in enumerate(sheet.columns):
+            col.metadata['imported_variable_metadata'] = {'Id': f'col{idx}', 'VarId': idx + 1}
+        def var(idx, role='continuous'):
+            return {'id': f'col{idx}', 'variable_id': float(idx + 1), 'name': sheet.columns[idx].name, 'type': role, 'data_type': 'numeric'}
+        factors = [var(4), var(5)]
+        variables = {'target': var(6), 'predictors': factors}
+        terms = [[4], [5], [4, 5]]
+        input_terms = [{'term_columns': [var(i) for i in t]} for t in terms]
+        pred = [{'predictor_type': 'constant', 'predictor_id': -1., 'column_id': 0.}] + [
+            {'predictor_type': 'continuous', 'predictor_id': float(i), 'column_id': float(5 + i),
+             'numeric_levels': levels, 'was_predictor_fit': True, 'is_random': False,
+             'is_hard_to_change': False, 'nesting_predictor_ids': []}
+            for i, levels in enumerate(([100., 200.], [10., 30.]))
+        ]
+        design = np.column_stack([np.ones(len(z1)), z1, z2, z1 * z2])
+        coef = np.linalg.lstsq(design, y, rcond=None)[0]
+        res = y - design @ coef
+        df = len(z1) - design.shape[1]
+        mse = float(res @ res / df)
+        se = np.sqrt(np.diag(np.linalg.inv(design.T @ design)) * mse)
+        post = [{'predictor_ids': [-1.], 'coefficients': [float(coef[0])], 'standard_error_coefficients': [float(se[0])]}]
+        for i, pterm in enumerate(([0], [1], [0, 1])):
+            post.append({'predictor_ids': [float(t) for t in pterm], 'coefficients': [float(coef[1 + i])], 'standard_error_coefficients': [float(se[1 + i])]})
+        obj = {'model_object_type': 'factorial', 'model_analysis_type': 'factorial', 'link_function_type': 'none',
+               'lambda': 1., 'has_weights': False, 'weights_column_id': 0., 'is_categorical_response': False,
+               'is_event_trial': False, 'is_mle': False, 'confidence': .95,
+               'model_term_list': {'model_predictors': pred, 'model_terms': post},
+               'rows_to_use': {'rows': {'use_all_rows': True, 'row_count': float(len(z1))}},
+               'mean_square_error': mse, 'error_degrees_of_freedom': float(df)}
+        state = {'include_constant_term': True, 'coding': 'effects', 'standardized': False, 'link_function_type': 'none',
+                 'confidence_interval': 'two_sided', 'selection_method': 'none', 'validation_type': 'none', 'confidence': .95,
+                 'continuous_response_model_data': {'box_cox': False, 'sequential_sum_of_squares': False},
+                 'termlist': {'fixed_factor_columns': factors, 'model_terms': input_terms}}
+        model = {'metadata': {'command_id': 'command', 'worksheet_id': 'worksheet', 'model_id': 1., 'model_type': 'factorial_regression', 'tables': {}, 'graphs': {}},
+                 'variables': variables, 'model_information': {'input_state': state}, 'post_analysis_data': {'model_object': obj}}
+        project = SimpleNamespace(
+            metadata={'Models': {'Items': [{'Type': 'FractionalFactorial', 'Items': [{'Id': 1, 'Data': '/models/1/'}]}]},
+                      'Commands': {'Items': [{'Id': 'command', 'InputWorksheet': 'worksheet', 'OutputWorksheet': 'worksheet'}]}},
+            retained_members={}, worksheets=[sheet], worksheet_ids=['worksheet'],
+        )
+        update(project, model)
+        d = read_native_models(project)['command']
+        self.assertTrue(d['supported'])
+        self.assertEqual(d['family'], 'factorial')
+        self.assertIn(d['recipe']['action'], ('analyze_factorial', 'analyze_factorial_terms'))
+        r = analyze_factorial(sheet, **{k: v for k, v in d['recipe']['parameters'].items() if k not in ('plot_residuals', 'show_factor_coding')})
+        comparison = compare_native_model(r, d)
+        self.assertTrue(comparison['matches_saved_native'])
+
+    def test_recover_factorial_with_text_categorical_factor(self):
+        from statcraft.model import Worksheet
+        from statcraft.glm import fit as fit_glm
+        sheet = Worksheet('CatFact', [
+            Column('Catalyst', kind='text', values=['A', 'B', 'A', 'B', 'A', 'B', 'A', 'B']),
+            Column('Temp', values=[100., 100., 200., 200., 100., 100., 200., 200.]),
+            Column('Yield', values=[10.1, 14.2, 18.0, 24.3, 10.3, 14.0, 18.2, 24.1]),
+        ])
+        for idx, col in enumerate(sheet.columns):
+            col.metadata['imported_variable_metadata'] = {'Id': f'col{idx}', 'VarId': idx + 1}
+        def var(idx, role):
+            return {'id': f'col{idx}', 'variable_id': float(idx + 1), 'name': sheet.columns[idx].name,
+                    'type': role, 'data_type': 'text' if sheet.columns[idx].kind == 'text' else 'numeric'}
+        f0 = var(0, 'categorical'); f0['classes'] = ['A', 'B']
+        f1 = var(1, 'continuous')
+        factors = [f0, f1]
+        variables = {'target': var(2, 'continuous'), 'predictors': factors}
+        input_terms = [{'term_columns': [f0]}, {'term_columns': [f1]}, {'term_columns': [f0, f1]}]
+        pred = [
+            {'predictor_type': 'constant', 'predictor_id': -1., 'column_id': 0.},
+            {'predictor_type': 'categorical', 'predictor_id': 0., 'column_id': 1., 'text_levels': ['A', 'B'],
+             'was_predictor_fit': True, 'is_random': False, 'is_hard_to_change': False, 'nesting_predictor_ids': []},
+            {'predictor_type': 'continuous', 'predictor_id': 1., 'column_id': 2., 'numeric_levels': [100., 200.],
+             'was_predictor_fit': True, 'is_random': False, 'is_hard_to_change': False, 'nesting_predictor_ids': []},
+        ]
+        post = [
+            {'predictor_ids': [-1.], 'coefficients': [16.65], 'standard_error_coefficients': [0.1]},
+            {'predictor_ids': [0.], 'coefficients': [-2.5, 2.5], 'standard_error_coefficients': [0.1, 0.1]},
+            {'predictor_ids': [1.], 'coefficients': [4.5], 'standard_error_coefficients': [0.1]},
+            {'predictor_ids': [0., 1.], 'coefficients': [-0.5, 0.5], 'standard_error_coefficients': [0.1, 0.1]},
+        ]
+        obj = {'model_object_type': 'factorial', 'model_analysis_type': 'factorial', 'link_function_type': 'none',
+               'lambda': 1., 'has_weights': False, 'weights_column_id': 0., 'is_categorical_response': False,
+               'is_event_trial': False, 'is_mle': False, 'confidence': .95,
+               'model_term_list': {'model_predictors': pred, 'model_terms': post},
+               'rows_to_use': {'rows': {'use_all_rows': True, 'row_count': 8.}},
+               'mean_square_error': 0.02, 'error_degrees_of_freedom': 4.}
+        state = {'include_constant_term': True, 'coding': 'effects', 'standardized': False, 'link_function_type': 'none',
+                 'confidence_interval': 'two_sided', 'selection_method': 'none', 'validation_type': 'none', 'confidence': .95,
+                 'continuous_response_model_data': {'box_cox': False, 'sequential_sum_of_squares': False},
+                 'termlist': {'fixed_factor_columns': factors, 'model_terms': input_terms}}
+        model = {'metadata': {'command_id': 'command', 'worksheet_id': 'worksheet', 'model_id': 1., 'model_type': 'factorial_regression', 'tables': {}, 'graphs': {}},
+                 'variables': variables, 'model_information': {'input_state': state}, 'post_analysis_data': {'model_object': obj}}
+        project = SimpleNamespace(
+            metadata={'Models': {'Items': [{'Type': 'FractionalFactorial', 'Items': [{'Id': 1, 'Data': '/models/1/'}]}]},
+                      'Commands': {'Items': [{'Id': 'command', 'InputWorksheet': 'worksheet', 'OutputWorksheet': 'worksheet'}]}},
+            retained_members={}, worksheets=[sheet], worksheet_ids=['worksheet'],
+        )
+        update(project, model)
+        d = read_native_models(project)['command']
+        self.assertTrue(d['supported'])
+        self.assertEqual(d['family'], 'factorial')
+        self.assertEqual(d['recipe']['action'], 'general_linear_model')
+        r = fit_glm(sheet, **d['recipe']['parameters'])
+        self.assertEqual(r['analysis'], 'general_linear_model')
+
+    def test_recover_general_linear_model_and_one_way_anova(self):
+        from statcraft.model import Worksheet
+        from statcraft.glm import fit as fit_glm
+        sheet = Worksheet('GLM', [
+            Column('Material', kind='text', values=['A', 'A', 'B', 'B', 'C', 'C', 'A', 'B', 'C']),
+            Column('Temp', values=[10., 20., 10., 20., 10., 20., 15., 15., 15.]),
+            Column('Strength', values=[12.0, 14.5, 16.0, 19.0, 11.0, 13.5, 13.2, 17.4, 12.1]),
+        ])
+        for idx, col in enumerate(sheet.columns):
+            col.metadata['imported_variable_metadata'] = {'Id': f'col{idx}', 'VarId': idx + 1}
+        def var(idx, role):
+            return {'id': f'col{idx}', 'variable_id': float(idx + 1), 'name': sheet.columns[idx].name,
+                    'type': role, 'data_type': 'text' if sheet.columns[idx].kind == 'text' else 'numeric'}
+        f0 = var(0, 'categorical'); f0['classes'] = ['A', 'B', 'C']
+        c1 = var(1, 'continuous')
+        factors = [f0, c1]
+        variables = {'target': var(2, 'continuous'), 'predictors': factors}
+        input_terms = [{'term_columns': [f0]}, {'term_columns': [c1]}]
+        r = fit_glm(sheet, 2, [0], [1], [[0], [1]])
+        c0 = r['coefficients'][0]
+        c_a, c_b = r['coefficients'][1], r['coefficients'][2]
+        c_t = r['coefficients'][3]
+        pred = [
+            {'predictor_type': 'constant', 'predictor_id': -1., 'column_id': 0.},
+            {'predictor_type': 'categorical', 'predictor_id': 0., 'column_id': 1., 'text_levels': ['A', 'B', 'C'],
+             'was_predictor_fit': True, 'is_random': False, 'is_hard_to_change': False, 'nesting_predictor_ids': []},
+            {'predictor_type': 'continuous', 'predictor_id': 1., 'column_id': 2.,
+             'was_predictor_fit': True, 'is_random': False, 'is_hard_to_change': False, 'nesting_predictor_ids': []},
+        ]
+        post = [
+            {'predictor_ids': [-1.], 'coefficients': [c0['estimate']], 'standard_error_coefficients': [c0['standard_error']]},
+            {'predictor_ids': [0.], 'coefficients': [c_a['estimate'], c_b['estimate'], -(c_a['estimate'] + c_b['estimate'])],
+             'standard_error_coefficients': [c_a['standard_error'], c_b['standard_error'], 0.0]},
+            {'predictor_ids': [1.], 'coefficients': [c_t['estimate']], 'standard_error_coefficients': [c_t['standard_error']]},
+        ]
+        obj = {'model_object_type': 'general_linear_model', 'model_analysis_type': 'general_linear_model', 'link_function_type': 'none',
+               'lambda': 1., 'has_weights': False, 'weights_column_id': 0., 'is_categorical_response': False,
+               'is_event_trial': False, 'is_mle': False, 'confidence': .95,
+               'model_term_list': {'model_predictors': pred, 'model_terms': post},
+               'rows_to_use': {'rows': {'use_all_rows': True, 'row_count': 9.}},
+               'mean_square_error': r['ms_error'], 'error_degrees_of_freedom': float(r['df_error'])}
+        state = {'include_constant_term': True, 'coding': 'effects', 'standardized': False, 'link_function_type': 'none',
+                 'confidence_interval': 'two_sided', 'selection_method': 'none', 'validation_type': 'none', 'confidence': .95,
+                 'continuous_response_model_data': {'box_cox': False, 'sequential_sum_of_squares': False},
+                 'termlist': {'fixed_factor_columns': factors, 'model_terms': input_terms}}
+        model = {'metadata': {'command_id': 'command', 'worksheet_id': 'worksheet', 'model_id': 1., 'model_type': 'general_linear_model', 'tables': {}, 'graphs': {}},
+                 'variables': variables, 'model_information': {'input_state': state}, 'post_analysis_data': {'model_object': obj}}
+        project = SimpleNamespace(
+            metadata={'Models': {'Items': [{'Type': 'GeneralLinearModel', 'Items': [{'Id': 1, 'Data': '/models/1/'}]}]},
+                      'Commands': {'Items': [{'Id': 'command', 'InputWorksheet': 'worksheet', 'OutputWorksheet': 'worksheet'}]}},
+            retained_members={}, worksheets=[sheet], worksheet_ids=['worksheet'],
+        )
+        update(project, model)
+        d = read_native_models(project)['command']
+        self.assertTrue(d['supported'])
+        self.assertEqual(d['family'], 'general_linear_model')
+        self.assertEqual(d['recipe']['action'], 'general_linear_model')
+        self.assertEqual(d['recipe']['parameters']['factor_indices'], [0])
+        self.assertEqual(d['recipe']['parameters']['covariate_indices'], [1])
+        comparison = compare_native_model(r, d)
+        self.assertTrue(comparison['matches_saved_native'])
+
+        # Also test One-Way ANOVA family and column reordering
+        model['metadata']['model_type'] = 'one_way_anova'
+        obj['model_object_type'] = 'one_way_anova'
+        obj['model_analysis_type'] = 'one_way_anova'
+        variables['predictors'] = [f0]
+        state['termlist']['fixed_factor_columns'] = [f0]
+        state['termlist']['model_terms'] = [{'term_columns': [f0]}]
+        pred.pop(); post.pop()
+        r1 = fit_glm(sheet, 2, [0], [], [[0]])
+        post[0]['coefficients'] = [r1['coefficients'][0]['estimate']]
+        post[0]['standard_error_coefficients'] = [r1['coefficients'][0]['standard_error']]
+        post[1]['coefficients'] = [r1['coefficients'][1]['estimate'], r1['coefficients'][2]['estimate'], -(r1['coefficients'][1]['estimate'] + r1['coefficients'][2]['estimate'])]
+        post[1]['standard_error_coefficients'] = [r1['coefficients'][1]['standard_error'], r1['coefficients'][2]['standard_error'], 0.0]
+        obj['mean_square_error'] = r1['ms_error']
+        obj['error_degrees_of_freedom'] = float(r1['df_error'])
+        project.metadata['Models']['Items'][0]['Type'] = 'OneWayAnova'
+        update(project, model)
+        d1 = read_native_models(project)['command']
+        self.assertTrue(d1['supported'])
+        self.assertEqual(d1['recipe']['action'], 'general_linear_model')
+        self.assertTrue(compare_native_model(r1, d1)['matches_saved_native'])
+
+        # Reject weighted / transformed / random GLM
+        obj_bad = copy.deepcopy(obj); obj_bad['has_weights'] = True
+        model['post_analysis_data']['model_object'] = obj_bad
+        update(project, model)
+        self.assertFalse(read_native_models(project)['command']['supported'])
+        obj_bad = copy.deepcopy(obj); obj_bad['lambda'] = 0.5
+        model['post_analysis_data']['model_object'] = obj_bad
+        update(project, model)
+        self.assertFalse(read_native_models(project)['command']['supported'])
+        obj_bad = copy.deepcopy(obj); obj_bad['model_term_list']['model_predictors'][1]['is_random'] = True
+        model['post_analysis_data']['model_object'] = obj_bad
+        update(project, model)
+        self.assertFalse(read_native_models(project)['command']['supported'])
+
+        # Column move resolution for GLM
+        update(project, {**model, 'post_analysis_data': {'model_object': obj}})
+        d_glm = read_native_models(project)['command']
+        moved_col = sheet.columns.pop(0)
+        sheet.columns.append(moved_col)
+        resolved = resolve_model_recipe(project, d_glm)
+        self.assertEqual(resolved['parameters']['factor_indices'], [2])
+        self.assertEqual(resolved['parameters']['response_index'], 1)
 
     def test_native_model_discovery_optimizer_and_plots(self):
         from statcraft.optimizer import discover_models as discover_opt_models
@@ -225,5 +446,27 @@ class NativeModelRecoveryTests(unittest.TestCase):
         res_opt = pres.optimize_responses([spec])
         self.assertEqual(res_opt['origin'], 'statcraft')
         self.assertIn('solutions', res_opt['result'])
+
+    def test_response_surface_verification_keeps_native_save_copy_writable(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from statcraft.app import Presenter
+        from tests.test_mpx import documents, fixture as write_mpx, variable
+
+        project, _, descriptor = self.decode(blocked=False)
+        meta, first, _ = documents()
+        first['Data']['Columns'] = [variable(c.name, c.values) for c in project.worksheets[0].columns]
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / 'source.mpx'
+            destination = Path(directory) / 'refit.mpx'
+            write_mpx(source, metadata=meta, first=first)
+            presenter = Presenter()
+            presenter.load(source)
+            entry = presenter.analyze_response_surface(**descriptor['recipe']['parameters'])
+            self.assertTrue(entry['connected_analysis']['r_script'])
+            presenter.save(destination)
+            reopened = Presenter()
+            reopened.load(destination)
+            self.assertTrue(any(e['entry_id'] == entry['entry_id'] for e in reopened.history))
 
 if __name__=='__main__':unittest.main()

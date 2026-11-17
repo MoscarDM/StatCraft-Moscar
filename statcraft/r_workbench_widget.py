@@ -1388,8 +1388,8 @@ class RWorkbenchWidget(QWidget):
     def _browse_r_executable(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Locate Rscript.exe or R.exe", "C:\\", "Executables (*.exe);;All Files (*.*)")
         if path:
-            from PySide6.QtCore import QSettings
-            QSettings("StatCraft", "StatCraft").setValue("custom_r_path", path)
+            from .settings_scope import settings_for_process
+            settings_for_process().setValue("custom_r_path", path)
             find_r_executable(refresh=True)
             self._restart_session()
             self._check_and_update_r_status()

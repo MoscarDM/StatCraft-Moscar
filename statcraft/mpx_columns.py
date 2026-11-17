@@ -5,22 +5,41 @@ from . import io
 from .mpx_append import validate_plain, append_numeric
 
 NEW_ID = 'statcraft_native_column_id'
+STATCRAFT_COLUMN_OVERLAY_KEYS = frozenset({
+    'conditional_rules',
+    'cell_highlights',
+    'cell_comments',
+    'description',
+    'value_order',
+})
+
+
+def native_column_metadata(meta):
+    """Return column metadata stripped of StatCraft UI/formatting overlays."""
+    if not isinstance(meta, dict):
+        return {}
+    return {k: v for k, v in meta.items() if k not in STATCRAFT_COLUMN_OVERLAY_KEYS}
 
 
 def preflight(project, sheet):
     """Fail before modifying a sheet containing unknown native dependencies."""
     index = next(i for i, candidate in enumerate(project.worksheets) if candidate is sheet)
-    document = project._original_sheets[project.worksheet_uris[index] + '.json']
+    wid = project.worksheet_ids[index]
+    if wid not in project._original_ids:
+        return index
+    orig_index = project._original_ids.index(wid)
+    orig_uri = project._original_uris[orig_index]
+    document = project._original_sheets[orig_uri + '.json']
     validate_plain(document)
     for column in sheet.columns:
         native = column.metadata.get('imported_variable_metadata', {})
         wrapper = native.get('WorksheetVarBody', {})
         if native.get('ReadOnly', False) or wrapper.get('VarData', {}).get('Locked', False):
             raise io.UnsupportedFormatError('Structural edits involving locked native columns are unsupported.')
-    original=project._baseline[index]
-    extent=max(original.row_count,max((len(c.values) for c in sheet.columns if any(c.metadata==b.metadata for b in original.columns)),default=0))
-    prepare_columns(copy.deepcopy(document),sheet.columns,original.columns,extent,
-                    copy.deepcopy(project._appended_ids),project.worksheet_uris[index])
+    original = project._baseline[orig_index]
+    extent = max(original.row_count, max((len(c.values) for c in sheet.columns if any(native_column_metadata(c.metadata) == native_column_metadata(b.metadata) for b in original.columns)), default=0))
+    prepare_columns(copy.deepcopy(document), sheet.columns, original.columns, extent,
+                    copy.deepcopy(project._appended_ids), orig_uri)
     return index
 
 
@@ -37,7 +56,8 @@ def prepare_columns(document, columns, originals, row_extent, cache, uri):
     matches = []
     used = set()
     for column in columns:
-        candidates = [i for i, base in enumerate(originals) if column.metadata == base.metadata]
+        col_native = native_column_metadata(column.metadata)
+        candidates = [i for i, base in enumerate(originals) if col_native == native_column_metadata(base.metadata)]
         if candidates:
             if len(candidates) != 1 or candidates[0] in used:
                 raise io.UnsupportedFormatError('Native column identities are ambiguous or duplicated.')
@@ -47,7 +67,7 @@ def prepare_columns(document, columns, originals, row_extent, cache, uri):
                 raise io.UnsupportedFormatError('Native column type changes are unverified.')
             matches.append(position)
         else:
-            if column.kind != 'number' or set(column.metadata) - {NEW_ID}:
+            if column.kind != 'number' or set(column.metadata) - {NEW_ID} - STATCRAFT_COLUMN_OVERLAY_KEYS:
                 raise io.UnsupportedFormatError('New native columns must be independent numeric columns.')
             matches.append(None)
     structural = matches != list(range(len(originals)))

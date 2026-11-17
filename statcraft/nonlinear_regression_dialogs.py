@@ -74,7 +74,8 @@ class NonlinearRegressionDialog(ProcedureDialog):
 
         self.spin_conf = QDoubleSpinBox()
         self.spin_conf.setRange(50.0, 99.99)
-        self.spin_conf.setValue(95.0)
+        from .variable_dialogs import default_confidence_percent
+        self.spin_conf.setValue(default_confidence_percent())
         self.spin_conf.setSuffix(" %")
         form_opt.addRow("Confidence level:", self.spin_conf)
 

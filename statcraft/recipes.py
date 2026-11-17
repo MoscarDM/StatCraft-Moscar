@@ -52,6 +52,7 @@ FIELDS = {
     'expanded_graph': {'method','indices','group_index','bins','confidence','distribution','parameters'},
     'analyze_factorial_terms': {'response_index','factor_indices','max_order','confidence','plot_residuals','show_factor_coding','selected_terms'},
     'analyze_factorial': {'response_index','factor_indices','max_order','confidence','plot_residuals','show_factor_coding'},
+    'analyze_split_plot': {'response', 'whole_plot_col', 'terms', 'confidence'},
     'scatter_plot': {'x_index','y_index','mode','group_index','order','title','x_label','y_label'},
     'normality': {'index', 'method'},
     'one_variance': {'index','null_stdev','confidence'},
@@ -549,6 +550,8 @@ def columns(recipe):
         if parameters.get('factor_indices'):
             cols.extend([f for f in parameters['factor_indices'] if isinstance(f, int) and f >= 0])
         return sorted(set(cols))
+    if action == 'analyze_split_plot':
+        return []
     if action == 'accelerated_life_testing':
         cols = [parameters['time_index'], parameters['stress_index']]
         if parameters.get('censor_index') is not None and isinstance(parameters['censor_index'], int) and parameters['censor_index'] >= 0:
@@ -710,14 +713,14 @@ def columns(recipe):
             values=parameters['values']
             if parameters['new_indices'] is not None or not isinstance(values,list) or not 1<=len(values)<=20000:
                 raise ValueError('Enter 1–20,000 prediction settings rows.')
-            p=source['parameters'];width=len(p['predictor_indices']) if source['action']=='multiple_regression' else len(p['continuous_indices'])+len(p['categorical_indices']) if source['action']=='fit_binary_logistic' else len(p['factor_indices'])+len(p.get('covariate_indices',[]))+int(source['action']=='analyze_response_surface' and p.get('block_index') is not None)
+            p=source['parameters'];width=(len(p.get('predictor_indices',[]))+len(p.get('categorical_indices',[]))) if source['action']=='multiple_regression' else len(p['continuous_indices'])+len(p['categorical_indices']) if source['action']=='fit_binary_logistic' else len(p['factor_indices'])+len(p.get('covariate_indices',[]))+int(source['action']=='analyze_response_surface' and p.get('block_index') is not None)
             for row in values:
                 if not isinstance(row,list) or len(row)!=width:raise ValueError('Each prediction row needs one value per predictor.')
                 for value in row:
                     if value is not None and (isinstance(value,bool) or not isinstance(value,(str,int,float)) or isinstance(value,(int,float)) and not math.isfinite(value)):
                         raise ValueError('Prediction settings must be finite numbers, text or missing values.')
         elif parameters['input_mode']=='columns':
-            new=parameters['new_indices'];p=source['parameters'];width=len(p['predictor_indices']) if source['action']=='multiple_regression' else len(p['continuous_indices'])+len(p['categorical_indices']) if source['action']=='fit_binary_logistic' else len(p['factor_indices'])+len(p.get('covariate_indices',[]))+int(source['action']=='analyze_response_surface' and p.get('block_index') is not None)
+            new=parameters['new_indices'];p=source['parameters'];width=(len(p.get('predictor_indices',[]))+len(p.get('categorical_indices',[]))) if source['action']=='multiple_regression' else len(p['continuous_indices'])+len(p['categorical_indices']) if source['action']=='fit_binary_logistic' else len(p['factor_indices'])+len(p.get('covariate_indices',[]))+int(source['action']=='analyze_response_surface' and p.get('block_index') is not None)
             if parameters['values'] is not None or not isinstance(new,list) or len(new)!=width or any(type(i) is not int or i<0 for i in new):
                 raise ValueError('Select a new-data column for each predictor.')
             indices+=new

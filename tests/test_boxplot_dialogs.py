@@ -12,7 +12,8 @@ class BoxplotDialogTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
     def tearDown(self):
-        for widget in self.app.topLevelWidgets():widget.deleteLater()
+        for widget in self.app.topLevelWidgets():
+            if type(widget).__name__ != 'ModernWindow': widget.deleteLater()
         QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete);self.app.processEvents()
 
     def test_gallery_four_choices_and_titles(self):

@@ -101,11 +101,12 @@ class CapabilitySixpackDialog(QDialog):
             self.columns = [c.name for c in worksheet.columns]
 
         self.selected_params: Optional[Dict[str, Any]] = None
+        from .variable_dialogs import default_confidence_percent
         self.options: Dict[str, Any] = {
             "tolerance_k": 6.0,
             "stats_type": "capability",
             "display_unit": "ppm",
-            "confidence_level": 95.0,
+            "confidence_level": default_confidence_percent(),
             "ci_type": "two_sided",
             "include_ci": False,
             "include_ccpk": False,
@@ -540,3 +541,22 @@ class CapabilitySixpackNonnormalDialog(QDialog):
             "target": tgt_val,
         }
         self.accept()
+
+    def get_state(self) -> dict:
+        return {
+            "col": self.edit_col.text(),
+            "sub": self.edit_sub.text(),
+            "dist_idx": self.cbo_dist.currentIndex(),
+            "lsl": self.edit_lsl.text(),
+            "usl": self.edit_usl.text(),
+            "target": self.edit_tgt.text(),
+        }
+
+    def set_state(self, state: dict) -> None:
+        if not isinstance(state, dict):
+            return
+        if "dist_idx" in state:
+            self.cbo_dist.setCurrentIndex(int(state["dist_idx"]))
+        for attr, key in (("edit_col", "col"), ("edit_sub", "sub"), ("edit_lsl", "lsl"), ("edit_usl", "usl"), ("edit_tgt", "target")):
+            if key in state:
+                getattr(self, attr).setText(str(state[key]))

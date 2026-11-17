@@ -524,3 +524,17 @@ class IMRChartDialog(QDialog):
             "options": copy.deepcopy(self.options),
         }
         self.accept()
+
+    def get_state(self) -> Dict[str, Any]:
+        return {
+            "vars_text": self.edit_vars.text(),
+            "options": copy.deepcopy(self.options),
+        }
+
+    def set_state(self, state: Dict[str, Any]) -> None:
+        if not isinstance(state, dict):
+            return
+        if "vars_text" in state:
+            self.edit_vars.setText(str(state["vars_text"]))
+        if isinstance(state.get("options"), dict):
+            self.options.update(copy.deepcopy(state["options"]))

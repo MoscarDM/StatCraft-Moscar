@@ -542,3 +542,22 @@ class AttributeChartDialog(QDialog):
             "options": self.options,
         }
         self.accept()
+
+    def get_state(self) -> Dict[str, Any]:
+        import copy
+        return {
+            "vars_text": self.edit_vars.text(),
+            "subgroup_text": self.edit_subgroup.text() if self.edit_subgroup is not None else "",
+            "options": copy.deepcopy(self.options),
+        }
+
+    def set_state(self, state: Dict[str, Any]) -> None:
+        import copy
+        if not isinstance(state, dict):
+            return
+        if "vars_text" in state:
+            self.edit_vars.setText(str(state["vars_text"]))
+        if "subgroup_text" in state and self.edit_subgroup is not None:
+            self.edit_subgroup.setText(str(state["subgroup_text"]))
+        if isinstance(state.get("options"), dict):
+            self.options.update(copy.deepcopy(state["options"]))

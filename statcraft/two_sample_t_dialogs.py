@@ -158,6 +158,8 @@ class TwoSampleTDialog(QDialog):
         self.setSizeGripEnabled(True)
 
         self.settings = two_sample_t_settings()
+        from .variable_dialogs import default_confidence_percent
+        self.settings["confidence_level"] = default_confidence_percent()
         self.result_payload: Optional[Dict[str, Any]] = None
 
         main_layout = QHBoxLayout(self)
@@ -382,3 +384,26 @@ class TwoSampleTDialog(QDialog):
 
         self.result_payload = dict(self.settings)
         self.accept()
+
+    def get_state(self) -> dict:
+        import copy
+        return {
+            "data_idx": self.combo_data.currentIndex(),
+            "samples": self.samples_edit.text(),
+            "ids": self.ids_edit.text(),
+            "sample1": self.sample1_edit.text(),
+            "sample2": self.sample2_edit.text(),
+            "settings": copy.deepcopy(self.settings),
+        }
+
+    def set_state(self, state: dict) -> None:
+        import copy
+        if not isinstance(state, dict):
+            return
+        if "data_idx" in state:
+            self.combo_data.setCurrentIndex(int(state["data_idx"]))
+        for attr, key in (("samples_edit", "samples"), ("ids_edit", "ids"), ("sample1_edit", "sample1"), ("sample2_edit", "sample2")):
+            if key in state:
+                getattr(self, attr).setText(str(state[key]))
+        if isinstance(state.get("settings"), dict):
+            self.settings.update(copy.deepcopy(state["settings"]))

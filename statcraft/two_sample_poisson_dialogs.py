@@ -143,8 +143,9 @@ class TwoSamplePoissonDialog(QDialog):
         self.resize(580, 420)
         self.setSizeGripEnabled(True)
 
+        from .variable_dialogs import default_confidence_percent
         self.options: Dict[str, Any] = {
-            "confidence_level": 95.0,
+            "confidence_level": default_confidence_percent(),
             "hypothesized_difference": 0.0,
             "alternative": "not_equal",
             "test_method": "separate",
@@ -412,3 +413,26 @@ class TwoSamplePoissonDialog(QDialog):
 
         self.result_payload = dict(self.settings) if self.settings else None
         self.accept()
+
+    def get_state(self) -> dict:
+        import copy
+        return {
+            "mode_idx": self.mode_combo.currentIndex(),
+            "samples": self.samples_edit.text(),
+            "sample_ids": self.sample_ids_edit.text(),
+            "sample1": self.sample1_edit.text(),
+            "sample2": self.sample2_edit.text(),
+            "options": copy.deepcopy(self.options),
+        }
+
+    def set_state(self, state: dict) -> None:
+        import copy
+        if not isinstance(state, dict):
+            return
+        if "mode_idx" in state:
+            self.mode_combo.setCurrentIndex(int(state["mode_idx"]))
+        for attr, key in (("samples_edit", "samples"), ("sample_ids_edit", "sample_ids"), ("sample1_edit", "sample1"), ("sample2_edit", "sample2")):
+            if key in state:
+                getattr(self, attr).setText(str(state[key]))
+        if isinstance(state.get("options"), dict):
+            self.options.update(copy.deepcopy(state["options"]))

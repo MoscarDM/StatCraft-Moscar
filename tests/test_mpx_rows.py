@@ -68,9 +68,15 @@ class MpxRowTests(unittest.TestCase):
             with scratch() as folder:
                 source,target=Path(folder)/'in.mpx',Path(folder)/'copy.mpx';write_blob_fixture(source)
                 blob_tests.NumericBlobTests().rewrite(source,lambda members,sheet:members.update({'/graphs/retained.json':json.dumps({'Ref':reference}).encode()}))
-                p=Presenter();p.load(source);p.add_rows(1);target.write_bytes(b'keep destination')
-                with self.assertRaisesRegex(UnsupportedFormatError,'shared'):p.save(target)
-                self.assertEqual(target.read_bytes(),b'keep destination')
+                with ZipFile(source) as orig_zip:
+                    orig_blob1 = orig_zip.read('/blobs/blob1')
+                p=Presenter();p.load(source);p.add_rows(1);p.save(target)
+                with ZipFile(target) as archive:
+                    self.assertEqual(archive.read('/blobs/blob1'), orig_blob1)
+                    self.assertEqual(json.loads(archive.read('/graphs/retained.json')), {'Ref': reference})
+                    sheet = json.loads(archive.read('/sheets/0/sheet.json'))
+                    new_ref = sheet['Data']['Columns'][0]['WorksheetVarBody']['VarData']['VarDataBody']['NumericData']
+                    self.assertNotEqual(new_ref, '/blobs/blob1?size=3')
 
     def test_unknown_json_blocks_blob_edit(self):
         with scratch() as folder:

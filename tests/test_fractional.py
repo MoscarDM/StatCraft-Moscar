@@ -1,7 +1,7 @@
 import json
 import math
 import unittest
-from statcraft.fractional import alias_structure,create_fractional
+from statcraft.fractional import alias_structure,create_fractional,default_designs
 
 
 def factors(k):return [dict(name=chr(65+i),low=-1,high=1) for i in range(k)]
@@ -10,6 +10,22 @@ def aliases(structure,term):return {a['term']:a['sign'] for a in row_for(structu
 
 
 class FractionalTests(unittest.TestCase):
+    def test_published_default_fractions_have_expected_runs_and_resolution(self):
+        expected = {
+            2: {}, 3: {4: 3}, 4: {8: 4}, 5: {8: 3, 16: 5},
+            6: {8: 3, 16: 4, 32: 6}, 7: {8: 3, 16: 4, 32: 4, 64: 7},
+            8: {16: 4, 32: 4, 64: 5, 128: 8},
+        }
+        for count, fractions in expected.items():
+            choices = default_designs(count)
+            self.assertEqual(choices[0], (2**count, None, {}))
+            self.assertEqual({runs: resolution for runs, resolution, _ in choices[1:]}, fractions)
+            for runs, resolution, generators in choices[1:]:
+                with self.subTest(factors=count, runs=runs):
+                    sheet = create_fractional(factors(count), generators, randomize=False)
+                    self.assertEqual(sheet.row_count, runs)
+                    self.assertEqual(len(set(zip(*(col.values for col in sheet.columns[4:])))), runs)
+
     def test_resolution_four_hand_aliases(self):
         a=alias_structure({'D':'ABC'},4)
         self.assertEqual(a['resolution'],4)

@@ -12,7 +12,9 @@ class DotplotDialogTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
     def tearDown(self):
-        for widget in self.app.topLevelWidgets():widget.deleteLater()
+        for widget in self.app.topLevelWidgets():
+            if isinstance(widget, QDialog):
+                widget.deleteLater()
         QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete);self.app.processEvents()
 
     def test_gallery_seven_choices(self):

@@ -245,10 +245,106 @@ def _atomic_bytes(path, payload):
         if temporary and os.path.exists(temporary): os.unlink(temporary)
 
 
-def save_mpx(project, path, session_records=None):
-    """Save-copy: same-size edits, typed numeric resizing and numeric append.
+def _allocate_numeric_blob_member(original_members, changed_members):
+    """Allocate a fresh unique /blobs/blobM member name not in original or changed members."""
+    used = set(original_members) | set(changed_members)
+    max_index = 0
+    for name in used:
+        match = re.fullmatch(r'/blobs/blob([1-9][0-9]*)', name)
+        if match is not None:
+            max_index = max(max_index, int(match.group(1)))
+    candidate = max_index + 1
+    while f'/blobs/blob{candidate}' in used:
+        candidate += 1
+    return f'/blobs/blob{candidate}'
 
-    No new native project, worksheet structure, type conversion, date,
+
+def _validate_worksheet_structure(project):
+    if not project.worksheets:
+        raise io.UnsupportedFormatError("A native project must contain at least one worksheet.")
+    project.active_worksheet  # Validate the selected index.
+    if len(project.worksheet_ids) != len(project.worksheets) or len(project.worksheet_uris) != len(project.worksheets):
+        raise io.FormatError("Worksheet identity counts do not match.")
+    if any(not isinstance(wid, str) or not wid for wid in project.worksheet_ids) or len(set(project.worksheet_ids)) != len(project.worksheet_ids):
+        raise io.FormatError("Worksheet IDs must be nonempty and unique.")
+    if any(not isinstance(uri, str) or not re.fullmatch(r"/sheets/\d+/sheet", uri) for uri in project.worksheet_uris) or len(set(project.worksheet_uris)) != len(project.worksheet_uris):
+        raise io.UnsupportedFormatError("Unsupported or duplicate worksheet URI.")
+    orig_by_id = {wid: (idx, sheet, uri) for idx, (wid, sheet, uri) in enumerate(zip(project._original_ids, project._baseline, project._original_uris))}
+    orig_uris = set(project._original_uris)
+    for wid, uri in zip(project.worksheet_ids, project.worksheet_uris):
+        if wid in orig_by_id:
+            if uri != orig_by_id[wid][2]:
+                raise io.UnsupportedFormatError("Reassigning native worksheet URIs is unsupported.")
+        elif uri in orig_uris or (uri + ".json") in project._original_members:
+            raise io.UnsupportedFormatError("New worksheet URI collides with existing package member.")
+    return orig_by_id
+
+
+def _check_deleted_worksheet_safety(project, deleted_ids, orig_by_id):
+    if not deleted_ids:
+        return
+    from .mpx_append import validate_plain
+    deleted_set = set(deleted_ids)
+    for wid in deleted_ids:
+        validate_plain(project._original_sheets[orig_by_id[wid][2] + ".json"])
+    meta = project._original_metadata
+    commands = meta.get("Commands", {}).get("Items", []) if isinstance(meta.get("Commands"), dict) else []
+    for cmd in commands:
+        if isinstance(cmd, dict) and (cmd.get("InputWorksheet") in deleted_set or cmd.get("OutputWorksheet") in deleted_set):
+            raise io.UnsupportedFormatError("Cannot delete a native worksheet referenced by native commands or outputs.")
+    models = meta.get("Models", {}).get("Items", []) if isinstance(meta.get("Models"), dict) else []
+    for family in models:
+        items = family.get("Items", []) if isinstance(family, dict) and isinstance(family.get("Items"), list) else []
+        for item in items:
+            if isinstance(item, dict) and any(item.get(k) in deleted_set for k in ("worksheet_id", "WorksheetId", "InputWorksheet", "OutputWorksheet")):
+                raise io.UnsupportedFormatError("Cannot delete a native worksheet referenced by native models.")
+    reports = meta.get("Reports", {}).get("Items", []) if isinstance(meta.get("Reports"), dict) else []
+    for rep in reports:
+        if isinstance(rep, dict) and any(rep.get(k) in deleted_set for k in ("worksheet_id", "WorksheetId", "InputWorksheet", "OutputWorksheet")):
+            raise io.UnsupportedFormatError("Cannot delete a native worksheet referenced by native reports.")
+
+
+def _validate_new_native_sheet(sheet):
+    if sheet.constants or sheet.matrices:
+        raise io.UnsupportedFormatError("New native worksheets with constants or matrices are unsupported.")
+    for column in sheet.columns:
+        if column.kind not in ("number", "date", "text"):
+            raise io.UnsupportedFormatError("Unsupported native column type.")
+        if column.kind == "date" and any(v is None for v in column.values):
+            raise io.UnsupportedFormatError("Missing-date sentinel semantics have not been verified.")
+        if column.kind == "text":
+            if any(v is None for v in column.values):
+                raise io.UnsupportedFormatError("Native text missing-value encoding is unverified; literal empty strings are supported.")
+            if any(any(ord(c) > 0xffff or 0xd800 <= ord(c) <= 0xdfff for c in v) for v in column.values):
+                raise io.UnsupportedFormatError("Native text editing beyond verified BMP Unicode is unsupported.")
+        elif column.kind == "number" and any(v is not None and finite_number(v) == io.MISSING_SENTINEL for v in column.values):
+            raise io.UnsupportedFormatError("This numeric value is reserved for native missing cells.")
+
+
+def _update_collection_manifest(raw, project, orig_item_by_id):
+    doc = io._json(raw)
+    new_items = []
+    for sheet, wid, uri in zip(project.worksheets, project.worksheet_ids, project.worksheet_uris):
+        if wid in orig_item_by_id:
+            item = copy.deepcopy(orig_item_by_id[wid])
+            item["Name"] = sheet.name
+        else:
+            item = {"Id": wid, "Name": sheet.name, "Uri": uri}
+        new_items.append(item)
+    if isinstance(doc, dict) and isinstance(doc.get("Items"), list):
+        doc["Items"] = new_items
+        if isinstance(doc.get("ExtraInformation"), dict) and "worksheet_ordering" in doc["ExtraInformation"]:
+            doc["ExtraInformation"]["worksheet_ordering"] = list(project.worksheet_ids)
+        return json.dumps(doc, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    if isinstance(doc, list):
+        return json.dumps(new_items, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    raise io.UnsupportedFormatError("Unsupported /sheets/collection.json structure for worksheet edits.")
+
+
+def save_mpx(project, path, session_records=None):
+    """Save-copy: same-size edits, typed numeric resizing, numeric append, and plain worksheet ops.
+
+    No new native project, type conversion, date/text resizing,
     constant, matrix or history edits are written. Unknown member bytes remain
     exact, but cached models/results may be stale after supported data edits.
     Optional StatCraft result snapshots use a separate original session member;
@@ -268,9 +364,6 @@ def save_mpx(project, path, session_records=None):
     if project._bound_source_path and path.exists() and Path(project._bound_source_path).exists():
         if os.path.samefile(path, project._bound_source_path):
             raise io.UnsupportedFormatError("Destination aliases the original native project. Choose a separate .mpx copy.")
-    if (len(project.worksheets) != len(project._baseline) or
-            project.worksheet_ids != project._original_ids or project.worksheet_uris != project._original_uris):
-        raise io.UnsupportedFormatError("Adding, deleting or reordering native worksheets is unverified.")
     if project.metadata != project._original_metadata or project.history != project._original_history:
         raise io.UnsupportedFormatError("Native project metadata/history edits are unsupported; export new analysis output separately.")
     if project.retained_members != project._original_members:
@@ -280,56 +373,98 @@ def save_mpx(project, path, session_records=None):
     if ([info.filename for info in project.retained_zip_infos] !=
             [info.filename for info in project._original_zip_infos]):
         raise io.UnsupportedFormatError("Native ZIP member ordering or structure was modified.")
-    project.active_worksheet  # Validate the selected index.
+    orig_by_id = _validate_worksheet_structure(project)
+    deleted_ids = [wid for wid in project._original_ids if wid not in set(project.worksheet_ids)]
+    _check_deleted_worksheet_safety(project, deleted_ids, orig_by_id)
+    deleted_members = set()
+    for wid in deleted_ids:
+        orig_uri = orig_by_id[wid][2]
+        deleted_members.add(orig_uri + ".json")
+        dir_member = orig_uri.rsplit("/", 1)[0] + "/"
+        if dir_member in project._original_members:
+            deleted_members.add(dir_member)
     changed_members = {}
     appended_ids=copy.deepcopy(project._appended_ids)
     from . import session
-    records = project.session_records if session_records is None else session_records
+    records = copy.deepcopy(project.session_records if session_records is None else session_records)
+    removed_entry_ids = set()
+    if deleted_ids:
+        deleted_set = set(deleted_ids)
+        keep_ids = set(project.worksheet_ids) | ({r.get('worksheet_id') for r in records if isinstance(r, dict)} - deleted_set)
+        records, removed_entry_ids = session.prune(records, keep_ids)
+    renamed_names = {
+        wid: sheet.name
+        for wid, sheet in zip(project.worksheet_ids, project.worksheets)
+        if wid in orig_by_id and sheet.name != orig_by_id[wid][1].name
+    }
+    if renamed_names:
+        session.sync_worksheet_names(records, renamed_names)
     session_payload = session.validate(records, project.worksheet_ids)
     if records != project._original_session_records:
         changed_members[session.MEMBER] = session_payload
     from . import workspace_state
-    if project.workspace != project._original_workspace:
-        if project.workspace is None:raise io.FormatError("Workspace removal must use an empty workspace record.")
-        changed_members[workspace_state.MEMBER]=workspace_state.encode(project.workspace)
+    ws_state = workspace_state.prune_ids(project.workspace, removed_entry_ids) if (project.workspace is not None and removed_entry_ids) else project.workspace
+    if ws_state != project._original_workspace:
+        if ws_state is None:raise io.FormatError("Workspace removal must use an empty workspace record.")
+        changed_members[workspace_state.MEMBER]=workspace_state.encode(ws_state)
     from . import native_output_state
     if project.native_views != project._original_native_views:
         changed_members[native_output_state.MEMBER]=native_output_state.encode(project.native_views)
-    for index, (sheet, original) in enumerate(zip(project.worksheets, project._baseline)):
+    for index, (sheet, wid, uri) in enumerate(zip(project.worksheets, project.worksheet_ids, project.worksheet_uris)):
         sheet.validate()
-        if (sheet.name != original.name or sheet.constants != original.constants or sheet.matrices != original.matrices or
+        if wid not in orig_by_id:
+            _validate_new_native_sheet(sheet)
+            from .mpx_create import _sheet
+            document = _sheet(sheet, wid, uri, appended_ids)
+            dir_member = uri.rsplit("/", 1)[0] + "/"
+            if "/sheets/" in project._original_members and dir_member not in project._original_members:
+                changed_members[dir_member] = b""
+            changed_members[uri + ".json"] = json.dumps(document, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+            continue
+        _, original, _ = orig_by_id[wid]
+        if (sheet.constants != original.constants or sheet.matrices != original.matrices or
                 sheet.metadata != original.metadata):
-            raise io.UnsupportedFormatError("Native worksheet names, metadata, constants, matrices or column structure cannot be changed safely.")
-        document = copy.deepcopy(project._original_sheets[project.worksheet_uris[index] + ".json"])
-        from .mpx_columns import prepare_columns
-        extent=max(original.row_count,max((len(column.values) for column in sheet.columns if any(column.metadata==base.metadata for base in original.columns)),default=0))
-        matches, changed = prepare_columns(document,sheet.columns,original.columns,extent,appended_ids,project.worksheet_uris[index])
+            raise io.UnsupportedFormatError("Native worksheet metadata, constants, matrices or column structure cannot be changed safely.")
+        document = copy.deepcopy(project._original_sheets[uri + ".json"])
+        renamed = sheet.name != original.name
+        if renamed:
+            from .mpx_append import validate_plain
+            validate_plain(document)
+            document["Data"]["Name"] = sheet.name
+            if "PrivateTitle" in document["Data"]:
+                document["Data"]["PrivateTitle"] = sheet.name
+        from .mpx_columns import prepare_columns, native_column_metadata
+        extent=max(original.row_count,max((len(column.values) for column in sheet.columns if any(native_column_metadata(column.metadata)==native_column_metadata(base.metadata) for base in original.columns)),default=0))
+        matches, changed = prepare_columns(document,sheet.columns,original.columns,extent,appended_ids,uri)
         resized_sheet=False
         for position, (column, original_position) in enumerate(zip(sheet.columns, matches)):
             if original_position is None:
                 continue
             baseline=original.columns[original_position]
             resized=len(column.values)!=len(baseline.values)
-            if column.kind != baseline.kind or column.metadata != baseline.metadata:
+            if column.kind != baseline.kind or native_column_metadata(column.metadata) != native_column_metadata(baseline.metadata):
                 raise io.UnsupportedFormatError("Native column type and metadata changes are unverified.")
-            if resized and column.kind!='number':
-                raise io.UnsupportedFormatError('Only typed numeric columns support MPX length changes.')
-            if column.name == baseline.name and column.values == baseline.values:
+            desc_changed = column.metadata.get("description") != baseline.metadata.get("description")
+            if column.name == baseline.name and column.values == baseline.values and not desc_changed:
                 continue
             if baseline.metadata.get("unsupported_native_storage"):
                 raise io.UnsupportedFormatError("Native edits to an untyped empty placeholder column require unverified storage initialization.")
-            if column.kind not in ("number", "text"):
-                raise io.UnsupportedFormatError("Native date edits are unverified.")
+            if column.kind not in ("number", "date", "text"):
+                raise io.UnsupportedFormatError("Unsupported native column type.")
             wrapper = document["Data"]["Columns"][position]["WorksheetVarBody"]
             if column.name != baseline.name:
                 wrapper["Name"] = column.name
+            if desc_changed and isinstance(column.metadata.get("description"), str):
+                wrapper["Description"] = column.metadata["description"]
             body = wrapper["VarData"]["VarDataBody"]
             if resized:
-                from .mpx_rows import prepare_numeric_resize
-                prepare_numeric_resize(document,wrapper,len(column.values))
+                from .mpx_rows import prepare_column_resize
+                prepare_column_resize(document,wrapper,column.kind,len(column.values))
                 resized_sheet=True
-            if column.kind == "number":
+            if column.kind in ("number", "date"):
                 if column.values != baseline.values:
+                    if column.kind == "date" and any(value is None for value in column.values):
+                        raise io.UnsupportedFormatError("Missing-date sentinel semantics have not been verified.")
                     if any(value is not None and finite_number(value)==io.MISSING_SENTINEL for value in column.values):
                         raise io.UnsupportedFormatError('This numeric value is reserved for native missing cells.')
                     values=[io.MISSING_SENTINEL if value is None else finite_number(value) for value in column.values]
@@ -337,9 +472,15 @@ def save_mpx(project, path, session_records=None):
                         reference=body['NumericData']; member=io._numeric_blob_reference(reference,len(baseline.values))
                         from .mpx_rows import numeric_blob_uses
                         uses=numeric_blob_uses(project._original_members,member)
-                        if uses!=1: raise io.UnsupportedFormatError("Edits to shared numeric blobs are unsupported; no project copy was written.")
-                        changed_members[member]=struct.pack('<'+str(len(values))+'d',*values)
-                        body['NumericData']=member+'?size='+str(len(values))
+                        if uses!=1:
+                            target_member=_allocate_numeric_blob_member(project._original_members,changed_members)
+                        else:
+                            target_member=member
+                        changed_members[target_member]=struct.pack('<'+str(len(values))+'d',*values)
+                        new_ref=target_member+'?size='+str(len(values))
+                        body['NumericData']=new_ref
+                        if isinstance(body.get('DateTimeData'),str):
+                            body['DateTimeData']=new_ref
                     else: body["NumericData"]=values
                     if resized:
                         from .mpx_rows import update_numeric_bounds
@@ -347,35 +488,60 @@ def save_mpx(project, path, session_records=None):
             else:
                 if any(value is None for value in column.values):
                     raise io.UnsupportedFormatError("Native text missing-value encoding is unverified; literal empty strings are supported.")
-                # Do not guess CharCt or cached-format changes: same-or-shorter strings only.
                 capacity = body.get("CharCt")
                 if any(any(ord(char) > 0xffff or 0xd800 <= ord(char) <= 0xdfff for char in value) for value in column.values):
                     raise io.UnsupportedFormatError("Native text editing beyond verified BMP Unicode is unsupported.")
+                required = max(map(len, column.values), default=0)
                 if capacity is None:
-                    if max(map(len, column.values), default=0) > max(map(len, baseline.values), default=0):
+                    if required > max(map(len, baseline.values), default=0):
                         raise io.UnsupportedFormatError("Native text width metadata is absent; growing text is unverified.")
-                elif any(len(value) > io._count(capacity, "CharCt") for value in column.values):
-                    raise io.UnsupportedFormatError("Text edits beyond the original character width require unverified metadata changes.")
+                else:
+                    new_capacity = max(io._count(capacity, "CharCt"), required)
+                    body["CharCt"] = new_capacity
+                    fmt_value = wrapper.get("Format", {}).get("Value")
+                    if isinstance(fmt_value, dict) and "CharCt" in fmt_value:
+                        fmt_value["CharCt"] = max(io._count(fmt_value["CharCt"], "CharCt"), new_capacity)
                 body["TextData"] = list(column.values)
             changed = True
-        if changed:
+        if changed or renamed:
             if resized_sheet and 'MaxRows_DEP' in document:
                 document['MaxRows_DEP']=max(io._count(document['MaxRows_DEP'],'MaxRows_DEP'),sheet.row_count)
-            changed_members[project.worksheet_uris[index] + ".json"] = json.dumps(document, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
-    if project.active_index != project._original_active:
+            changed_members[uri + ".json"] = json.dumps(document, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    structural_sheets = (project.worksheet_ids != project._original_ids or project.worksheet_uris != project._original_uris or bool(renamed_names))
+    if structural_sheets or project.active_index != project._original_active:
         metadata = copy.deepcopy(project._original_metadata)
+        orig_item_by_id = {item["Id"]: item for item in metadata["Worksheets"]["Items"] if isinstance(item, dict) and "Id" in item}
+        if structural_sheets:
+            new_items = []
+            for sheet, wid, uri in zip(project.worksheets, project.worksheet_ids, project.worksheet_uris):
+                if wid in orig_item_by_id:
+                    item = copy.deepcopy(orig_item_by_id[wid])
+                    item["Name"] = sheet.name
+                else:
+                    item = {"Id": wid, "Name": sheet.name, "Uri": uri, "Comments": "",
+                            "Creator": "StatCraft", "Date": "",
+                            "ExtraInformation": {"column_widths": {"default": 8}, "hidden_columns": []}}
+                new_items.append(item)
+            metadata["Worksheets"]["Items"] = new_items
+            metadata["Worksheets"].setdefault("ExtraInformation", {})["worksheet_ordering"] = list(project.worksheet_ids)
+            if "NextSheet" in metadata:
+                metadata["NextSheet"] = max([io._count(metadata["NextSheet"], "NextSheet")] + [int(u.split("/")[2]) + 1 for u in project.worksheet_uris])
+            if "/sheets/collection.json" in project._original_members:
+                changed_members["/sheets/collection.json"] = _update_collection_manifest(
+                    project._original_members["/sheets/collection.json"], project, orig_item_by_id)
         metadata["Worksheets"].setdefault("ExtraInformation", {})["current_worksheet"] = project.worksheet_ids[project.active_index]
         changed_members["/project_metadata_20.json"] = json.dumps(metadata, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
     notices = ["Native application reopen of edited MPX copies remains unverified."]
-    if not changed_members:
+    if not changed_members and not deleted_members:
         _atomic_bytes(path, project._archive_bytes)
         return notices + ["Untouched project copied byte-for-byte, including original ZIP layout."]
     notices.append("Stored formulas, models and analysis results are retained without recalculation and may be stale after data edits.")
-    total = sum(len(changed_members.get(name, data)) for name, data in project._original_members.items())
+    total = sum(len(changed_members.get(name, data)) for name, data in project._original_members.items() if name not in deleted_members)
     if sum(len(column.values) for sheet in project.worksheets for column in sheet.columns+sheet.constants)+sum(len(matrix.values) for sheet in project.worksheets for matrix in sheet.matrices)>io.MAX_CELLS:
         raise io.FormatError('Edited project exceeds the cell limit.')
     total += sum(len(data) for name, data in changed_members.items() if name not in project._original_members)
-    if len(project._original_members) + sum(name not in project._original_members for name in changed_members) > io.MAX_MEMBERS:
+    member_count = len(project._original_members) - len(deleted_members) + sum(name not in project._original_members for name in changed_members)
+    if member_count > io.MAX_MEMBERS:
         raise io.FormatError("Edited project exceeds the member count limit.")
     if total > io.MAX_TOTAL_BYTES or any(len(data) > io.MAX_MEMBER_BYTES for data in changed_members.values()):
         raise io.FormatError("Edited project exceeds package limits.")
@@ -385,6 +551,8 @@ def save_mpx(project, path, session_records=None):
         for info in project._original_zip_infos:
             if info.filename not in project._original_members:
                 raise io.UnsupportedFormatError("Native ZIP entry structure was modified.")
+            if info.filename in deleted_members:
+                continue
             archive.writestr(copy.deepcopy(info), changed_members.get(info.filename, project._original_members[info.filename]))
         for name, payload in changed_members.items():
             if name not in project._original_members:
@@ -393,20 +561,24 @@ def save_mpx(project, path, session_records=None):
     if len(output.getvalue()) > io.MAX_TOTAL_BYTES:
         raise io.FormatError("Edited project archive exceeds the size limit.")
     with zipfile.ZipFile(memory_io.BytesIO(output.getvalue())) as check:
+        present = set(check.namelist())
         for name, original in project._original_members.items():
-            if check.read(name) != changed_members.get(name, original):
+            if name in deleted_members:
+                if name in present:
+                    raise io.FormatError("Deleted worksheet member was not removed; no copy was published.")
+            elif check.read(name) != changed_members.get(name, original):
                 raise io.FormatError("Package verification failed; no copy was published.")
         for name, payload in changed_members.items():
             if check.read(name) != payload:
                 raise io.FormatError("New session verification failed; no copy was published.")
-        members={**project._original_members,**changed_members}
-        for index,sheet in enumerate(project.worksheets):
-            name=project.worksheet_uris[index]+'.json'
+        members = {**{k: v for k, v in project._original_members.items() if k not in deleted_members}, **changed_members}
+        for index, sheet in enumerate(project.worksheets):
+            name = project.worksheet_uris[index] + '.json'
             if name in changed_members:
-                decoded=_worksheet(io._json(check.read(name)),{'Name':sheet.name},members)
-                expected=[(c.name,c.kind,c.values) for c in sheet.columns]
-                if [(c.name,c.kind,c.values) for c in decoded.columns]!=expected:
+                decoded = _worksheet(io._json(check.read(name)), {'Name': sheet.name}, members)
+                expected = [(c.name, c.kind, c.values) for c in sheet.columns]
+                if [(c.name, c.kind, c.values) for c in decoded.columns] != expected:
                     raise io.FormatError('Edited worksheet round-trip verification failed; no copy was published.')
     _atomic_bytes(path, output.getvalue())
-    project._appended_ids=appended_ids
+    project._appended_ids = appended_ids
     return notices

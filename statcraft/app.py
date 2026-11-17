@@ -221,6 +221,12 @@ class Presenter:
         before_rev = self._revision
         item = sheets.pop(from_idx)
         sheets.insert(to_idx, item)
+        if len(self.native_project.worksheet_ids) == len(sheets):
+            wid = self.native_project.worksheet_ids.pop(from_idx)
+            self.native_project.worksheet_ids.insert(to_idx, wid)
+        if len(self.native_project.worksheet_uris) == len(sheets):
+            wuri = self.native_project.worksheet_uris.pop(from_idx)
+            self.native_project.worksheet_uris.insert(to_idx, wuri)
         self.native_project.active_index = to_idx
         self.worksheet = sheets[to_idx]
         self._push_project_undo("reorder_worksheets", before_state, before_rev)
@@ -757,11 +763,32 @@ class Presenter:
         return stream.getvalue()
 
     @undoable
-    def set_column_type(self, index, kind):
+    def set_column_type(self, index, kind, target_index=None, date_format=None):
         col = self.worksheet.columns[index]
-        converted = [None if v is None else self.parse_cell(str(v), kind) for v in col.values]
-        replacement = Column(col.name, kind, converted, copy.deepcopy(col.metadata))
-        self.worksheet.columns[index] = replacement
+        if date_format and kind == "date" and col.kind == "text":
+            from datetime import datetime
+            converted = []
+            for v in col.values:
+                if v is None or str(v).strip() == "":
+                    converted.append(None)
+                else:
+                    dt = datetime.strptime(str(v).strip(), date_format)
+                    converted.append(self.parse_cell(dt.strftime("%Y-%m-%d %H:%M:%S"), "date"))
+        else:
+            converted = [None if v is None else self.parse_cell(str(v), kind) for v in col.values]
+        meta = copy.deepcopy(col.metadata)
+        if date_format and kind == "date":
+            meta["date_format"] = date_format
+        if target_index is None or target_index == index:
+            self.worksheet.columns[index] = Column(col.name, kind, converted, meta)
+        elif target_index == "new":
+            self.worksheet.columns.append(Column(f"{col.name} ({kind})", kind, converted, meta))
+        else:
+            t_idx = int(target_index)
+            if not 0 <= t_idx < len(self.worksheet.columns):
+                raise ValueError("Target column index out of range.")
+            dst = self.worksheet.columns[t_idx]
+            self.worksheet.columns[t_idx] = Column(dst.name, kind, converted, meta)
         self.dirty = True
 
     @undoable
@@ -2387,6 +2414,25 @@ class Presenter:
         return entry
 
     @undoable
+    def box_cox_transformation(
+        self,
+        column_index: int,
+        use_rounded_lambda: bool = True,
+        custom_lambda=None,
+        store_column: bool = True,
+        store_column_name=None,
+    ):
+        from .box_cox_tool import run_box_cox_transformation
+        res = run_box_cox_transformation(
+            self.worksheet,
+            column_index,
+            use_rounded_lambda=use_rounded_lambda,
+            custom_lambda=custom_lambda,
+            store_column=store_column,
+            store_name=store_column_name,
+        )
+        return self._record(f"Box-Cox Transformation: {res['response_name']}", res)
+
     def johnson_transformation(
         self,
         column_index: int,
@@ -3298,21 +3344,35 @@ class Presenter:
             raise ValueError("ARIMA requires a valid series column.")
         col = self.worksheet.columns[idx]
         var_name = col.name or f"C{idx+1}"
-        res = fit_arima(
-            values=col.values,
-            p=st.get("p", 1),
-            d=st.get("d", 0),
-            q=st.get("q", 0),
-            P=st.get("P", 0),
-            D=st.get("D", 0),
-            Q=st.get("Q", 0),
-            S=st.get("S", 1),
-            include_constant=st.get("include_constant", True),
-            forecasts=st.get("forecasts", 0),
-            conf_level=st.get("conf_level", 95.0),
-            variable_name=var_name,
-            title=st.get("title", ""),
-        )
+        if st.get("search"):
+            from .arima import forecast_best_arima
+            res = forecast_best_arima(
+                col.values, d=st.get("d", 0), D=st.get("D", 0), S=st.get("S", 1),
+                max_p=st.get("max_p", 2), max_q=st.get("max_q", 2),
+                max_P=st.get("max_P", 0), max_Q=st.get("max_Q", 0),
+                include_constant=st.get("include_constant", True), forecasts=st.get("forecasts", 5),
+                conf_level=st.get("conf_level", 95), criterion=st.get("criterion", "AICc"),
+                variable_name=var_name,
+            )
+        else:
+            res = fit_arima(
+                values=col.values,
+                p=st.get("p", 1),
+                d=st.get("d", 0),
+                q=st.get("q", 0),
+                P=st.get("P", 0),
+                D=st.get("D", 0),
+                Q=st.get("Q", 0),
+                S=st.get("S", 1),
+                include_constant=st.get("include_constant", True),
+                forecasts=st.get("forecasts", 0),
+                conf_level=st.get("conf_level", 95.0),
+                variable_name=var_name,
+                title=st.get("title", ""),
+                method=st.get("method", "CLS"),
+                transform=st.get("transform", None),
+                boxcox_lambda=st.get("boxcox_lambda", None),
+            )
         res["analysis"] = "arima"
         res["graph"] = "arima"
         title = res["title"]
@@ -4364,7 +4424,12 @@ class Presenter:
             "two_poisson_rates": (_pe.two_poisson_rates_power, "Power and Sample Size: 2-Sample Poisson Rates", "two_poisson_rates_power"),
             "equivalence_tost": (_pe.equivalence_tost_power, "Power and Sample Size: Equivalence (TOST)", "equivalence_tost_power"),
             "estimation": (_pe.sample_size_estimation, "Sample Size for Estimation", "sample_size_estimation"),
+            "estimation_planning": (_pe.estimation_planning, "Sample Size for Estimation", "estimation_planning"),
+            "general_factorial_power": (_pe.general_factorial_power, "Power and Sample Size: General Full Factorial Design", "general_factorial_power"),
+            "plackett_burman_power": (_pe.plackett_burman_power, "Power and Sample Size: Plackett-Burman Design", "plackett_burman_power"),
+            "equivalence_difference_power": (_pe.equivalence_difference_power, "Power and Sample Size: Equivalence", "equivalence_difference_power"),
             "tolerance_interval": (_pe.sample_size_tolerance_interval, "Sample Size for Tolerance Intervals", "sample_size_tolerance_interval"),
+            "tolerance_planning": (_pe.tolerance_interval_planning, "Sample Size for Tolerance Intervals", "tolerance_interval_planning"),
         }
         if kind not in table:
             raise ValueError(f"Unsupported extended power calculation kind: {kind}")
@@ -5766,7 +5831,15 @@ class Presenter:
         try:
             from .connect import create_connected_response_surface
             conf = options.get('confidence', 0.95) if isinstance(options, dict) else 0.95
-            conn = create_connected_response_surface(self.worksheet, response_index, factor_indices, result, conf, coding=parameters['coding'], terms=parameters['terms'], options=options)
+            source = self.worksheet
+            if self.native_project is not None and not getattr(self.native_project, 'statcraft_owned', False):
+                # R verification assigns local identities. Keep native worksheet metadata intact.
+                source = copy.copy(source)
+                source.metadata = copy.deepcopy(source.metadata)
+                source.columns = [copy.copy(column) for column in source.columns]
+                for column in source.columns:
+                    column.metadata = copy.deepcopy(column.metadata)
+            conn = create_connected_response_surface(source, response_index, factor_indices, result, conf, coding=parameters['coding'], terms=parameters['terms'], options=options)
             entry['connected_analysis'] = conn.to_dict()
         except Exception:
             pass
@@ -5805,6 +5878,36 @@ class Presenter:
 
     def analyze_factorial_terms(self,**parameters):
         return self.analyze_factorial(**parameters)
+
+    def create_split_plot_design(self, hard_factors, easy_factors, replicates=1, seed=None, randomize=True):
+        from .doe_split_plot import create_split_plot_design
+        worksheet = create_split_plot_design(hard_factors, easy_factors, replicates=replicates, seed=seed, randomize=randomize)
+        self.new()
+        self.worksheet = worksheet
+        self.dirty = True
+        doe_meta = worksheet.metadata['doe']
+        result = {
+            'design': 'Split-plot factorial design',
+            'hard_factors': len(hard_factors),
+            'easy_factors': len(easy_factors),
+            'whole_plots': doe_meta['whole_plots'],
+            'runs': worksheet.row_count,
+            'replicates': replicates,
+            'randomized': randomize,
+            'seed': seed,
+            'convention': 'WP identifies whole-plot blocks for hard-to-change factors; StdOrder is unrandomized order; RunOrder is worksheet order.',
+        }
+        return self._record("Split-Plot Factorial Design", result)
+
+    def analyze_split_plot(self, response, whole_plot_col='WP', terms=None, confidence=0.95):
+        from .doe_split_plot import analyze_split_plot
+        result = analyze_split_plot(self.worksheet, response=response, whole_plot_col=whole_plot_col, terms=terms, confidence=confidence)
+        parameters = {'response': response, 'whole_plot_col': whole_plot_col, 'terms': terms, 'confidence': confidence}
+        return self._record(
+            f"Split-Plot ANOVA — {result['response']}",
+            result,
+            recipe={'action': 'analyze_split_plot', 'parameters': parameters},
+        )
 
     def create_definitive_screening_design(self, factors, replicates=1, extra_centers=0, randomize=True, seed=1, name="Definitive Screening Design"):
         from .dsd import create_definitive_screening_design
@@ -6724,6 +6827,84 @@ class Presenter:
         )
 
     @undoable
+    def concatenate_columns(self, indices, separator: str = "", destination: str = "", skip_missing: bool = False):
+        from .data_prep import concatenate_columns
+        values = concatenate_columns(self.worksheet, indices, separator=separator, skip_missing=skip_missing)
+        dest = destination.strip() if destination and destination.strip() else "Concatenated"
+        col = self._assign_or_append_column(dest, values, "text")
+        self.dirty = True
+        return self._record(
+            f"Concatenate Columns — {col.name}",
+            {"sources": [self.worksheet.columns[i].name for i in indices], "destination": col.name, "rows": len(values)},
+        )
+
+    @undoable
+    def extract_datetime_to_numeric(self, col_index: int, component: str = "Year", destination: str = ""):
+        from .data_prep import extract_datetime_to_numeric
+        values = extract_datetime_to_numeric(self.worksheet, col_index, component=component)
+        dest = destination.strip() if destination and destination.strip() else f"{self.worksheet.columns[col_index].name}_{component}"
+        col = self._assign_or_append_column(dest, values, "number")
+        self.dirty = True
+        return self._record(
+            f"Extract Date/Time to Numeric ({component}) — {col.name}",
+            {"source": self.worksheet.columns[col_index].name, "component": component, "destination": col.name, "rows": len(values)},
+        )
+
+    @undoable
+    def extract_datetime_to_text(self, col_index: int, component: str = "Month", destination: str = ""):
+        from .data_prep import extract_datetime_to_text
+        values = extract_datetime_to_text(self.worksheet, col_index, component=component)
+        dest = destination.strip() if destination and destination.strip() else f"{self.worksheet.columns[col_index].name}_{component}"
+        col = self._assign_or_append_column(dest, values, "text")
+        self.dirty = True
+        return self._record(
+            f"Extract Date/Time to Text ({component}) — {col.name}",
+            {"source": self.worksheet.columns[col_index].name, "component": component, "destination": col.name, "rows": len(values)},
+        )
+
+    @undoable
+    def matrix_arithmetic(self, operation: str, left_name: str, right_name: str = "", scalar=None, dest_name: str = "M_Out"):
+        from .matrices import matrix_arithmetic
+        res = matrix_arithmetic(self.worksheet, operation, left_name, right_name=right_name, scalar=scalar, dest_name=dest_name)
+        self.dirty = True
+        return self._record(f"Matrix {operation.title()} ({dest_name})", res)
+
+    @undoable
+    def matrix_transpose(self, src_name: str, dest_name: str = ""):
+        from .matrices import matrix_transpose
+        res = matrix_transpose(self.worksheet, src_name, dest_name=dest_name)
+        self.dirty = True
+        return self._record(f"Matrix Transpose ({src_name})", res)
+
+    @undoable
+    def matrix_invert(self, src_name: str, dest_name: str = ""):
+        from .matrices import matrix_invert
+        res = matrix_invert(self.worksheet, src_name, dest_name=dest_name)
+        self.dirty = True
+        return self._record(f"Matrix Invert ({src_name})", res)
+
+    @undoable
+    def matrix_eigenanalysis(self, src_name: str, store_values_col: str = "", store_vectors_matrix: str = ""):
+        from .matrices import matrix_eigenanalysis
+        res = matrix_eigenanalysis(self.worksheet, src_name, store_values_col=store_values_col, store_vectors_matrix=store_vectors_matrix)
+        self.dirty = True
+        return self._record(f"Eigenanalysis ({src_name})", res)
+
+    @undoable
+    def copy_columns_to_matrix(self, col_indices, dest_name: str = "M1"):
+        from .matrices import copy_columns_to_matrix
+        res = copy_columns_to_matrix(self.worksheet, col_indices, dest_name=dest_name)
+        self.dirty = True
+        return self._record(f"Copy Columns to Matrix ({dest_name})", res)
+
+    @undoable
+    def copy_matrix_to_columns(self, src_name: str, col_prefix: str = ""):
+        from .matrices import copy_matrix_to_columns
+        res = copy_matrix_to_columns(self.worksheet, src_name, col_prefix=col_prefix)
+        self.dirty = True
+        return self._record(f"Copy Matrix to Columns ({src_name})", res)
+
+    @undoable
     def convert_text_to_datetime(self, col_index: int, date_format: str = "", destination: str = ""):
         from .data_prep import convert_text_to_datetime_column
         serials = convert_text_to_datetime_column(self.worksheet, col_index, fmt=date_format)
@@ -7307,6 +7488,157 @@ class Presenter:
         return insert_pos
 
     @undoable
+    def copy_columns_to_columns(self, source_indices, target_indices=None, include_rows=None, omit_rows=None):
+        src_list = [int(i) for i in source_indices]
+        if not src_list or any(not 0 <= i < len(self.worksheet.columns) for i in src_list):
+            raise ValueError("Select at least one valid source column to copy.")
+        inc_set = {int(r) for r in include_rows} if include_rows is not None else None
+        omit_set = {int(r) for r in omit_rows} if omit_rows is not None else set()
+        created = []
+        for pos, src_idx in enumerate(src_list):
+            src = self.worksheet.columns[src_idx]
+            vals = []
+            for r, v in enumerate(src.values):
+                if inc_set is not None and r not in inc_set:
+                    continue
+                if r in omit_set:
+                    continue
+                vals.append(v)
+            if target_indices is not None and pos < len(target_indices):
+                t_idx = int(target_indices[pos])
+                if not 0 <= t_idx < len(self.worksheet.columns):
+                    raise ValueError("Target column index out of range.")
+                dst = self.worksheet.columns[t_idx]
+                dst.kind = src.kind
+                dst.values = vals
+                dst.metadata = copy.deepcopy(src.metadata)
+                created.append(t_idx)
+            else:
+                new_name = f"{src.name} (Copy)"
+                existing_names = {c.name for c in self.worksheet.columns}
+                cnt = 1
+                while new_name in existing_names:
+                    cnt += 1
+                    new_name = f"{src.name} (Copy {cnt})"
+                self.worksheet.columns.append(Column(new_name, src.kind, vals, metadata=copy.deepcopy(src.metadata)))
+                created.append(len(self.worksheet.columns) - 1)
+        self.dirty = True
+        return created
+
+    @undoable
+    def copy_columns_to_constants(self, source_indices, constant_names=None):
+        src_list = [int(i) for i in source_indices]
+        if not src_list or any(not 0 <= i < len(self.worksheet.columns) for i in src_list):
+            raise ValueError("Select at least one valid source column.")
+        names = list(constant_names) if constant_names else []
+        stored = []
+        if len(src_list) == 1 and len(names) > 1:
+            src = self.worksheet.columns[src_list[0]]
+            vals = [v for v in src.values if v is not None]
+            for idx, cname in enumerate(names):
+                if idx >= len(vals):
+                    break
+                cname = cname.strip()
+                if not cname:
+                    continue
+                existing = next((c for c in self.worksheet.constants if c.name.casefold() == cname.casefold()), None)
+                if existing is not None:
+                    existing.kind = src.kind
+                    existing.values = [vals[idx]]
+                else:
+                    self.worksheet.constants.append(Column(cname, src.kind, [vals[idx]]))
+                stored.append(cname)
+        else:
+            for pos, src_idx in enumerate(src_list):
+                src = self.worksheet.columns[src_idx]
+                val = next((v for v in src.values if v is not None), None)
+                if val is None:
+                    raise ValueError(f"Column '{src.name}' has no non-missing value to store as a constant.")
+                cname = names[pos].strip() if pos < len(names) and names[pos].strip() else f"K{len(self.worksheet.constants) + 1}"
+                existing = next((c for c in self.worksheet.constants if c.name.casefold() == cname.casefold()), None)
+                if existing is not None:
+                    existing.kind = src.kind
+                    existing.values = [val]
+                else:
+                    self.worksheet.constants.append(Column(cname, src.kind, [val]))
+                stored.append(cname)
+        self.dirty = True
+        return stored
+
+    @undoable
+    def copy_constants_to_columns(self, constant_names, target_index=None, target_name=None):
+        if not constant_names:
+            raise ValueError("Select at least one stored constant to copy.")
+        vals = []
+        kind = None
+        for cname in constant_names:
+            found = next((c for c in self.worksheet.constants if c.name.casefold() == str(cname).strip().casefold()), None)
+            if found is None or not found.values:
+                raise ValueError(f"Stored constant '{cname}' was not found.")
+            if kind is None:
+                kind = found.kind
+            elif found.kind != kind:
+                kind = "text"
+            vals.append(found.values[0])
+        kind = kind or "number"
+        if kind == "text":
+            vals = [str(v) for v in vals]
+        if target_index is not None:
+            t_idx = int(target_index)
+            if not 0 <= t_idx < len(self.worksheet.columns):
+                raise ValueError("Target column index out of range.")
+            col = self.worksheet.columns[t_idx]
+            col.kind = kind
+            col.values = vals
+            if target_name and target_name.strip():
+                col.name = target_name.strip()
+            self.dirty = True
+            return t_idx
+        cname = (target_name or "").strip() or f"C{len(self.worksheet.columns) + 1}"
+        self.worksheet.columns.append(Column(cname, kind, vals))
+        self.dirty = True
+        return len(self.worksheet.columns) - 1
+
+    @undoable
+    def recode_with_conversion_table(self, source_index, from_index, to_index, target_index=None, target_name=None, default_value=None):
+        ncols = len(self.worksheet.columns)
+        for idx, label in ((source_index, "source"), (from_index, "current value"), (to_index, "recoded value")):
+            if not 0 <= int(idx) < ncols:
+                raise ValueError(f"Select a valid {label} column.")
+        src = self.worksheet.columns[int(source_index)]
+        from_col = self.worksheet.columns[int(from_index)]
+        to_col = self.worksheet.columns[int(to_index)]
+        mapping = {}
+        for old_v, new_v in zip(from_col.values, to_col.values):
+            if old_v is None:
+                continue
+            key = str(old_v).strip() if src.kind == "text" else old_v
+            mapping[key] = new_v
+        out_kind = to_col.kind
+        out_vals = []
+        for v in src.values:
+            if v is None:
+                out_vals.append(None)
+                continue
+            lookup = str(v).strip() if src.kind == "text" else v
+            if lookup in mapping:
+                out_vals.append(mapping[lookup])
+            else:
+                out_vals.append(v if default_value is None and out_kind == src.kind else default_value)
+        if target_index is not None:
+            t_idx = int(target_index)
+            if not 0 <= t_idx < ncols:
+                raise ValueError("Target column index out of range.")
+            dst = self.worksheet.columns[t_idx]
+            self.worksheet.columns[t_idx] = Column(dst.name, out_kind, out_vals, copy.deepcopy(dst.metadata))
+            self.dirty = True
+            return t_idx
+        cname = (target_name or "").strip() or f"{src.name} (Recoded)"
+        self.worksheet.columns.append(Column(cname, out_kind, out_vals))
+        self.dirty = True
+        return len(self.worksheet.columns) - 1
+
+    @undoable
     def sort_columns(self, target_indices, by_index, descending=False):
         if not target_indices or any(not 0 <= i < len(self.worksheet.columns) for i in target_indices):
             raise ValueError("Select at least one column to sort.")
@@ -7831,7 +8163,32 @@ class Presenter:
         try:
             # Only the reconstructed typed recipe executes. Native history and
             # macro text are never interpreted.
-            fresh=self.analyze_response_surface(**recipe['parameters'])
+            action = recipe.get('action')
+            params = recipe.get('parameters', {})
+            if action == 'analyze_response_surface':
+                fresh = self.analyze_response_surface(**params)
+            elif action == 'analyze_factorial':
+                fresh = self.analyze_factorial(**params)
+            elif action == 'analyze_factorial_terms':
+                fresh = self.analyze_factorial_terms(**params)
+            elif action == 'general_linear_model':
+                fresh = self.general_linear_model(**params)
+            elif action == 'fit_binary_logistic':
+                fresh = self.fit_binary_logistic(**params)
+            elif action == 'poisson_regression':
+                fresh = self.poisson_regression(params)
+            elif action == 'ordinal_logistic_regression':
+                fresh = self.ordinal_logistic_regression(params)
+            elif action == 'nominal_logistic_regression':
+                fresh = self.nominal_logistic_regression(params)
+            elif action == 'reliability_distribution':
+                fresh = self.reliability_distribution(**params)
+            elif action == 'arima':
+                fresh = self.arima(**params)
+            elif action == 'fit_mixed_reml':
+                fresh = self.fit_mixed_reml(**params)
+            else:
+                raise ValueError('Unsupported recovered native model recipe action: ' + str(action))
         except Exception:
             self.select_worksheet(previous)
             raise
@@ -7991,7 +8348,12 @@ def format_entry(entry):
             'two_poisson_rates_power': ('.power_extended', 'format_power_extended_report'),
             'equivalence_tost_power': ('.power_extended', 'format_power_extended_report'),
             'sample_size_estimation': ('.power_extended', 'format_power_extended_report'),
+            'estimation_planning': ('.power_extended', 'format_power_extended_report'),
+            'general_factorial_power': ('.power_extended', 'format_power_extended_report'),
+            'plackett_burman_power': ('.power_extended', 'format_power_extended_report'),
+            'equivalence_difference_power': ('.power_extended', 'format_power_extended_report'),
             'sample_size_tolerance_interval': ('.power_extended', 'format_power_extended_report'),
+            'tolerance_interval_planning': ('.power_extended', 'format_power_extended_report'),
             'balanced_anova': ('.advanced_anova', 'format_advanced_anova_report'),
             'fully_nested_anova': ('.advanced_anova', 'format_advanced_anova_report'),
             'oneway_manova': ('.advanced_anova', 'format_advanced_anova_report'),

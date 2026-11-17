@@ -137,6 +137,8 @@ class OneSampleTDialog(QDialog):
         self.result_payload: Optional[Dict[str, Any]] = None
 
         self.settings = one_sample_t_settings()
+        from .variable_dialogs import default_confidence_percent
+        self.settings["confidence_level"] = default_confidence_percent()
         self.setMinimumSize(560, 420)
         self.resize(560, 420)
         self.setSizeGripEnabled(True)
@@ -356,3 +358,27 @@ class OneSampleTDialog(QDialog):
 
         self.result_payload = dict(self.settings)
         self.accept()
+
+    def get_state(self) -> dict:
+        import copy
+        return {
+            "data_idx": self.combo_data.currentIndex(),
+            "sample_cols": self.sample_cols_edit.text(),
+            "size": self.size_edit.text(),
+            "mean": self.mean_edit.text(),
+            "sd": self.sd_edit.text(),
+            "hyp": self.hyp_edit.text(),
+            "settings": copy.deepcopy(self.settings),
+        }
+
+    def set_state(self, state: dict) -> None:
+        import copy
+        if not isinstance(state, dict):
+            return
+        if "data_idx" in state:
+            self.combo_data.setCurrentIndex(int(state["data_idx"]))
+        for attr, key in (("sample_cols_edit", "sample_cols"), ("size_edit", "size"), ("mean_edit", "mean"), ("sd_edit", "sd"), ("hyp_edit", "hyp")):
+            if key in state:
+                getattr(self, attr).setText(str(state[key]))
+        if isinstance(state.get("settings"), dict):
+            self.settings.update(copy.deepcopy(state["settings"]))

@@ -44,7 +44,7 @@ class CreateSurfaceDialog(QDialog):
         note=QLabel('Select a cell in Display Available Designs, or choose a design and blocking arrangement in Designs. Cube-defined central composite levels can produce axial settings outside the entered low/high range.');note.setWordWrap(True);layout.addWidget(note)
         form=QFormLayout();self.name=QLineEdit('Response surface design');self.destination=QComboBox();self.destination.addItems(destinations(window.presenter));form.addRow('New worksheet name:',self.name);form.addRow('Store in:',self.destination);layout.addLayout(form)
         self.error=QLabel();self.error.setWordWrap(True);self.error.setStyleSheet('color:#a02020');layout.addWidget(self.error);footer(self,layout,self.validate)
-        self._update_summary()
+        self.apply_design(next(s for s in catalog() if s['kind']=='central_composite' and s['factors']==2 and s['fraction']==1 and s['blocks']==1))
 
     def change_kind(self,box):
         if self._configuring:return

@@ -62,13 +62,19 @@ class NumericBlobTests(unittest.TestCase):
                 self.rewrite(source,mutate)
                 with self.assertRaises(FormatError): load_mpx(source)
 
-    def test_shared_blob_edit_fails_before_publication(self):
+    def test_shared_blob_edit_uses_copy_on_write(self):
         with self.scratch() as folder:
             source,target=Path(folder)/'in.mpx',Path(folder)/'out.mpx'; write_blob_fixture(source)
-            self.rewrite(source,lambda members,sheet:sheet['Data']['Columns'].append(copy.deepcopy(sheet['Data']['Columns'][0])))
-            p=Presenter(); p.load(source); p.set_cell(0,0,'9')
-            with self.assertRaises(UnsupportedFormatError): p.save(target)
-            self.assertFalse(target.exists())
+            def duplicate_with_distinct_id(members, sheet):
+                col = copy.deepcopy(sheet['Data']['Columns'][0])
+                col['WorksheetVarBody']['Name'] = 'Copy'
+                col['WorksheetVarBody']['Id'] = 'col-copy'
+                sheet['Data']['Columns'].append(col)
+            self.rewrite(source, duplicate_with_distinct_id)
+            p=Presenter(); p.load(source); p.set_cell(0,0,'9'); p.save(target)
+            reloaded=load_mpx(target)
+            self.assertEqual(reloaded.active_worksheet.columns[0].values,[9,2,3])
+            self.assertEqual(reloaded.active_worksheet.columns[1].values,[1,2,3])
 
     def test_missing_numeric_sentinel_decoded_and_preserved(self):
         with self.scratch() as folder:

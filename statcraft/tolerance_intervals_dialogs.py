@@ -338,3 +338,23 @@ class ToleranceIntervalsDialog(QDialog):
             }
 
         self.accept()
+
+    def get_state(self) -> dict:
+        return {
+            "mode_idx": self.combo_arrange.currentIndex(),
+            "cols": self.edit_vars.text(),
+            "min_pct": self.edit_min_pct.text(),
+            "options": dict(self.options),
+        }
+
+    def set_state(self, state: dict) -> None:
+        if not isinstance(state, dict):
+            return
+        if "mode_idx" in state:
+            self.combo_arrange.setCurrentIndex(int(state["mode_idx"]))
+        if "cols" in state:
+            self.edit_vars.setText(str(state["cols"]))
+        if "min_pct" in state:
+            self.edit_min_pct.setText(str(state["min_pct"]))
+        if isinstance(state.get("options"), dict):
+            self.options.update(state["options"])

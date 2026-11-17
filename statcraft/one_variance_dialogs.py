@@ -93,8 +93,9 @@ class OneVarianceDialog(QDialog):
         self.worksheet = worksheet
         self.result_payload = None
 
+        from .variable_dialogs import default_confidence_percent
         self.options = {
-            "confidence_level": 95.0,
+            "confidence_level": default_confidence_percent(),
             "alternative": "not_equal",
         }
 
@@ -314,3 +315,22 @@ class OneVarianceDialog(QDialog):
 
         self.result_payload = payload
         self.accept()
+
+    def get_state(self) -> dict:
+        import copy
+        return {
+            "mode_idx": self.mode_combo.currentIndex(),
+            "sample_cols": self.sample_cols_edit.text(),
+            "options": copy.deepcopy(self.options),
+        }
+
+    def set_state(self, state: dict) -> None:
+        import copy
+        if not isinstance(state, dict):
+            return
+        if "mode_idx" in state:
+            self.mode_combo.setCurrentIndex(int(state["mode_idx"]))
+        if "sample_cols" in state:
+            self.sample_cols_edit.setText(str(state["sample_cols"]))
+        if isinstance(state.get("options"), dict):
+            self.options.update(copy.deepcopy(state["options"]))

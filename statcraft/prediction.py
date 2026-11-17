@@ -57,19 +57,39 @@ def _source(worksheet, recipe):
         raise ValueError('A source model column no longer exists.')
     action, p = recipe['action'], recipe['parameters']
     if action == 'multiple_regression':
-        from .regression import multiple_regression
-        indices = p['predictor_indices']; response = p['response_index']
-        if not 1 <= len(indices) <= 8 or len(set(indices + [response])) != len(indices)+1:
-            raise ValueError('Choose a separate response and 1–8 distinct numeric predictors.')
-        cols = [worksheet.columns[i] for i in indices + [response]]
-        if any(c.kind != 'number' for c in cols):
-            raise ValueError('Regression predictions require numeric source columns.')
-        length = max(len(c.values) for c in cols)
-        if length > 20000:
-            raise ValueError('Prediction models support at most 20,000 source rows.')
-        aligned = [[c.values[r] if r < len(c.values) else None for r in range(length)] for c in cols]
-        result = multiple_regression(aligned[:-1], aligned[-1], p['confidence'], [c.name for c in cols[:-1]])
-        factor_count = 0
+        from .regression import multiple_regression, fit_general_regression
+        cont_indices = list(p.get('predictor_indices') or ())
+        cat_indices = list(p.get('categorical_indices') or ())
+        model_terms = p.get('model_terms')
+        response = p['response_index']
+        all_pred = cont_indices + cat_indices
+        if not 1 <= len(all_pred) <= 12 or len(set(all_pred + [response])) != len(all_pred) + 1:
+            raise ValueError('Choose a separate response and distinct predictors.')
+        if cat_indices or model_terms is not None:
+            result = fit_general_regression(
+                worksheet,
+                response,
+                continuous_indices=cont_indices,
+                categorical_indices=cat_indices,
+                terms=model_terms,
+                confidence=p['confidence'],
+            )
+            result['_cont_count'] = len(cont_indices)
+            indices = all_pred
+            factor_count = 0
+        else:
+            if not 1 <= len(cont_indices) <= 8:
+                raise ValueError('Choose a separate response and 1–8 distinct numeric predictors.')
+            cols = [worksheet.columns[i] for i in cont_indices + [response]]
+            if any(c.kind != 'number' for c in cols):
+                raise ValueError('Regression predictions require numeric source columns.')
+            length = max(len(c.values) for c in cols)
+            if length > 20000:
+                raise ValueError('Prediction models support at most 20,000 source rows.')
+            aligned = [[c.values[r] if r < len(c.values) else None for r in range(length)] for c in cols]
+            result = multiple_regression(aligned[:-1], aligned[-1], p['confidence'], [c.name for c in cols[:-1]])
+            indices = cont_indices
+            factor_count = 0
     elif action == 'general_linear_model':
         from .glm import fit
         result = fit(worksheet, **p)
@@ -98,10 +118,16 @@ def _source(worksheet, recipe):
         block = p.get('block_index')
         indices = ([] if block is None else [block]) + p['factor_indices']; response = p['response_index']; factor_count = 0 if block is None else 1
     predictors = []
+    cont_count_mr = result.get('_cont_count', len(indices)) if action == 'multiple_regression' else None
+    cat_coding_mr = result.get('categorical_predictors', []) if action == 'multiple_regression' else []
     for j, i in enumerate(indices):
         c = worksheet.columns[i]
-        predictors.append(dict(name=c.name, index=i, kind=c.kind, role='factor' if j < factor_count else 'covariate',
-                               levels=result['coding_information'][j]['levels'] if j < factor_count else []))
+        if action == 'multiple_regression' and cat_coding_mr and j >= cont_count_mr:
+            cat_info = cat_coding_mr[j - cont_count_mr]
+            predictors.append(dict(name=c.name, index=i, kind=c.kind, role='factor', levels=list(cat_info.get('levels', []))))
+        else:
+            predictors.append(dict(name=c.name, index=i, kind=c.kind, role='factor' if j < factor_count else 'covariate',
+                                   levels=result['coding_information'][j]['levels'] if j < factor_count else []))
     title = dict(multiple_regression='Multiple Regression', general_linear_model='General Linear Model',
                  analyze_response_surface='Response Surface Regression',
                  analyze_factorial='Factorial Regression', analyze_factorial_terms='Factorial Regression')[action]
@@ -121,7 +147,31 @@ def model_spec(worksheet, model_recipe):
 
 def _encode(rows, action, result):
     if action == 'multiple_regression':
-        return np.asarray(rows, dtype=float)
+        model_terms = result.get('model_terms')
+        cat_coding = result.get('categorical_predictors', [])
+        if not model_terms and not cat_coding:
+            return np.asarray(rows, dtype=float)
+        cont_count = int(result.get('_cont_count', len(rows[0]) - len(cat_coding) if rows else 0))
+        blocks = []
+        for j in range(cont_count):
+            blocks.append([np.asarray([row[j] for row in rows], dtype=float)])
+        for idx_c, cat_info in enumerate(cat_coding):
+            j = cont_count + idx_c
+            levels = cat_info['levels']
+            vals = [row[j] for row in rows]
+            blocks.append([np.asarray([1.0 if v == lvl else 0.0 for v in vals], dtype=float) for lvl in levels[:-1]])
+        encoded = []
+        for term in model_terms:
+            for combination in itertools.product(*(range(len(blocks[i])) for i in term)):
+                if len(term) == 2 and term[0] == term[1]:
+                    v = blocks[term[0]][0]
+                    encoded.append(v * v)
+                else:
+                    product = np.ones(len(rows), dtype=float)
+                    for i, b_idx in zip(term, combination):
+                        product *= blocks[i][b_idx]
+                    encoded.append(product)
+        return np.asarray(encoded).T
     blocks = []
     for j, info in enumerate(result['coding_information']):
         values = [row[j] for row in rows]

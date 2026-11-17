@@ -334,3 +334,88 @@ def convert_text_to_datetime_column(sheet, col_index, fmt=""):
         dt = _parse_datetime_cell(v, src.kind, fmt)
         out_serials.append(None if dt is None else datetime_to_serial(dt))
     return out_serials
+
+
+def concatenate_columns(sheet, indices, separator="", skip_missing=False):
+    """Concatenate multiple columns row-by-row into text values."""
+    cols = _columns(sheet, indices, 1)
+    n_rows = max((len(c.values) for c in cols), default=0)
+    sep = "" if separator is None else str(separator)
+    out = []
+    for r in range(n_rows):
+        parts = []
+        any_present = False
+        for c in cols:
+            v = c.values[r] if r < len(c.values) else None
+            if v is None or (isinstance(v, str) and v == ""):
+                if not skip_missing:
+                    parts.append("")
+            else:
+                any_present = True
+                if c.kind == "date":
+                    from .model import display_date
+                    parts.append(display_date(v))
+                elif isinstance(v, float) and v.is_integer():
+                    parts.append(str(int(v)))
+                else:
+                    parts.append(str(v))
+        out.append(sep.join(parts) if any_present else None)
+    return out
+
+
+def extract_datetime_to_numeric(sheet, col_index, component="Year"):
+    """Extract numeric calendar/clock component from a Date/Time column."""
+    src = _columns(sheet, [col_index], 1)[0]
+    comp = str(component or "").strip().lower()
+    valid = ("year", "quarter", "month", "day", "day of week", "day of year", "week of year", "hour", "minute", "second")
+    if comp not in valid:
+        raise ValueError("Choose Year, Quarter, Month, Day, Day of Week, Day of Year, Week of Year, Hour, Minute, or Second.")
+    out = []
+    for v in src.values:
+        dt = _parse_datetime_cell(v, src.kind)
+        if dt is None:
+            out.append(None)
+        elif comp == "year":
+            out.append(float(dt.year))
+        elif comp == "quarter":
+            out.append(float((dt.month - 1) // 3 + 1))
+        elif comp == "month":
+            out.append(float(dt.month))
+        elif comp == "day":
+            out.append(float(dt.day))
+        elif comp == "day of week":
+            # Minitab convention: 1 = Sunday .. 7 = Saturday
+            out.append(float((dt.weekday() + 1) % 7 + 1))
+        elif comp == "day of year":
+            out.append(float(dt.timetuple().tm_yday))
+        elif comp == "week of year":
+            out.append(float(dt.isocalendar().week))
+        elif comp == "hour":
+            out.append(float(dt.hour))
+        elif comp == "minute":
+            out.append(float(dt.minute))
+        else:
+            out.append(float(dt.second))
+    return out
+
+
+def extract_datetime_to_text(sheet, col_index, component="Month"):
+    """Extract text calendar component (Month, Day of Week, Quarter, Year) from a Date/Time column."""
+    src = _columns(sheet, [col_index], 1)[0]
+    comp = str(component or "").strip().lower()
+    if comp not in ("month", "day of week", "quarter", "year"):
+        raise ValueError("Choose Month, Day of Week, Quarter, or Year.")
+    out = []
+    for v in src.values:
+        dt = _parse_datetime_cell(v, src.kind)
+        if dt is None:
+            out.append(None)
+        elif comp == "month":
+            out.append(dt.strftime("%B"))
+        elif comp == "day of week":
+            out.append(dt.strftime("%A"))
+        elif comp == "quarter":
+            out.append(f"Q{(dt.month - 1) // 3 + 1}")
+        else:
+            out.append(str(dt.year))
+    return out

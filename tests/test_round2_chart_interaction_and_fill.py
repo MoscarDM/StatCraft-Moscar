@@ -56,7 +56,7 @@ class TestRound2ChartInteractionAndFill(unittest.TestCase):
             QPoint(0, 0),
             QPoint(0, 120),
             Qt.MouseButton.NoButton,
-            Qt.KeyboardModifier.NoModifier,
+            Qt.KeyboardModifier.ControlModifier,
             Qt.ScrollPhase.NoScrollPhase,
             False,
         )

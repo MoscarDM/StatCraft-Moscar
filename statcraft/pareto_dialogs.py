@@ -255,3 +255,31 @@ class ParetoChartDialog(QDialog):
                 "combine_percent": combine_pct,
                 "show_cumulative": self.chk_cumulative.isChecked(),
             }
+
+    def get_state(self) -> dict:
+        return {
+            "arrange_idx": self.combo_arrange.currentIndex(),
+            "defects_raw": self.edit_defects_raw.text(),
+            "by_raw": self.edit_by_raw.text(),
+            "labels_summ": self.edit_labels_summ.text(),
+            "counts_summ": self.edit_counts_summ.text(),
+            "combine_pct": self.edit_combine_pct.text(),
+            "show_cumulative": self.chk_cumulative.isChecked(),
+        }
+
+    def set_state(self, state: dict) -> None:
+        if not isinstance(state, dict):
+            return
+        if "arrange_idx" in state:
+            self.combo_arrange.setCurrentIndex(int(state["arrange_idx"]))
+        for attr, key in (
+            ("edit_defects_raw", "defects_raw"),
+            ("edit_by_raw", "by_raw"),
+            ("edit_labels_summ", "labels_summ"),
+            ("edit_counts_summ", "counts_summ"),
+            ("edit_combine_pct", "combine_pct"),
+        ):
+            if key in state:
+                getattr(self, attr).setText(str(state[key]))
+        if "show_cumulative" in state:
+            self.chk_cumulative.setChecked(bool(state["show_cumulative"]))

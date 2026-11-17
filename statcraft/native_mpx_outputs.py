@@ -287,10 +287,65 @@ def _series(reader, model, kind, group_vals=None, group_name=''):
     return out
 
 
+def _optimizer_panels(figure):
+    """Decode saved optimizer samples; never evaluate the retained model."""
+    factors=figure.get('NumFactors'); responses=figure.get('NumResponses')
+    if type(factors) is not int or type(responses) is not int or not 1<=factors<=32 or not 1<=responses<=32 or factors*responses>64:
+        return []
+    counts=figure.get('NumPlotPoints'); xs=figure.get('XPoints'); ys=figure.get('YPoints')
+    names=figure.get('FactLabels'); labels=figure.get('ResponseLabels')
+    if not isinstance(counts,list) or len(counts)!=factors or any(type(n) is not int or not 2<=n<=MAX_POINTS for n in counts):return []
+    total=sum(counts)
+    if total*responses>MAX_POINTS:return []
+    if not isinstance(names,list) or len(names)!=factors or not isinstance(labels,list) or len(labels)!=responses:return []
+    if any(not isinstance(s,str) for s in names+labels):return []
+    if any(not isinstance(rows,list) or len(rows)!=responses for rows in (xs,ys)):return []
+    if any(not isinstance(row,list) or len(row)!=total or any(not _number(v) for v in row) for rows in (xs,ys) for row in rows):return []
+    optimizer = figure.get('MROpt')
+    levels = optimizer.get('FactorLevels') if isinstance(optimizer, dict) else None
+    single_solution = (isinstance(levels, list) and len(levels) == factors
+                       and all(isinstance(level, list) and len(level) == 1 and _number(level[0])
+                               for level in levels))
+    fitted = figure.get('YHat')
+    desirability = figure.get('D')
+    panels=[]
+    for response in range(responses):
+        fit = fitted[response] if isinstance(fitted, list) and len(fitted) == responses else None
+        low_y = min(ys[response])
+        high_y = max(ys[response])
+        if _number(fit):
+            low_y = min(low_y, fit)
+            high_y = max(high_y, fit)
+        padding = (high_y - low_y) * 0.05 or max(abs(high_y) * 0.05, 0.5)
+        start=0
+        for factor,count in enumerate(counts):
+            x=xs[response][start:start+count]; y=ys[response][start:start+count];start+=count
+            if any(b<=a for a,b in zip(x,x[1:])):return []
+            panel={'kind':'line','title':labels[response][:4096],
+                   'x_label':names[factor][:4096],'y_label':labels[response][:4096],
+                   'series':[{'kind':'line','x':x,'y':y,'color':'#0054a6','label':'Saved response curve'}],
+                   'bounds':[x[0], x[-1], low_y - padding, high_y + padding],
+                   'note':'Saved optimizer response curves; interactive re-optimization is not available for this imported snapshot.'}
+            references = []
+            if _number(fit):
+                references.append({'axis':'y','pos':float(fit),'color':'#ce0000','style':'dash','label':f'{fit:.6g}'})
+            if single_solution and x[0] <= levels[factor][0] <= x[-1]:
+                setting = levels[factor][0]
+                references.append({'axis':'x','pos':float(setting),'color':'#006b82','style':'dash','label':f'{setting:.6g}'})
+            if references:
+                panel['ref_lines'] = references
+            if isinstance(desirability,list) and len(desirability)==responses and _number(desirability[response]) and 0<=desirability[response]<=1:
+                panel['title']+=f' (desirability {desirability[response]:.5g})'
+            panels.append(panel)
+    return panels
+
+
 def _figure(reader, figure):
     figure = reader.resolve(figure)
     if not isinstance(figure, dict):
         return []
+    if 'XPoints' in figure and 'NumFactors' in figure:
+        return _optimizer_panels(figure)
     models = [reader.resolve(m) for m in figure.get('GraphModels', [])[:64]]
     if not models:
         return []
