@@ -21,6 +21,9 @@ _BINARY_LOGISTIC_TYPES = ('BinaryLogisticRegression', 'LogisticRegression')
 _ORDINAL_LOGISTIC_TYPES = ('OrdinalLogisticRegression',)
 _NOMINAL_LOGISTIC_TYPES = ('NominalLogisticRegression',)
 _POISSON_TYPES = ('PoissonRegression',)
+_RELIABILITY_TYPES = ('DistributionAnalysis', 'ParametricDistributionAnalysis')
+_ARIMA_TYPES = ('ARIMA', 'BoxJenkinsARIMA')
+_MIXED_TYPES = ('MixedEffectsModel', 'MixedModel')
 _FAMILY_MAP = {
     **{t: 'response_surface' for t in _RSM_TYPES},
     **{t: 'factorial' for t in _FACTORIAL_TYPES},
@@ -29,6 +32,9 @@ _FAMILY_MAP = {
     **{t: 'ordinal_logistic' for t in _ORDINAL_LOGISTIC_TYPES},
     **{t: 'nominal_logistic' for t in _NOMINAL_LOGISTIC_TYPES},
     **{t: 'poisson_regression' for t in _POISSON_TYPES},
+    **{t: 'reliability_distribution' for t in _RELIABILITY_TYPES},
+    **{t: 'arima' for t in _ARIMA_TYPES},
+    **{t: 'mixed_reml' for t in _MIXED_TYPES},
 }
 _MODEL_TYPE_MAP = {
     'response_surface_regression': 'response_surface',
@@ -49,6 +55,14 @@ _MODEL_TYPE_MAP = {
     'nominal_logistic': 'nominal_logistic',
     'poisson_regression': 'poisson_regression',
     'poisson': 'poisson_regression',
+    'distribution_analysis': 'reliability_distribution',
+    'parametric_distribution_analysis': 'reliability_distribution',
+    'reliability_distribution': 'reliability_distribution',
+    'arima': 'arima',
+    'box_jenkins_arima': 'arima',
+    'mixed_effects_model': 'mixed_reml',
+    'mixed_model': 'mixed_reml',
+    'mixed_reml': 'mixed_reml',
 }
 _OBJ_TYPE_MAP = {
     'response_surface': 'response_surface',
@@ -71,6 +85,14 @@ _OBJ_TYPE_MAP = {
     'nominal_logistic_regression': 'nominal_logistic',
     'poisson_regression': 'poisson_regression',
     'poisson': 'poisson_regression',
+    'distribution_analysis': 'reliability_distribution',
+    'parametric_distribution_analysis': 'reliability_distribution',
+    'reliability_distribution': 'reliability_distribution',
+    'arima': 'arima',
+    'box_jenkins_arima': 'arima',
+    'mixed_effects_model': 'mixed_reml',
+    'mixed_model': 'mixed_reml',
+    'mixed_reml': 'mixed_reml',
 }
 
 
@@ -122,6 +144,263 @@ def _validate_factorial_terms(terms, count):
     return terms
 
 
+def _decode_var_ref(sheet, sources, variable, allowed_vtypes, seen_ids, seen_internal):
+    variable = _dict(variable, 'variable reference')
+    identity = variable.get('id')
+    if not isinstance(identity, str) or identity not in sources:
+        raise ValueError('A saved model column identity is unavailable in its worksheet.')
+    if identity in seen_ids:
+        raise ValueError('Saved model variables must have distinct column identities.')
+    internal_id = _integer(variable.get('variable_id'), 'variable identity')
+    if internal_id in seen_internal:
+        raise ValueError('Ambiguous saved internal variable identity.')
+    index = sources[identity]
+    vtype = variable.get('type')
+    if vtype not in allowed_vtypes:
+        raise ValueError('The native model contains an unsupported variable type.')
+    expected_dtype = 'text' if sheet.columns[index].kind == 'text' else 'numeric'
+    if variable.get('data_type') != expected_dtype:
+        raise ValueError('The source data type conflicts with its saved native variable type.')
+    if vtype == 'continuous' and sheet.columns[index].kind != 'number':
+        raise ValueError('The source column type no longer matches its saved model role.')
+    if vtype == 'categorical' and sheet.columns[index].kind not in ('number', 'text'):
+        raise ValueError('The source column type no longer matches its saved model role.')
+    seen_ids.append(identity)
+    seen_internal[internal_id] = identity
+    return index, identity, internal_id, vtype
+
+
+def _decode_reliability(sheet, sources, variables, model, uri, cid, wid, model_id, expected_family):
+    if set(variables) - {'target', 'censor'} or 'target' not in variables:
+        raise ValueError('The native reliability model uses unsupported variable roles.')
+    seen_ids = []
+    seen_internal = {}
+    resp_idx, resp_id, _, _ = _decode_var_ref(sheet, sources, variables['target'], ('continuous',), seen_ids, seen_internal)
+    censor_idx, censor_id = None, None
+    if 'censor' in variables:
+        censor_idx, censor_id, _, _ = _decode_var_ref(sheet, sources, variables['censor'], ('continuous', 'categorical'), seen_ids, seen_internal)
+    state = _dict(_dict(model.get('model_information'), 'model information').get('input_state'), 'input state')
+    obj = _dict(_dict(model.get('post_analysis_data'), 'post-analysis data').get('model_object'), 'model object')
+    if _OBJ_TYPE_MAP.get(obj.get('model_object_type')) != expected_family or _OBJ_TYPE_MAP.get(obj.get('model_analysis_type')) != expected_family:
+        raise ValueError('Unsupported native post-analysis reliability model.')
+    if state.get('has_weights') is True or obj.get('has_weights') is True or obj.get('weights_column_id') not in (None, 0, 0.0):
+        raise ValueError('Native weighted reliability models are not supported for this refit.')
+    if state.get('has_threshold') is True or obj.get('has_threshold') is True or obj.get('threshold') not in (None, 0, 0.0):
+        raise ValueError('Three-parameter threshold reliability models are not supported for this refit.')
+    for src in (state, obj):
+        ctype = src.get('censoring_type')
+        if ctype is not None and str(ctype).lower() not in ('none', 'right'):
+            raise ValueError('Only right-censored or uncensored reliability models are supported.')
+        if src.get('has_interval_censoring') is True or src.get('is_arbitrary_censoring') is True:
+            raise ValueError('Arbitrary or interval censoring is not supported for this refit.')
+        est = src.get('estimation_method')
+        if est is not None and str(est).lower() != 'mle':
+            raise ValueError('Only MLE reliability estimation is supported for this refit.')
+    dist_raw = state.get('distribution') or obj.get('distribution')
+    if not isinstance(dist_raw, str) or dist_raw.lower() not in ('weibull', 'lognormal', 'normal', 'exponential'):
+        raise ValueError('Unsupported reliability distribution for refitting.')
+    dist_name = dist_raw.lower()
+    if state.get('confidence_interval', 'two_sided') != 'two_sided':
+        raise ValueError('Native one-sided reliability intervals are not supported here.')
+    confidence = state.get('confidence', 0.95)
+    if not _number(confidence) or not 0 < confidence < 1 or (obj.get('confidence') is not None and confidence != obj.get('confidence')):
+        raise ValueError('Native confidence settings are invalid or inconsistent.')
+    rows = _dict(_dict(obj.get('rows_to_use'), 'row selection').get('rows'), 'row selection')
+    if rows.get('use_all_rows') is not True:
+        raise ValueError('Native row-subset models need a supported row-selection workflow before refitting.')
+    settings_dict = {'column_index': resp_idx, 'dist_name': dist_name, 'confidence_level': float(confidence)}
+    source_column_ids = {'response': resp_id}
+    if censor_idx is not None:
+        settings_dict['censor_index'] = censor_idx
+        source_column_ids['censor'] = censor_id
+        censor_val = state.get('censor_value') if state.get('censor_value') is not None else obj.get('censor_value')
+        if censor_val is not None:
+            settings_dict['censor_value'] = censor_val
+    recipe = {'action': 'reliability_distribution', 'parameters': {'settings': settings_dict}}
+    from .recipes import columns
+    columns(recipe)
+    params_ref = _dict(obj.get('parameters', obj.get('distribution_parameters', {})), 'reliability parameters')
+    if not params_ref or not all(_number(v) for v in params_ref.values()):
+        raise ValueError('Invalid saved reliability parameter estimates.')
+    ll = obj.get('log_likelihood')
+    mttf = obj.get('mttf')
+    if (ll is not None and not _number(ll)) or (mttf is not None and not _number(mttf)):
+        raise ValueError('Invalid saved reliability summary statistics.')
+    verification_ref = {
+        'parameters': {k: float(v) for k, v in params_ref.items()},
+        'log_likelihood': float(ll) if ll is not None else None,
+        'mttf': float(mttf) if mttf is not None else None,
+        'row_count': _integer(rows.get('row_count'), 'saved row count'),
+    }
+    return {
+        'supported': True, 'family': expected_family, 'command_id': cid, 'worksheet_id': wid,
+        'worksheet_name': sheet.name, 'model_id': model_id, 'model_uri': uri, 'recipe': recipe,
+        'source_column_map': {str(idx): ident for idx, ident in zip([resp_idx] + ([censor_idx] if censor_idx is not None else []), seen_ids)},
+        'source_column_ids': source_column_ids,
+        'verification_reference': verification_ref,
+        'warnings': ['Refit is an independent StatCraft calculation using current worksheet values; saved native output remains unchanged.'],
+    }
+
+
+def _decode_arima(sheet, sources, variables, model, uri, cid, wid, model_id, expected_family):
+    if set(variables) - {'target', 'series'} or not ('target' in variables or 'series' in variables):
+        raise ValueError('The native ARIMA model uses unsupported or exogenous variable roles.')
+    target_var = variables['target'] if 'target' in variables else variables['series']
+    seen_ids = []
+    seen_internal = {}
+    resp_idx, resp_id, _, _ = _decode_var_ref(sheet, sources, target_var, ('continuous',), seen_ids, seen_internal)
+    state = _dict(_dict(model.get('model_information'), 'model information').get('input_state'), 'input state')
+    obj = _dict(_dict(model.get('post_analysis_data'), 'post-analysis data').get('model_object'), 'model object')
+    if _OBJ_TYPE_MAP.get(obj.get('model_object_type')) != expected_family or _OBJ_TYPE_MAP.get(obj.get('model_analysis_type')) != expected_family:
+        raise ValueError('Unsupported native post-analysis ARIMA model.')
+    if state.get('has_weights') is True or obj.get('has_weights') is True or obj.get('weights_column_id') not in (None, 0, 0.0):
+        raise ValueError('Native weighted ARIMA models are not supported for this refit.')
+    if state.get('has_exogenous') is True or obj.get('has_exogenous') is True:
+        raise ValueError('ARIMA models with exogenous predictors are not supported for this refit.')
+    if state.get('transform') not in (None, 'none') or state.get('box_cox', False) is not False or obj.get('lambda', 1) != 1:
+        raise ValueError('Native transformed ARIMA models are not supported for this refit.')
+    rows = _dict(_dict(obj.get('rows_to_use'), 'row selection').get('rows'), 'row selection')
+    if rows.get('use_all_rows') is not True:
+        raise ValueError('Native row-subset models need a supported row-selection workflow before refitting.')
+    p = _integer(state.get('p', 0), 'AR order p')
+    d = _integer(state.get('d', 0), 'differencing order d')
+    q = _integer(state.get('q', 0), 'MA order q')
+    P = _integer(state.get('P', 0), 'seasonal AR order P')
+    D = _integer(state.get('D', 0), 'seasonal differencing order D')
+    Q = _integer(state.get('Q', 0), 'seasonal MA order Q')
+    S = _integer(state.get('S', 1), 'seasonal period S')
+    if min(p, d, q, P, D, Q) < 0 or S < 1 or (S == 1 and (P > 0 or D > 0 or Q > 0)):
+        raise ValueError('Invalid native ARIMA order or seasonal period.')
+    include_constant = state.get('include_constant_term', True)
+    if type(include_constant) is not bool:
+        raise ValueError('Invalid native ARIMA constant-term setting.')
+    method_raw = state.get('method', 'CLS')
+    if not isinstance(method_raw, str) or method_raw.strip().upper() not in ('CLS', 'ML'):
+        raise ValueError('Unsupported native ARIMA estimation method.')
+    method_norm = method_raw.strip().upper()
+    confidence = state.get('confidence', 0.95)
+    if not _number(confidence) or not 0 < confidence < 1 or (obj.get('confidence') is not None and confidence != obj.get('confidence')):
+        raise ValueError('Native confidence settings are invalid or inconsistent.')
+    settings_dict = {
+        'series_index': resp_idx, 'p': p, 'd': d, 'q': q, 'P': P, 'D': D, 'Q': Q, 'S': S,
+        'include_constant': include_constant, 'method': method_norm,
+        'conf_level': float(confidence) * 100.0, 'forecasts': 0,
+    }
+    recipe = {'action': 'arima', 'parameters': {'settings': settings_dict}}
+    from .recipes import columns
+    columns(recipe)
+    estimates = _items(obj.get('estimates', []), 'ARIMA parameter estimates', 64)
+    ref_coefs = []
+    for est in estimates:
+        est = _dict(est, 'ARIMA estimate')
+        coef_val, se_val = est.get('coef'), est.get('se_coef')
+        if not _number(coef_val) or not _number(se_val) or se_val < 0:
+            raise ValueError('Invalid saved ARIMA coefficient data.')
+        ref_coefs.append({'term': str(est.get('term', '')), 'estimate': float(coef_val), 'standard_error': float(se_val)})
+    df = _integer(obj.get('error_degrees_of_freedom'), 'error degrees of freedom')
+    mse = obj.get('mean_square_error')
+    if not _number(mse) or mse < 0 or df < 1:
+        raise ValueError('Invalid native ARIMA residual inference state.')
+    verification_ref = {
+        'coefficients': ref_coefs, 'mse': float(mse), 'df_error': df,
+        'row_count': _integer(rows.get('row_count'), 'saved row count'),
+    }
+    return {
+        'supported': True, 'family': expected_family, 'command_id': cid, 'worksheet_id': wid,
+        'worksheet_name': sheet.name, 'model_id': model_id, 'model_uri': uri, 'recipe': recipe,
+        'source_column_map': {str(resp_idx): resp_id},
+        'source_column_ids': {'response': resp_id},
+        'verification_reference': verification_ref,
+        'warnings': ['Refit is an independent StatCraft calculation using current worksheet values; saved native output remains unchanged.'],
+    }
+
+
+def _decode_mixed_reml(sheet, sources, variables, model, uri, cid, wid, model_id, expected_family):
+    if set(variables) - {'target', 'fixed', 'random'} or 'target' not in variables:
+        raise ValueError('The native mixed-effects model uses unsupported variable roles.')
+    fixed_vars = _items(variables.get('fixed', []), 'fixed predictors', 16)
+    random_vars = _items(variables.get('random', []), 'random factors', 16)
+    if not random_vars:
+        raise ValueError('Mixed-effects model refitting requires at least one random factor.')
+    seen_ids = []
+    seen_internal = {}
+    resp_idx, resp_id, _, _ = _decode_var_ref(sheet, sources, variables['target'], ('continuous',), seen_ids, seen_internal)
+    fixed_indices, fixed_ids = [], []
+    for fv in fixed_vars:
+        idx, ident, _, _ = _decode_var_ref(sheet, sources, fv, ('continuous', 'categorical'), seen_ids, seen_internal)
+        fixed_indices.append(idx)
+        fixed_ids.append(ident)
+    random_indices, random_ids = [], []
+    for rv in random_vars:
+        idx, ident, _, _ = _decode_var_ref(sheet, sources, rv, ('categorical',), seen_ids, seen_internal)
+        random_indices.append(idx)
+        random_ids.append(ident)
+    state = _dict(_dict(model.get('model_information'), 'model information').get('input_state'), 'input state')
+    obj = _dict(_dict(model.get('post_analysis_data'), 'post-analysis data').get('model_object'), 'model object')
+    if _OBJ_TYPE_MAP.get(obj.get('model_object_type')) != expected_family or _OBJ_TYPE_MAP.get(obj.get('model_analysis_type')) != expected_family:
+        raise ValueError('Unsupported native post-analysis mixed-effects model.')
+    if state.get('include_constant_term') is not True:
+        raise ValueError('Native no-intercept mixed models cannot be reconstructed by this fitter.')
+    est_method = state.get('estimation_method', 'reml')
+    if not isinstance(est_method, str) or est_method.strip().lower() != 'reml':
+        raise ValueError('Mixed-effects ML estimation is not supported by the StatCraft REML backend.')
+    cov_struct = state.get('covariance_structure')
+    if cov_struct is not None and (not isinstance(cov_struct, str) or cov_struct.strip().lower() not in ('variance_components', 'vc')):
+        raise ValueError('Only variance-components covariance structure is supported for mixed-effects refitting.')
+    coding = state.get('coding', 'reference')
+    if coding != 'reference':
+        raise ValueError('Only reference coding is supported for mixed-effects refitting.')
+    if state.get('has_weights') is True or obj.get('has_weights') is True or obj.get('weights_column_id') not in (None, 0, 0.0):
+        raise ValueError('Native weighted mixed-effects models are not supported for this refit.')
+    if obj.get('lambda', 1) != 1:
+        raise ValueError('Native transformed mixed-effects models are not supported for this refit.')
+    rows = _dict(_dict(obj.get('rows_to_use'), 'row selection').get('rows'), 'row selection')
+    if rows.get('use_all_rows') is not True:
+        raise ValueError('Native row-subset models need a supported row-selection workflow before refitting.')
+    termlist = state.get('termlist')
+    if isinstance(termlist, dict):
+        for term in _items(termlist.get('model_terms', []), 'mixed model terms', 64):
+            cols = _items(_dict(term, 'mixed model term').get('term_columns', []), 'term columns', 8)
+            if len(cols) != 1:
+                raise ValueError('Interaction or higher-order terms are not supported in mixed-effects refitting.')
+    recipe = {
+        'action': 'fit_mixed_reml',
+        'parameters': {'response_index': resp_idx, 'fixed_indices': fixed_indices, 'random_indices': random_indices},
+    }
+    from .recipes import columns
+    columns(recipe)
+    fixed_ref = []
+    for fe in _items(obj.get('fixed_effects', []), 'fixed effects', 64):
+        fe = _dict(fe, 'fixed effect')
+        if not _number(fe.get('coef')) or not _number(fe.get('se_coef')) or fe['se_coef'] < 0:
+            raise ValueError('Invalid saved mixed-effects fixed parameter data.')
+        fixed_ref.append({'term': str(fe.get('term', '')), 'coef': float(fe['coef']), 'se_coef': float(fe['se_coef'])})
+    vc_ref = []
+    for vc in _items(obj.get('variance_components', []), 'variance components', 32):
+        vc = _dict(vc, 'variance component')
+        if not _number(vc.get('var_comp')) or vc['var_comp'] < 0:
+            raise ValueError('Invalid saved variance component data.')
+        vc_ref.append({'source': str(vc.get('source', '')), 'var_comp': float(vc['var_comp'])})
+    neg2_rell = obj.get('neg2_rell')
+    if neg2_rell is not None and not _number(neg2_rell):
+        raise ValueError('Invalid saved -2 RE log-likelihood.')
+    verification_ref = {
+        'fixed_effects': fixed_ref,
+        'variance_components': vc_ref,
+        'neg2_rell': float(neg2_rell) if neg2_rell is not None else None,
+        'row_count': _integer(rows.get('row_count'), 'saved row count'),
+    }
+    all_indices = [resp_idx] + fixed_indices + random_indices
+    return {
+        'supported': True, 'family': expected_family, 'command_id': cid, 'worksheet_id': wid,
+        'worksheet_name': sheet.name, 'model_id': model_id, 'model_uri': uri, 'recipe': recipe,
+        'source_column_map': {str(idx): ident for idx, ident in zip(all_indices, seen_ids)},
+        'source_column_ids': {'response': resp_id, 'fixed': fixed_ids, 'random': random_ids},
+        'verification_reference': verification_ref,
+        'warnings': ['Refit is an independent StatCraft calculation using current worksheet values; saved native output remains unchanged.'],
+    }
+
+
 def _decode(project, model, uri, declared_id, commands, family_type='ResponseSurfaceRegression'):
     expected_family = _FAMILY_MAP.get(family_type)
     if expected_family is None:
@@ -137,7 +416,14 @@ def _decode(project, model, uri, declared_id, commands, family_type='ResponseSur
     model_id=_integer(metadata.get('model_id'),'model identity')
     if declared_id is not None and _integer(declared_id,'declared model identity')!=model_id:raise ValueError('Native model identities disagree.')
     sheet=project.worksheets[project.worksheet_ids.index(wid)];sources=_source_columns(sheet)
-    variables=_dict(model.get('variables'),'model variables');target=_dict(variables.get('target'),'response variable')
+    variables=_dict(model.get('variables'),'model variables')
+    if expected_family == 'reliability_distribution':
+        return _decode_reliability(sheet, sources, variables, model, uri, cid, wid, model_id, expected_family)
+    if expected_family == 'arima':
+        return _decode_arima(sheet, sources, variables, model, uri, cid, wid, model_id, expected_family)
+    if expected_family == 'mixed_reml':
+        return _decode_mixed_reml(sheet, sources, variables, model, uri, cid, wid, model_id, expected_family)
+    target=_dict(variables.get('target'),'response variable')
     if expected_family in ('general_linear_model', 'binary_logistic', 'poisson_regression', 'ordinal_logistic', 'nominal_logistic'):
         allowed_roles = {'target', 'predictors', 'factors', 'covariates', 'block'} if expected_family == 'general_linear_model' else {'target', 'predictors', 'factors', 'covariates'}
         if set(variables) - allowed_roles:
@@ -596,14 +882,51 @@ def compare_native_model(result,descriptor,relative_tolerance=1e-7,absolute_tole
     is_ordinal_logistic = isinstance(result, dict) and result.get('analysis') == 'ordinal_logistic_regression'
     is_nominal_logistic = isinstance(result, dict) and result.get('analysis') == 'nominal_logistic_regression'
     is_poisson = isinstance(result, dict) and result.get('analysis') == 'poisson_regression'
-    if not (is_rsm or is_glm or is_factorial or is_logistic or is_ordinal_logistic or is_nominal_logistic or is_poisson):
-        raise ValueError('Compare a fitted response-surface, factorial, general linear, logistic, or Poisson regression model result.')
+    is_reliability = isinstance(result, dict) and result.get('analysis') == 'reliability_distribution'
+    is_arima = isinstance(result, dict) and result.get('analysis') == 'arima'
+    is_mixed = isinstance(result, dict) and result.get('analysis') == 'mixed_reml'
+    if not (is_rsm or is_glm or is_factorial or is_logistic or is_ordinal_logistic or is_nominal_logistic or is_poisson or is_reliability or is_arima or is_mixed):
+        raise ValueError('Compare a fitted response-surface, factorial, general linear, logistic, Poisson, reliability, ARIMA, or mixed-effects model result.')
     if not _number(relative_tolerance) or not _number(absolute_tolerance) or relative_tolerance<0 or absolute_tolerance<0:raise ValueError('Comparison tolerances must be finite and nonnegative.')
     coefficients=result.get('coefficients',[])
     comparisons=[]
     def append(label,actual,expected):
         matched=_number(actual) and _number(expected) and math.isclose(actual,expected,rel_tol=relative_tolerance,abs_tol=absolute_tolerance)
         comparisons.append({'label':label,'actual':actual,'native':expected,'difference':actual-expected if _number(actual) and _number(expected) else None,'matches':bool(matched)})
+    if is_reliability:
+        actual_params = result.get('parameters', {})
+        for k, expected in reference.get('parameters', {}).items():
+            append(f'Parameter {k}', actual_params.get(k), expected)
+        if reference.get('log_likelihood') is not None:
+            append('Log-Likelihood', result.get('log_likelihood'), reference['log_likelihood'])
+        if reference.get('mttf') is not None:
+            append('MTTF', result.get('mttf'), reference['mttf'])
+        return {'matches_saved_native': bool(comparisons) and all(v['matches'] for v in comparisons), 'comparisons': comparisons, 'relative_tolerance': relative_tolerance, 'absolute_tolerance': absolute_tolerance, 'scope': 'Saved native distribution parameters, log-likelihood and MTTF; independent fresh fit, not native execution.'}
+    if is_arima:
+        actual_est = result.get('estimates', [])
+        for idx, item in enumerate(reference.get('coefficients', [])):
+            actual = actual_est[idx] if idx < len(actual_est) else {}
+            lbl = item.get('term') or f'Param {idx + 1}'
+            append(lbl, actual.get('coef'), item.get('estimate'))
+            append(lbl + ' SE', actual.get('se'), item.get('standard_error'))
+        append('MSE', result.get('ms'), reference.get('mse'))
+        append('Error DF', result.get('df'), reference.get('df_error'))
+        return {'matches_saved_native': bool(comparisons) and all(v['matches'] for v in comparisons), 'comparisons': comparisons, 'relative_tolerance': relative_tolerance, 'absolute_tolerance': absolute_tolerance, 'scope': 'Saved native ARIMA parameter estimates, standard errors, residual mean square and error degrees of freedom; independent fresh fit, not native execution.'}
+    if is_mixed:
+        actual_fe = result.get('fixed_effects', [])
+        for idx, item in enumerate(reference.get('fixed_effects', [])):
+            actual = actual_fe[idx] if idx < len(actual_fe) else {}
+            lbl = item.get('term') or f'Fixed {idx + 1}'
+            append(lbl, actual.get('coef'), item.get('coef'))
+            append(lbl + ' SE', actual.get('se_coef'), item.get('se_coef'))
+        actual_vc = result.get('variance_components', [])
+        for idx, item in enumerate(reference.get('variance_components', [])):
+            actual = actual_vc[idx] if idx < len(actual_vc) else {}
+            lbl = f"VarComp {item.get('source') or idx + 1}"
+            append(lbl, actual.get('var_comp'), item.get('var_comp'))
+        if reference.get('neg2_rell') is not None:
+            append('-2 RE Log-Likelihood', result.get('neg2_rell'), reference['neg2_rell'])
+        return {'matches_saved_native': bool(comparisons) and all(v['matches'] for v in comparisons), 'comparisons': comparisons, 'relative_tolerance': relative_tolerance, 'absolute_tolerance': absolute_tolerance, 'scope': 'Saved native mixed-effects fixed coefficients, standard errors, variance components and -2 RE log-likelihood; independent fresh fit, not native execution.'}
     if is_rsm:
         terms=result.get('surface_terms',result.get('terms',[]));levels=result.get('block_levels',[])
         count=max(0,len(levels)-1);polynomial={tuple(term):coefficients[1+count+i] for i,term in enumerate(terms) if 1+count+i<len(coefficients)}
@@ -691,14 +1014,26 @@ def resolve_model_recipe(project,descriptor):
     sheet=project.worksheets[project.worksheet_ids.index(wid)];columns=_source_columns(sheet)
     identities=descriptor['source_column_ids'];recipe=copy.deepcopy(descriptor['recipe']);p=recipe['parameters']
     try:
-        p['response_index']=columns[identities['response']]
-        if recipe.get('action') in ('fit_binary_logistic', 'poisson_regression', 'ordinal_logistic_regression', 'nominal_logistic_regression'):
-            p['continuous_indices']=[columns[identity] for identity in identities.get('continuous', [])]
-            p['categorical_indices']=[columns[identity] for identity in identities.get('categorical', [])]
+        action = recipe.get('action')
+        if action == 'reliability_distribution':
+            p['settings']['column_index'] = columns[identities['response']]
+            if identities.get('censor') is not None:
+                p['settings']['censor_index'] = columns[identities['censor']]
+        elif action == 'arima':
+            p['settings']['series_index'] = columns[identities['response']]
+        elif action == 'fit_mixed_reml':
+            p['response_index'] = columns[identities['response']]
+            p['fixed_indices'] = [columns[identity] for identity in identities.get('fixed', [])]
+            p['random_indices'] = [columns[identity] for identity in identities.get('random', [])]
         else:
-            p['factor_indices']=[columns[identity] for identity in identities['factors']]
-            if identities.get('covariates') is not None:p['covariate_indices']=[columns[identity] for identity in identities['covariates']]
-            if identities.get('block') is not None:p['block_index']=columns[identities['block']]
+            p['response_index']=columns[identities['response']]
+            if action in ('fit_binary_logistic', 'poisson_regression', 'ordinal_logistic_regression', 'nominal_logistic_regression'):
+                p['continuous_indices']=[columns[identity] for identity in identities.get('continuous', [])]
+                p['categorical_indices']=[columns[identity] for identity in identities.get('categorical', [])]
+            else:
+                p['factor_indices']=[columns[identity] for identity in identities['factors']]
+                if identities.get('covariates') is not None:p['covariate_indices']=[columns[identity] for identity in identities['covariates']]
+                if identities.get('block') is not None:p['block_index']=columns[identities['block']]
     except KeyError as exc:raise ValueError('A recovered native model source column was deleted or lost its identity.') from exc
     from .recipes import columns as recipe_columns
     recipe_columns(recipe)
@@ -726,20 +1061,37 @@ def resolve_entry_recipe(entry, worksheet=None):
                 cols = _source_columns(worksheet)
                 identities = nm.get('source_column_ids', {})
                 p = recipe['parameters']
-                if identities.get('response') in cols:
-                    p['response_index'] = cols[identities['response']]
-                if recipe.get('action') in ('fit_binary_logistic', 'poisson_regression', 'ordinal_logistic_regression', 'nominal_logistic_regression'):
-                    if 'continuous' in identities:
-                        p['continuous_indices'] = [cols[cid] for cid in identities['continuous'] if cid in cols]
-                    if 'categorical' in identities:
-                        p['categorical_indices'] = [cols[cid] for cid in identities['categorical'] if cid in cols]
+                action = recipe.get('action')
+                if action == 'reliability_distribution':
+                    if identities.get('response') in cols:
+                        p['settings']['column_index'] = cols[identities['response']]
+                    if identities.get('censor') in cols:
+                        p['settings']['censor_index'] = cols[identities['censor']]
+                elif action == 'arima':
+                    if identities.get('response') in cols:
+                        p['settings']['series_index'] = cols[identities['response']]
+                elif action == 'fit_mixed_reml':
+                    if identities.get('response') in cols:
+                        p['response_index'] = cols[identities['response']]
+                    if 'fixed' in identities:
+                        p['fixed_indices'] = [cols[fid] for fid in identities['fixed'] if fid in cols]
+                    if 'random' in identities:
+                        p['random_indices'] = [cols[rid] for rid in identities['random'] if rid in cols]
                 else:
-                    if identities.get('factors'):
-                        p['factor_indices'] = [cols[fid] for fid in identities['factors'] if fid in cols]
-                    if identities.get('covariates'):
-                        p['covariate_indices'] = [cols[cid] for cid in identities['covariates'] if cid in cols]
-                    if identities.get('block') and identities['block'] in cols:
-                        p['block_index'] = cols[identities['block']]
+                    if identities.get('response') in cols:
+                        p['response_index'] = cols[identities['response']]
+                    if action in ('fit_binary_logistic', 'poisson_regression', 'ordinal_logistic_regression', 'nominal_logistic_regression'):
+                        if 'continuous' in identities:
+                            p['continuous_indices'] = [cols[cid] for cid in identities['continuous'] if cid in cols]
+                        if 'categorical' in identities:
+                            p['categorical_indices'] = [cols[cid] for cid in identities['categorical'] if cid in cols]
+                    else:
+                        if identities.get('factors'):
+                            p['factor_indices'] = [cols[fid] for fid in identities['factors'] if fid in cols]
+                        if identities.get('covariates'):
+                            p['covariate_indices'] = [cols[cid] for cid in identities['covariates'] if cid in cols]
+                        if identities.get('block') and identities['block'] in cols:
+                            p['block_index'] = cols[identities['block']]
             except Exception:
                 pass
         return recipe
