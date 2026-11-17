@@ -129,8 +129,13 @@ jobs:
         run: |
           mkdir -p artifacts
           cd dist/app
-          # Create DMG
-          hdiutil create -volname "StatCraft" -srcfolder "StatCraft.app" -ov -format UDZO "../../artifacts/StatCraft-v${STATCRAFT_VER}-macOS.dmg"
+          # Create DMG (retry to handle transient macOS runner resource-busy errors)
+          for attempt in 1 2 3; do
+            hdiutil create -volname "StatCraft" -srcfolder "StatCraft.app" -ov -format UDZO "../../artifacts/StatCraft-v${STATCRAFT_VER}-macOS.dmg" && break
+            echo "hdiutil attempt $attempt failed, retrying in 5s..."
+            sleep 5
+          done
+          test -f "../../artifacts/StatCraft-v${STATCRAFT_VER}-macOS.dmg"
           # Create ZIP
           zip -r "../../artifacts/StatCraft-v${STATCRAFT_VER}-macOS.zip" "StatCraft.app"
           cd ../..
