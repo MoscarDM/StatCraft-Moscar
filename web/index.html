@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0f6b6b">
+<title>StatCraft Web</title>
+<meta name="description" content="Estadística y control de calidad en el navegador, optimizada para celular. Funciona sin conexión.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="appbar">
+  <h1>StatCraft</h1>
+  <span id="engine" class="chip" data-state="loading" role="status" aria-live="polite">Cargando motor…</span>
+</header>
+
+<main>
+  <section id="view-data" class="view" aria-label="Datos">
+    <div class="toolbar" role="toolbar" aria-label="Acciones de datos">
+      <button id="btn-paste" class="btn primary">Pegar datos</button>
+      <button id="btn-samples" class="btn">Ejemplos</button>
+      <button id="btn-addrow" class="btn">+ Filas</button>
+      <button id="btn-addcol" class="btn">+ Columna</button>
+      <button id="btn-clear" class="btn subtle">Limpiar</button>
+    </div>
+    <div id="grid-wrap" class="grid-wrap" tabindex="-1"></div>
+    <p id="data-hint" class="hint"></p>
+  </section>
+
+  <section id="view-analyze" class="view" aria-label="Analizar" hidden>
+    <h2 class="section-title">Elige un análisis</h2>
+    <div id="analysis-list" class="cards"></div>
+  </section>
+
+  <section id="view-results" class="view" aria-label="Resultados" hidden>
+    <div id="results"></div>
+    <p id="results-empty" class="empty">Aún no hay resultados.<br>Ve a <b>Analizar</b>, elige un análisis y ejecútalo.</p>
+  </section>
+</main>
+
+<nav class="tabbar" aria-label="Secciones">
+  <button class="tab" data-view="data" aria-selected="true"><svg viewBox="0 0 24 24"><path d="M3 5h18v14H3zM3 10h18M9 5v14M15 5v14"/></svg><span>Datos</span></button>
+  <button class="tab" data-view="analyze" aria-selected="false"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Analizar</span></button>
+  <button class="tab" data-view="results" aria-selected="false"><svg viewBox="0 0 24 24"><path d="M3 17l5-6 4 4 8-10"/><path d="M3 21h18"/></svg><span>Resultados</span><i id="badge" class="badge" hidden>0</i></button>
+</nav>
+
+<div id="sheet-backdrop" class="backdrop" hidden></div>
+<div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
+  <div class="sheet-grab" aria-hidden="true"></div>
+  <header class="sheet-head"><h2 id="sheet-title"></h2><button id="sheet-close" class="icon-btn" aria-label="Cerrar">✕</button></header>
+  <div id="sheet-body" class="sheet-body"></div>
+  <footer id="sheet-foot" class="sheet-foot"></footer>
+</div>
+
+<div id="tip" class="tip" role="tooltip" hidden></div>
+<div id="toast" class="toast" role="alert" hidden></div>
+
+<script src="samples.js"></script>
+<script src="charts.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

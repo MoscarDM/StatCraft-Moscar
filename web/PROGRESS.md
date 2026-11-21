@@ -26,9 +26,9 @@ reutilizando los motores Python de StatCraft con **Pyodide** (sin servidor, dato
 ## Estado
 - [x] Exploración de motores y formato de resultados
 - [x] Adaptador Python + empaquetador (probado en CPython con Qt bloqueado: 7/7 análisis OK)
-- [ ] Probar el adaptador dentro de Pyodide real (navegador headless)
-- [ ] Interfaz móvil (hoja de datos, selector de análisis, resultados)
-- [ ] Gráficas SVG: describe, histograma, boxplot, dispersión (+ajuste), run chart, I-MR (señales), Pareto
+- [x] Probar el adaptador dentro de Pyodide real (navegador headless): 7/7 OK, arranque ~3.6 s, datos idénticos a CPython
+- [~] Interfaz móvil escrita (index.html, style.css, app.js, charts.js, samples.js, worker.js); probando en emulación Pixel 7 (/tmp/claude-0/ui.js). Pendiente: revisar capturas de cada gráfica y corregir fallos
+- [~] Gráficas SVG escritas; corregidos: ajuste de regresión (calcular extremos en JS), búsqueda por id de análisis (I-MR no se dibujaba), frecuencia por defecto en Pareto
 - [ ] PWA (manifest + service worker) y workflow de GitHub Pages
 - [ ] Verificación con emulación de celular (capturas) y datos de prueba `StatCraft_datos_de_prueba.xlsx`
 
