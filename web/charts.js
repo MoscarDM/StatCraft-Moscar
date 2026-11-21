@@ -94,7 +94,7 @@ const Charts = (() => {
     const x = niceScale(edges[0], edges[edges.length - 1]);
     const y = niceScale(0, ymax * 1.08);
     x.lo = Math.min(x.lo, edges[0]); x.hi = Math.max(x.hi, edges[edges.length - 1]);
-    const f = frame({ x, y, xLabel: p.xlabel || '', yLabel: p.ylabel || 'Frecuencia', xTicks: x.ticks.filter((t) => t >= x.lo && t <= x.hi).map((t) => ({ v: t, label: fmt(t, 4) })) });
+    const f = frame({ x, y, xLabel: p.xlabel || '', yLabel: !p.ylabel || p.ylabel === 'Frequency' ? 'Frecuencia' : p.ylabel, xTicks: x.ticks.filter((t) => t >= x.lo && t <= x.hi).map((t) => ({ v: t, label: fmt(t, 4) })) });
     let s = f.svg;
     counts.forEach((c, i) => {
       const x0 = f.sx(edges[i]);

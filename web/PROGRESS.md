@@ -29,8 +29,10 @@ reutilizando los motores Python de StatCraft con **Pyodide** (sin servidor, dato
 - [x] Probar el adaptador dentro de Pyodide real (navegador headless): 7/7 OK, arranque ~3.6 s, datos idénticos a CPython
 - [~] Interfaz móvil escrita (index.html, style.css, app.js, charts.js, samples.js, worker.js); probando en emulación Pixel 7 (/tmp/claude-0/ui.js). Pendiente: revisar capturas de cada gráfica y corregir fallos
 - [~] Gráficas SVG escritas; corregidos: ajuste de regresión (calcular extremos en JS), búsqueda por id de análisis (I-MR no se dibujaba), frecuencia por defecto en Pareto
-- [ ] PWA (manifest + service worker) y workflow de GitHub Pages
-- [ ] Verificación con emulación de celular (capturas) y datos de prueba `StatCraft_datos_de_prueba.xlsx`
+- [x] PWA (manifest, sw.js, iconos) probada offline (shell); workflow `pages.yml` publica docs/ + web/ en `/app/`
+- [x] Verificación con emulación (Pixel 7, claro y oscuro, 7/7 análisis)
+- [ ] Verificación en celular real tras publicar; PNG export; etapas siguientes (regresión, capacidad, P/C)
+- [ ] (antes) Verificación con emulación de celular (capturas) y datos de prueba `StatCraft_datos_de_prueba.xlsx`
 
 ## Cómo continuar
 1. `python scripts/build_web.py`

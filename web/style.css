@@ -114,7 +114,7 @@ svg.chart { width: 100%; height: auto; display: block; touch-action: pan-y; user
 .chart .tickline { stroke: var(--muted); stroke-width: .8; }
 .chart .tick { fill: var(--muted); font-size: 9.5px; }
 .chart .axis-title { fill: var(--text); font-size: 10.5px; }
-.chart .limit-label { fill: var(--muted); font-size: 9px; }
+.chart .limit-label { fill: var(--muted); font-size: 9px; paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
 .chart .bar { fill: var(--bar); stroke: var(--c1); stroke-width: .6; }
 .chart .line { fill: none; stroke: var(--c2); stroke-width: 2; stroke-linejoin: round; }
 .chart .line.thin { stroke: var(--c1); stroke-width: 1.3; }

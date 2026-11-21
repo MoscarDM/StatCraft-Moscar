@@ -392,6 +392,7 @@
     try {
       const response = await callEngine(a.id, options);
       if (!response.ok) throw new Error(response.error.replace(/^\w+Error: /, ''));
+      if (a.id === 'pareto') response.result.categories = response.result.categories.map((c) => (c === 'Other' ? 'Otros' : c));
       state.results.unshift({ id: state.nextId++, analysis: a.id, title: a.title, subtitle, result: response.result });
       closeSheet(); renderResults(); switchView('results');
     } catch (err) {
@@ -447,8 +448,9 @@
       case 'imr': {
         const fails = Object.entries(res.test_failures || {});
         const list = fails.map(([i, t]) => `obs. ${i} (${t.map((x) => 'prueba ' + x).join(', ')})`);
+        const mrBad = (res.mr_signals || []).map(Number);
         return Charts.render(res, r.analysis) + table([['Línea central (X̄)', fmt(res.i_center, 5)], ['LCS individuales', fmt(res.i_ucl, 5)], ['LCI individuales', fmt(res.i_lcl, 5)], ['Rango móvil medio', fmt(res.mr_center, 5)], ['LCS rango móvil', fmt(res.mr_ucl, 5)], ['σ estimada', fmt(res.within_stdev, 5)]])
-          + `<p class="verdict ${list.length ? 'warn' : 'good'}">${list.length ? 'Puntos fuera de control: ' + esc(list.join('; ')) + '.' : 'Ningún punto fuera de control con las pruebas seleccionadas.'}</p>`;
+          + `<p class="verdict ${list.length || mrBad.length ? 'warn' : 'good'}">${list.length ? 'Individuales fuera de control: ' + esc(list.join('; ')) + '.' : 'Individuales: ningún punto fuera de control con las pruebas seleccionadas.'}${mrBad.length ? '<br>Rango móvil fuera de control: obs. ' + mrBad.join(', ') + '.' : ''}</p>`;
       }
       case 'pareto': {
         const rows = res.categories.map((c, i) => [esc(c), fmt(res.counts[i], 6), fmt(res.percents[i], 3) + '%', fmt(res.cum_percents[i], 3) + '%']);

@@ -1,0 +1,16 @@
+{
+  "name": "StatCraft Web",
+  "short_name": "StatCraft",
+  "description": "Estadística y control de calidad en el celular. Funciona sin conexión.",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f6b6b",
+  "theme_color": "#0f6b6b",
+  "icons": [
+    {"src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"},
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}
