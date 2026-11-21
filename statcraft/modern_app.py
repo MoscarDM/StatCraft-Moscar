@@ -2260,12 +2260,31 @@ class ModernWindow(QMainWindow):
             self.btn_mode_r.setChecked(mode == "r")
 
         bar = self.menuBar()
+        def _menu_tree_actions(menu):
+            found = []
+            for act in menu.actions():
+                found.append(act)
+                if act.menu() is not None:
+                    found.extend(_menu_tree_actions(act.menu()))
+            return found
+        old_actions = _menu_tree_actions(bar)
         bar.clear()
         if mode == "jmp":
             from .jmp_panel import populate_jmp_menubar
             populate_jmp_menubar(self, bar)
         else:
             self._populate_minitab_menubar(bar)
+        # bar.clear() only detaches the old menus; their QActions stay alive as children
+        # of the window with live shortcuts, so every shortcut (Ctrl+C, Ctrl+V, ...) would
+        # exist twice and Qt would treat it as ambiguous and run neither. Retire the
+        # shortcuts of old actions that the rebuilt menu did not reuse.
+        new_ids = {id(act) for act in _menu_tree_actions(bar)}
+        for old_action in old_actions:
+            if id(old_action) not in new_ids:
+                try:
+                    old_action.setShortcuts([])
+                except RuntimeError:
+                    pass  # already deleted together with its menu
 
         is_dark = getattr(self, "_dark_mode", False)
         if hasattr(self, "_update_mode_button_styles"):
