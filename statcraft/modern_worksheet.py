@@ -1,0 +1,842 @@
+
+def _is_dark_active(widget=None) -> bool:
+    if widget is not None:
+        try:
+            win = widget.window()
+            if win and hasattr(win, "_dark_mode"):
+                return bool(win._dark_mode)
+        except Exception:
+            pass
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app:
+        return app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+    return False
+
+"""Worksheet key navigation, active cell editor, and Standard statistical column/row selection painting."""
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QKeySequence, QPainter, QPen, QPolygonF
+from PySide6.QtWidgets import (
+    QApplication, QFrame, QHeaderView, QLineEdit, QStyle, QStyledItemDelegate, QStyleOptionViewItem,
+    QTableView, QTableWidget,
+)
+
+
+def movement(event, enter_direction='down', in_editor=False):
+    if event.type() != QEvent.Type.KeyPress:
+        return None
+    mods = event.modifiers()
+    if mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier):
+        return None
+    key = event.key()
+    reverse = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+    if key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+        return 'left' if reverse or key == Qt.Key.Key_Backtab else 'right'
+    if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        if enter_direction == 'right':
+            return 'left' if reverse else 'right'
+        return 'up' if reverse else 'down'
+    if in_editor:
+        if key == Qt.Key.Key_Down:
+            return 'down'
+        if key == Qt.Key.Key_Up:
+            return 'up'
+    return None
+
+
+class WorksheetHeaderView(QHeaderView):
+    """Standard statistical column (`C1`, `C2`, `C3-T`...) and row (`1`, `2`, `3`...) header bar."""
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self.selected_sections = set()
+        self.active_sections = set()
+        self.formula_columns = set()
+        self.setSectionsClickable(True)
+        self.setHighlightSections(False)
+
+    def paintSection(self, painter, rect, logicalIndex):
+        if not rect.isValid():
+            return
+        painter.save()
+        model = self.model()
+        label_text = ""
+        if model is not None:
+            raw = model.headerData(logicalIndex, self.orientation(), Qt.ItemDataRole.DisplayRole)
+            if raw is not None:
+                label_text = str(raw)
+
+        appearance = getattr(self, "appearance_source", self)
+        is_selected = logicalIndex in appearance.selected_sections
+        is_active = logicalIndex in appearance.active_sections
+
+        dark = _is_dark_active(self)
+        if self.orientation() == Qt.Orientation.Horizontal:
+            if dark:
+                bg = QColor("#0284c7") if is_selected else QColor("#27272a") if is_active else QColor("#1f1f23")
+                fg = QColor("#ffffff") if is_selected else QColor("#38bdf8") if is_active else QColor("#e4e4e7")
+                border = QColor("#3f3f46")
+            else:
+                bg = QColor("#004a7c") if is_selected else QColor("#dfe6ed") if is_active else QColor("#f0f0f0")
+                fg = QColor("#ffffff") if is_selected else QColor("#004a7c") if is_active else QColor("#222222")
+                border = QColor("#c8c8c8")
+            bold = is_selected or is_active
+        else:
+            if dark:
+                bg = QColor("#0284c7") if is_selected else QColor("#27272a") if is_active else QColor("#18181b")
+                fg = QColor("#ffffff") if is_selected else QColor("#38bdf8") if is_active else QColor("#a1a1aa")
+                border = QColor("#3f3f46")
+            else:
+                bg = QColor("#004a7c") if is_selected else QColor("#d8d8d8") if is_active else QColor("#f0f0f0")
+                fg = QColor("#ffffff") if is_selected else QColor("#004a7c") if is_active else QColor("#222222")
+                border = QColor("#c8c8c8")
+            bold = is_selected or is_active
+
+        painter.fillRect(rect, bg)
+        painter.setPen(border)
+        painter.drawLine(rect.topRight(), rect.bottomRight())
+        painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+
+        font = QFont(self.font())
+        font.setBold(bold)
+        painter.setFont(font)
+        painter.setPen(fg)
+
+        has_formula = self.orientation() == Qt.Orientation.Horizontal and logicalIndex in appearance.formula_columns
+        text_right_margin = -26 if (has_formula and rect.width() >= 42) else -2
+        painter.drawText(rect.adjusted(2, 0, text_right_margin, 0), Qt.AlignmentFlag.AlignCenter, label_text)
+
+        # Dynamic calculated column formula indicator badge (f(x))
+        if has_formula and rect.width() >= 36:
+            pill_w = 22
+            pill_h = 13
+            pill_x = rect.right() - pill_w - 3
+            pill_y = rect.top() + (rect.height() - pill_h) // 2
+            pill_rect = QRectF(pill_x, pill_y, pill_w, pill_h)
+
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            if dark:
+                painter.setBrush(QColor("#064e3b"))
+                painter.setPen(QPen(QColor("#059669"), 1))
+            else:
+                painter.setBrush(QColor("#dcfce7"))
+                painter.setPen(QPen(QColor("#16a34a"), 1))
+            painter.drawRoundedRect(pill_rect, 3, 3)
+
+            fx_font = QFont(self.font())
+            fx_font.setPointSize(6.5)
+            fx_font.setBold(True)
+            painter.setFont(fx_font)
+            painter.setPen(QColor("#6ee7b7") if dark else QColor("#15803d"))
+            painter.drawText(pill_rect, Qt.AlignmentFlag.AlignCenter, "f(x)")
+
+        painter.restore()
+
+
+class WorksheetDelegate(QStyledItemDelegate):
+    def __init__(self, parent, navigate, is_column_names=False):
+        super().__init__(parent)
+        self.navigate = navigate
+        self.page_rows = None
+        self.is_column_names = is_column_names
+        self._initial_editor_text = ""
+
+    def setEditorData(self, editor, index):
+        super().setEditorData(editor, index)
+        if isinstance(editor, QLineEdit):
+            if not self.is_column_names and editor.text() == "*":
+                editor.setText("")
+            self._initial_editor_text = editor.text()
+
+    def eventFilter(self, editor, event):
+        if event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            if event.matches(QKeySequence.StandardKey.Paste):
+                clip_text = QApplication.clipboard().text() or ""
+                if any(sep in clip_text for sep in ("\n", "\r", "\t")):
+                    win = self.parent().window() if self.parent() is not None else None
+                    if isinstance(editor, QLineEdit):
+                        editor.setText(self._initial_editor_text)
+                    self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.RevertModelCache)
+                    if win is not None and hasattr(win, "paste_cells"):
+                        win.paste_cells()
+                        return True
+            if key == Qt.Key.Key_Escape and isinstance(editor, QLineEdit):
+                editor.setText(self._initial_editor_text)
+                self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.RevertModelCache)
+                return True
+            view = self.parent()
+            owner = getattr(view, "worksheet_owner", view)
+            direction = movement(event, owner.enter_direction, in_editor=True)
+            if direction is not None and isinstance(editor, QLineEdit):
+                if self.navigate is not None:
+                    self.navigate(direction, editor, self)
+                    return True
+        return super().eventFilter(editor, event)
+
+    def paint(self, painter, option, index):
+        view = self.parent()
+        table = getattr(view, "worksheet_owner", view)
+        col = index.column()
+        row = index.row()
+        sel_cols = getattr(table, "selected_columns", set())
+        sel_rows = getattr(table, "selected_rows", set())
+        in_sel_col = col in sel_cols
+        in_sel_row = (not self.is_column_names) and (row in sel_rows)
+
+        custom_bg = index.data(Qt.ItemDataRole.BackgroundRole)
+        comment_note = index.data(Qt.ItemDataRole.UserRole + 2)
+
+        opt = QStyleOptionViewItem(option)
+        is_cell_selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        win = table.window() if table is not None else None
+        name_active = bool(getattr(win, "_name_row_active", False))
+        if self.is_column_names and not name_active:
+            is_cell_selected = False
+        elif (not self.is_column_names) and name_active:
+            is_cell_selected = False
+        opt.state &= ~QStyle.StateFlag.State_Selected
+        opt.state &= ~QStyle.StateFlag.State_HasFocus
+
+        dark = _is_dark_active(table)
+        painter.save()
+        if isinstance(custom_bg, QColor):
+            painter.fillRect(opt.rect, custom_bg)
+        elif in_sel_col or in_sel_row:
+            painter.fillRect(opt.rect, QColor("#27272a") if dark else QColor("#eaeaea"))
+        elif is_cell_selected:
+            painter.fillRect(opt.rect, QColor("#094771") if dark else QColor("#e4effa"))
+        elif self.is_column_names:
+            painter.fillRect(opt.rect, QColor("#1f1f23") if dark else QColor("#f0f0f0"))
+        else:
+            painter.fillRect(opt.rect, QColor("#18181b") if dark else QColor("#ffffff"))
+
+        if dark:
+            opt.palette.setColor(opt.palette.ColorRole.Text, QColor("#f4f4f5"))
+
+        super().paint(painter, opt, index)
+
+        # Cell comment indicator (small top-right triangle like StatCraft)
+        if comment_note:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#d9534f"))
+            r = opt.rect
+            painter.drawPolygon(QPolygonF([
+                QPointF(r.right() - 5, r.top()),
+                QPointF(r.right() + 1, r.top()),
+                QPointF(r.right() + 1, r.top() + 6),
+            ]))
+
+        # Crisp dark-navy StatCraft outline along the edges of selected columns/rows
+        pen = QPen(QColor("#38bdf8") if dark else QColor("#004a7c"), 2)
+        painter.setPen(pen)
+        r = opt.rect
+        if in_sel_col:
+            if (col - 1) not in sel_cols:
+                painter.drawLine(r.topLeft(), r.bottomLeft())
+            if (col + 1) not in sel_cols:
+                painter.drawLine(r.topRight(), r.bottomRight())
+            if self.is_column_names:
+                painter.drawLine(r.topLeft(), r.topRight())
+        if in_sel_row:
+            if (row - 1) not in sel_rows:
+                painter.drawLine(r.topLeft(), r.topRight())
+            if (row + 1) not in sel_rows:
+                painter.drawLine(r.bottomLeft(), r.bottomRight())
+        if is_cell_selected and not in_sel_col and not in_sel_row and table.currentIndex() == index:
+            painter.drawRect(r.adjusted(1, 1, -1, -1))
+        painter.restore()
+
+
+class WorksheetTableWidget(QTableWidget):
+    def edit(self, index, *args):
+        frozen = getattr(self, "frozen_panes", None)
+        pane = frozen.pane_for_index(self, index) if frozen and index.isValid() else None
+        if pane is None:
+            return super().edit(index, *args)
+        self.scrollTo(index)
+        return pane.edit(index, *args)
+
+    def scrollTo(self, index, hint=QTableView.ScrollHint.EnsureVisible):
+        frozen = getattr(self, "frozen_panes", None)
+        if frozen and frozen.active and index.isValid():
+            frozen.ensure_visible(self, index, hint)
+        else:
+            super().scrollTo(index, hint)
+
+    def scrollContentsBy(self, dx, dy):
+        super().scrollContentsBy(dx, dy)
+        frozen = getattr(self, "frozen_panes", None)
+        if frozen and self is frozen.table:
+            frozen.sync_scroll()
+
+
+class WorksheetTable(WorksheetTableWidget):
+    fillHandleDragged = Signal(int, int, int, int, int, int, int, int)
+
+    def __init__(self, navigate, parent=None):
+        super().__init__(parent)
+        self.navigate = navigate
+        self.enter_direction = 'down'
+        self.selected_columns = set()
+        self.selected_rows = set()
+        self.setItemDelegate(WorksheetDelegate(self, navigate))
+
+    def event(self, event):
+        if event.type() == QEvent.Type.KeyPress:
+            if event.matches(QKeySequence.StandardKey.Paste):
+                win = self.window()
+                if hasattr(win, "paste_cells"):
+                    win.paste_cells()
+                    return True
+            key = event.key()
+            mods = event.modifiers()
+            # Ctrl+Space / Ctrl+Home / Ctrl+End / Ctrl+Up
+            if (mods & Qt.KeyboardModifier.ControlModifier) and not (mods & (Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier | Qt.KeyboardModifier.ShiftModifier)):
+                if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    if self.columnCount() > 0:
+                        next_col = min(self.columnCount() - 1, max(0, self.currentColumn()) + 1)
+                        self.setCurrentCell(0, next_col)
+                        return True
+                if key == Qt.Key.Key_Insert:
+                    win = self.window()
+                    if hasattr(win, "copy_cells"):
+                        win.copy_cells()
+                        return True
+                if key == Qt.Key.Key_Space:
+                    win = self.window()
+                    if hasattr(win, "select_worksheet_column") and self.currentColumn() >= 0:
+                        win.select_worksheet_column(self.currentColumn())
+                        return True
+                if key == Qt.Key.Key_Home:
+                    self.navigate('top_left')
+                    return True
+                if key == Qt.Key.Key_End:
+                    self.navigate('bottom_right')
+                    return True
+                if key == Qt.Key.Key_Up:
+                    self.navigate('ctrl_up')
+                    return True
+                if key == Qt.Key.Key_Down:
+                    self.navigate('ctrl_down')
+                    return True
+                if key == Qt.Key.Key_Left:
+                    self.navigate('ctrl_left')
+                    return True
+                if key == Qt.Key.Key_Right:
+                    self.navigate('ctrl_right')
+                    return True
+            elif (mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)) == (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier) and not (mods & (Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)):
+                ctrl_shift_map = {
+                    Qt.Key.Key_Up: 'ctrl_up',
+                    Qt.Key.Key_Down: 'ctrl_down',
+                    Qt.Key.Key_Left: 'ctrl_left',
+                    Qt.Key.Key_Right: 'ctrl_right',
+                }
+                if key in ctrl_shift_map:
+                    r0, c0 = max(0, self.currentRow()), max(0, self.currentColumn())
+                    self.navigate(ctrl_shift_map[key])
+                    r1, c1 = max(0, self.currentRow()), max(0, self.currentColumn())
+                    from PySide6.QtWidgets import QTableWidgetSelectionRange
+                    self.clearSelection()
+                    self.setRangeSelected(QTableWidgetSelectionRange(min(r0, r1), min(c0, c1), max(r0, r1), max(c0, c1)), True)
+                    return True
+            elif (mods & Qt.KeyboardModifier.ShiftModifier) and not (mods & (Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier | Qt.KeyboardModifier.ControlModifier)):
+                if key == Qt.Key.Key_Home and self.columnCount() > 0:
+                    r = max(0, self.currentRow())
+                    cur_c = max(0, self.currentColumn())
+                    from PySide6.QtWidgets import QTableWidgetSelectionRange
+                    self.setCurrentCell(r, 0)
+                    self.clearSelection()
+                    self.setRangeSelected(QTableWidgetSelectionRange(r, 0, r, cur_c), True)
+                    return True
+                if key == Qt.Key.Key_End and self.columnCount() > 0:
+                    r = max(0, self.currentRow())
+                    cur_c = max(0, self.currentColumn())
+                    last_c = cur_c
+                    for c in range(self.columnCount() - 1, -1, -1):
+                        it = self.item(r, c)
+                        if it is not None and it.text().strip():
+                            last_c = c
+                            break
+                    from PySide6.QtWidgets import QTableWidgetSelectionRange
+                    lo, hi = min(cur_c, last_c), max(cur_c, last_c)
+                    self.setCurrentCell(r, last_c)
+                    self.clearSelection()
+                    self.setRangeSelected(QTableWidgetSelectionRange(r, lo, r, hi), True)
+                    return True
+                if key == Qt.Key.Key_Insert:
+                    win = self.window()
+                    if hasattr(win, "paste_cells"):
+                        win.paste_cells()
+                        return True
+                if key == Qt.Key.Key_Space:
+                    win = self.window()
+                    if hasattr(win, "select_worksheet_row") and self.currentRow() >= 0:
+                        win.select_worksheet_row(self.currentRow())
+                        return True
+            elif not mods:
+                if key == Qt.Key.Key_F2:
+                    item = self.currentItem()
+                    if item is not None:
+                        self.editItem(item)
+                        return True
+                if key == Qt.Key.Key_Home:
+                    if self.columnCount() > 0:
+                        self.setCurrentCell(max(0, self.currentRow()), 0)
+                        return True
+                if key == Qt.Key.Key_End:
+                    r = max(0, self.currentRow())
+                    last_c = 0
+                    for c in range(self.columnCount() - 1, -1, -1):
+                        it = self.item(r, c)
+                        if it is not None and it.text().strip():
+                            last_c = c
+                            break
+                    self.setCurrentCell(r, last_c)
+                    return True
+                scroll = self.verticalScrollBar()
+                if key == Qt.Key.Key_Down and self.currentRow() == self.rowCount() - 1:
+                    self.navigate('down')
+                    return True
+                if key == Qt.Key.Key_Up and self.currentRow() == 0:
+                    win = self.window()
+                    if getattr(win, "page", 0) == 0 and hasattr(win, "column_names") and self.currentColumn() >= 0:
+                        col = self.currentColumn()
+                        if hasattr(win, "_activate_column_name_cell"):
+                            win._activate_column_name_cell(0, col)
+                        else:
+                            win.column_names.setCurrentCell(0, col)
+                        it = win.column_names.item(0, col)
+                        if it is not None:
+                            win.column_names.scrollToItem(it)
+                        win.column_names.setFocus(Qt.FocusReason.OtherFocusReason)
+                        return True
+                    self.navigate('up')
+                    return True
+                if self.page_rows and ((key == Qt.Key.Key_PageDown and scroll.value() == scroll.maximum()) or (key == Qt.Key.Key_PageUp and scroll.value() == scroll.minimum())):
+                    if self.page_rows(1 if key == Qt.Key.Key_PageDown else -1):
+                        return True
+            direction = movement(event, self.enter_direction, in_editor=False)
+            if direction is not None:
+                self.navigate(direction)
+                return True
+
+            # Task 5 & 6: Backspace clears multi-selection (Minitab ID 57632) or edits single cell; printable character type-over entry
+            if not (mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)):
+                if key == Qt.Key.Key_Backspace:
+                    win = self.window()
+                    ranges = self.selectedRanges()
+                    multi_cells = sum(
+                        (a.bottomRow() - a.topRow() + 1) * (a.rightColumn() - a.leftColumn() + 1)
+                        for a in ranges
+                    )
+                    if multi_cells > 1 and hasattr(win, "clear_cells"):
+                        win.clear_cells()
+                        return True
+                    item = self.currentItem()
+                    if item:
+                        self.editItem(item)
+                        editor = self.findChild(QLineEdit)
+                        if editor:
+                            editor.setText("")
+                        return True
+                if key not in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Tab, Qt.Key.Key_Backtab, Qt.Key.Key_Escape, Qt.Key.Key_Delete, Qt.Key.Key_Backspace, Qt.Key.Key_Space):
+                    text = event.text()
+                    if text and text.isprintable():
+                        item = self.currentItem()
+                        if item:
+                            self.editItem(item)
+                            editor = self.findChild(QLineEdit)
+                            if editor:
+                                editor.setText(text)
+                            return True
+        return super().event(event)
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y() or event.pixelDelta().y()
+        scroll = self.verticalScrollBar()
+        at_edge = (delta < 0 and scroll.value() == scroll.maximum()) or (delta > 0 and scroll.value() == scroll.minimum())
+        if delta and at_edge and self.page_rows and not event.modifiers():
+            if self.page_rows(1 if delta < 0 else -1):
+                event.accept()
+                return
+        super().wheelEvent(event)
+
+
+    def fill_handle_anchor_range(self):
+        win = self.window()
+        if getattr(win, "_name_row_active", False):
+            return None
+        ranges = self.selectedRanges()
+        if not ranges:
+            return None
+        top = min(r.topRow() for r in ranges)
+        bottom = max(r.bottomRow() for r in ranges)
+        left = min(r.leftColumn() for r in ranges)
+        right = max(r.rightColumn() for r in ranges)
+        return (top, bottom, left, right)
+
+    def fill_handle_rect(self):
+        if self.model() is None:
+            return QRect()
+        rng = self.fill_handle_anchor_range()
+        if not rng:
+            return QRect()
+        _, bottom, _, right = rng
+        vr = self.visualRect(self.model().index(bottom, right))
+        if not vr.isValid() or vr.isEmpty():
+            return QRect()
+        return QRect(vr.right() - 5, vr.bottom() - 5, 7, 7)
+
+    def _fill_handle_hit_rect(self):
+        r = self.fill_handle_rect()
+        if r.isNull():
+            return QRect()
+        return r.adjusted(-4, -4, 4, 4)
+
+    def _compute_fill_target_range(self, src, idx):
+        st, sb, sl, sr = src
+        if not idx.isValid():
+            return src
+        r, c = idx.row(), idx.column()
+        v_dist = (r - sb) if r > sb else ((st - r) if r < st else 0)
+        h_dist = (c - sr) if c > sr else ((sl - c) if c < sl else 0)
+        if v_dist >= h_dist and v_dist > 0:
+            return (min(st, r), max(sb, r), sl, sr)
+        if h_dist > v_dist and h_dist > 0:
+            return (st, sb, min(sl, c), max(sr, c))
+        return src
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            hit = self._fill_handle_hit_rect()
+            if not hit.isNull() and hit.contains(pos):
+                src = self.fill_handle_anchor_range()
+                if src is not None:
+                    self._dragging_fill_handle = True
+                    self._fill_src_range = src
+                    self._fill_dst_range = src
+                    self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+                    self.viewport().update()
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        if getattr(self, "_dragging_fill_handle", False) and self._fill_src_range is not None:
+            idx = self.indexAt(pos)
+            self._fill_dst_range = self._compute_fill_target_range(self._fill_src_range, idx)
+            self.viewport().update()
+            event.accept()
+            return
+        hit = self._fill_handle_hit_rect()
+        if not hit.isNull() and hit.contains(pos):
+            self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self.viewport().unsetCursor()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if getattr(self, "_dragging_fill_handle", False):
+            src = getattr(self, "_fill_src_range", None)
+            dst = getattr(self, "_fill_dst_range", None)
+            self._dragging_fill_handle = False
+            self._fill_src_range = None
+            self._fill_dst_range = None
+            self.viewport().unsetCursor()
+            self.viewport().update()
+            if src is not None and dst is not None and dst != src:
+                self.fillHandleDragged.emit(*src, *dst)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self.viewport())
+        handle = self.fill_handle_rect()
+        if not handle.isNull() and not getattr(self, "_dragging_fill_handle", False):
+            painter.setPen(QPen(QColor("#ffffff"), 1))
+            painter.setBrush(QColor("#0284c7"))
+            painter.drawRect(handle)
+        if getattr(self, "_dragging_fill_handle", False) and getattr(self, "_fill_dst_range", None) and self.model() is not None:
+            dt, db, dl, dr = self._fill_dst_range
+            tl = self.visualRect(self.model().index(dt, dl))
+            br = self.visualRect(self.model().index(db, dr))
+            if tl.isValid() and br.isValid():
+                box = tl.united(br).adjusted(1, 1, -1, -1)
+                pen = QPen(QColor("#0284c7"), 2, Qt.PenStyle.DashLine)
+                painter.setPen(pen)
+                painter.setBrush(QColor(2, 132, 199, 25))
+                painter.drawRect(box)
+        painter.end()
+
+
+class ColumnNamesTable(WorksheetTableWidget):
+    """Header row table for column names (C1, C2...) with seamless Minitab-style navigation."""
+    def __init__(self, navigate, parent=None):
+        super().__init__(1, 0, parent)
+        self.navigate = navigate
+        self.enter_direction = 'down'
+        self.selected_columns = set()
+        self.selected_rows = set()
+        self.setItemDelegate(WorksheetDelegate(self, navigate, is_column_names=True))
+
+    def updateGeometries(self):
+        super().updateGeometries()
+        frozen = getattr(self, "frozen_panes", None)
+        if frozen:
+            frozen.sync_name_scroll()
+
+    def event(self, event):
+        if event.type() == QEvent.Type.KeyPress:
+            if event.matches(QKeySequence.StandardKey.Paste):
+                win = self.window()
+                if hasattr(win, "paste_cells"):
+                    win.paste_cells()
+                    return True
+            key = event.key()
+            mods = event.modifiers()
+            if not (mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)):
+                if key == Qt.Key.Key_Down:
+                    if self.navigate is not None:
+                        self.navigate('down')
+                        return True
+                direction = movement(event, self.enter_direction, in_editor=False)
+                if direction is not None:
+                    if self.navigate is not None:
+                        self.navigate(direction)
+                        return True
+        return super().event(event)
+
+
+class FrozenWorksheetView(QTableView):
+    """A view of a pinned region of an existing worksheet table."""
+
+    def __init__(self, owner, *, column_names=False):
+        super().__init__(owner)
+        self.worksheet_owner = owner
+        self._syncing = False
+        self.setModel(owner.model())
+        self.setSelectionModel(owner.selectionModel())
+        self.setItemDelegate(WorksheetDelegate(self, owner.navigate, is_column_names=column_names))
+        self.setFocusProxy(owner)
+        self.setEditTriggers(owner.editTriggers())
+        self.setProperty("frozenWorksheetPane", True)
+        self.setSelectionMode(owner.selectionMode())
+        self.setSelectionBehavior(owner.selectionBehavior())
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+        self.setVerticalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+        self.horizontalHeader().hide()
+        self.verticalHeader().hide()
+        self.pressed.connect(lambda idx: owner.cellPressed.emit(idx.row(), idx.column()))
+        self.clicked.connect(lambda idx: owner.cellClicked.emit(idx.row(), idx.column()))
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.hide()
+
+    def mirror_header(self, source):
+        header = WorksheetHeaderView(source.orientation(), self)
+        header.appearance_source = source
+        header.setMinimumSectionSize(source.minimumSectionSize())
+        header.setDefaultSectionSize(source.defaultSectionSize())
+        header.sectionClicked.connect(source.sectionClicked.emit)
+        if source.orientation() == Qt.Orientation.Horizontal:
+            self.setHorizontalHeader(header)
+            header.sectionHandleDoubleClicked.connect(source.sectionHandleDoubleClicked.emit)
+            header.sectionResized.connect(
+                lambda index, old, size: self.worksheet_owner.setColumnWidth(index, size)
+                if size > 0 and self.worksheet_owner.columnWidth(index) != size and not self._syncing else None
+            )
+        else:
+            self.setVerticalHeader(header)
+        header.show()
+        return header
+
+    def scrollTo(self, index, hint=QTableView.ScrollHint.EnsureVisible):
+        # The canonical views own the scroll offsets, including during selection changes.
+        pass
+
+    def wheelEvent(self, event):
+        table = self.worksheet_owner.frozen_panes.table
+        QApplication.sendEvent(table.viewport(), event)
+
+
+class WorksheetFreezePanes(QObject):
+    """Keep the main worksheet and its pinned views on the same models and scroll offsets."""
+
+    def __init__(self, table, names):
+        super().__init__(table)
+        self.table = table
+        self.names = names
+        self.rows = self.columns = self.width = self.height = 0
+        self.top = self.left = self.corner = self.name_pane = None
+        self._layout_timer = QTimer(self, interval=0, singleShot=True)
+        self._layout_timer.timeout.connect(self.sync_layout)
+        for view in (table, names):
+            view.frozen_panes = self
+            view.setHorizontalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+            view.horizontalHeader().sectionResized.connect(self._schedule_layout)
+            view.viewport().installEventFilter(self)
+        table.setVerticalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+        table.verticalHeader().sectionResized.connect(self._schedule_layout)
+        table.horizontalScrollBar().rangeChanged.connect(self.sync_name_scroll)
+        for owner, target in ((table, names), (names, table)):
+            owner.horizontalHeader().sectionResized.connect(
+                lambda index, old, size, peer=target: peer.setColumnWidth(index, size)
+                if size > 0 and peer.columnWidth(index) != size else None
+            )
+
+    @property
+    def active(self):
+        return bool(self.rows or self.columns)
+
+    def _create_views(self):
+        window = self.table.window()
+        self.top = FrozenWorksheetView(self.table)
+        self.left = FrozenWorksheetView(self.table)
+        self.corner = FrozenWorksheetView(self.table)
+        self.name_pane = FrozenWorksheetView(self.names, column_names=True)
+        rows = self.top.mirror_header(self.table.verticalHeader())
+        names = self.name_pane.mirror_header(self.names.horizontalHeader())
+        for header, menu in ((rows, window._on_row_header_context_menu),
+                             (names, window._on_column_header_context_menu)):
+            header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            header.customContextMenuRequested.connect(lambda pos, h=header, show=menu: show(pos, h))
+        for pane in (self.top, self.left, self.corner):
+            pane.customContextMenuRequested.connect(
+                lambda pos, view=pane: window._on_table_context_menu(pos, view)
+            )
+        self.name_pane.customContextMenuRequested.connect(
+            lambda pos: window._show_worksheet_context_menu(self.name_pane.viewport().mapToGlobal(pos))
+        )
+
+    def set_frozen_counts(self, rows, columns):
+        if self.active or rows or columns:
+            self.rows, self.columns = rows, columns
+            if self.top is None:
+                self._create_views()
+            self.sync_layout()
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Resize:
+            self._schedule_layout()
+        return super().eventFilter(obj, event)
+
+    def _schedule_layout(self, *args):
+        if self.active and not getattr(self.table.window(), "_refreshing", False):
+            self._layout_timer.start()
+
+    def sync_layout(self):
+        self._layout_timer.stop()
+        if not self.active:
+            for pane in (self.top, self.left, self.corner, self.name_pane):
+                pane.hide()
+            self.width = self.height = 0
+            return
+
+        data = self.table.viewport().geometry()
+        names = self.names.viewport().geometry()
+        width = sum(self.table.columnWidth(c) for c in range(min(self.columns, self.table.columnCount())))
+        height = sum(self.table.rowHeight(r) for r in range(min(self.rows, self.table.rowCount())))
+        self.width = min(width, data.width())
+        self.height = min(height, data.height())
+        row_label = self.table.verticalHeader().geometry()
+        column_label = self.names.horizontalHeader().geometry()
+        self.top.verticalHeader().setFixedWidth(row_label.width())
+        self.name_pane.horizontalHeader().setFixedHeight(column_label.height())
+        panes = (
+            (self.top, QRect(row_label.x(), data.y(), data.right() + 1 - row_label.x(), self.height),
+             range(self.rows), None),
+            (self.left, QRect(data.x(), data.y() + self.height, self.width, data.height() - self.height),
+             range(self.rows, self.table.rowCount()), range(self.columns)),
+            (self.corner, QRect(data.x(), data.y(), self.width, self.height),
+             range(self.rows), range(self.columns)),
+            (self.name_pane, QRect(names.x(), column_label.y(), min(width, names.width()),
+                                   names.bottom() + 1 - column_label.y()),
+             None, range(self.columns)),
+        )
+        for pane, geometry, rows, columns in panes:
+            if geometry.isEmpty():
+                pane.hide()
+                continue
+            self._sync_sections(pane, rows, columns)
+            pane.setGeometry(geometry)
+            pane.show()
+            pane.raise_()
+        self.sync_scroll()
+
+    @staticmethod
+    def _sync_sections(pane, rows, columns):
+        owner = pane.worksheet_owner
+        pane._syncing = True
+        try:
+            pane.setFont(owner.font())
+            pane.setShowGrid(owner.showGrid())
+            for source, target, visible in ((owner.horizontalHeader(), pane.horizontalHeader(), columns),
+                                            (owner.verticalHeader(), pane.verticalHeader(), rows)):
+                for section in range(source.count()):
+                    hidden = source.isSectionHidden(section) or (visible is not None and section not in visible)
+                    if target.isSectionHidden(section) != hidden:
+                        target.setSectionHidden(section, hidden)
+                    if not hidden and target.sectionSize(section) != source.sectionSize(section):
+                        target.resizeSection(section, source.sectionSize(section))
+        finally:
+            pane._syncing = False
+
+    def sync_name_scroll(self, *args):
+        # The names viewport extends across the data table's vertical scrollbar gutter.
+        source = self.table.horizontalScrollBar()
+        scroll = self.names.horizontalScrollBar()
+        scroll.setRange(source.minimum(), source.maximum())
+        scroll.setValue(source.value())
+
+    def sync_scroll(self):
+        self.sync_name_scroll()
+        if self.height:
+            self.top.horizontalScrollBar().setValue(self.table.horizontalScrollBar().value())
+        if self.width:
+            self.left.verticalScrollBar().setValue(self.table.verticalScrollBar().value())
+
+    def pane_for_index(self, owner, index):
+        column = self.width and index.column() < self.columns and not owner.isColumnHidden(index.column())
+        if owner is self.names:
+            return self.name_pane if column else None
+        row = self.height and index.row() < self.rows
+        if row:
+            return self.corner if column else self.top
+        return self.left if column else None
+
+    def ensure_visible(self, owner, index, hint):
+        # Qt scrolls against the full viewport. Keep pinned axes steady and ensure
+        # moving cells are revealed just beyond the pinned strips.
+        horizontal = self.table.horizontalScrollBar()
+        vertical = self.table.verticalScrollBar()
+        old_x, old_y = horizontal.value(), vertical.value()
+        if owner is self.names:
+            # Use the worksheet's narrower viewport and keep the body row in place.
+            data_index = self.table.model().index(max(0, self.table.currentRow()), index.column())
+        else:
+            data_index = index
+        QTableView.scrollTo(self.table, data_index, hint)
+        rect = self.table.visualRect(data_index)
+        if self.width and index.column() < self.columns:
+            horizontal.setValue(old_x)
+        elif 0 <= rect.right() and rect.x() < self.width:
+            horizontal.setValue(horizontal.value() + rect.x() - self.width)
+        if owner is self.names or (self.height and index.row() < self.rows):
+            vertical.setValue(old_y)
+        elif 0 <= rect.bottom() and rect.y() < self.height:
+            vertical.setValue(vertical.value() + rect.y() - self.height)
+
+    def update_highlights(self):
+        if self.active:
+            for pane in (self.top, self.left, self.corner, self.name_pane):
+                pane.viewport().update()
+                pane.horizontalHeader().viewport().update()
+                pane.verticalHeader().viewport().update()
+
