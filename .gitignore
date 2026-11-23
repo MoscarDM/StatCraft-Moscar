@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.progress
+*.log
+*.tmp
+
+# Distribution / packaging
+build/
+dist/
+outputs/
+/artifacts/
+*.egg-info/
+
+# PyInstaller work directories
+work/statcraft-modern-freeze/
+work/statcraft-installer-build/
+work/statcraft-build-deps/
+work/statcraft-modern-next/
+work/statcraft-installer-dist/
+
+# Test & IDE
+.pytest_cache/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+tools/
+scratch/
+.superpowers/
+/.sandbox_workspace/
+
+# Local QA, agent handoff, internal planning docs, and temp artifacts
+MtbLicenseLog.txt
+HANDOFF.md
+AGENTS.md
+docs/qa/
+docs/superpowers/
+tests/tmp*/
+_site/
+StatCraft.icns
