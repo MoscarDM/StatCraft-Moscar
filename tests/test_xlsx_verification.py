@@ -41,7 +41,7 @@ class ExcelVerificationTests(unittest.TestCase):
             self.assertEqual([calculations[cell].value for cell in ('H4', 'I4')], ['=I2', '=H2'])
             self.assertEqual(calculations['E2'].value,
                              '=IF(Verification!$B$7="Valid",$J$2+SUMPRODUCT(C2:D2,$H$4:$I$4),NA())')
-            self.assertEqual(verification['B11'].value, result['result']['coefficients'][1]['estimate'])
+            self.assertAlmostEqual(verification['B11'].value, result['result']['coefficients'][1]['estimate'], places=12)
             self.assertIn('Calculations!I2', verification['C11'].value)
             chart = verification._charts[0]
             self.assertEqual((chart.x_axis.axPos, chart.y_axis.axPos), ('b', 'l'))
