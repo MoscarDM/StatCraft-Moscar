@@ -1,12 +1,61 @@
 
 """End-to-end verification for everyday analysis workflows."""
 from itertools import product
-from json import dumps
-from math import isclose, sqrt
+from json import dumps, loads
+from math import isclose, isnan, sqrt
 from statistics import mean, stdev, variance
 
 from .app import Presenter
 from .graph_frame import GraphFrame
+
+
+def _compare_json_values(expected, actual, path, rel_tol, abs_tol):
+    if isinstance(expected, bool) or isinstance(actual, bool):
+        if type(expected) is not type(actual) or expected != actual:
+            return f"{path}: {expected!r} != {actual!r}"
+        return None
+    if isinstance(expected, (int, float)) and isinstance(actual, (int, float)):
+        fe = float(expected)
+        fa = float(actual)
+        if isnan(fe) and isnan(fa):
+            return None
+        if isnan(fe) != isnan(fa) or not isclose(fe, fa, rel_tol=rel_tol, abs_tol=abs_tol):
+            return f"{path}: {expected!r} != {actual!r}"
+        return None
+    if type(expected) is not type(actual):
+        return f"{path}: type {type(expected).__name__} != {type(actual).__name__}"
+    if isinstance(expected, dict):
+        if set(expected.keys()) != set(actual.keys()):
+            missing = sorted(set(expected.keys()) - set(actual.keys()))
+            extra = sorted(set(actual.keys()) - set(expected.keys()))
+            return f"{path}: keys differ (missing={missing}, extra={extra})"
+        for key in sorted(expected.keys()):
+            diff = _compare_json_values(expected[key], actual[key], f"{path}.{key}", rel_tol, abs_tol)
+            if diff is not None:
+                return diff
+        return None
+    if isinstance(expected, list):
+        if len(expected) != len(actual):
+            return f"{path}: len {len(expected)} != {len(actual)}"
+        for idx, (item_e, item_a) in enumerate(zip(expected, actual)):
+            diff = _compare_json_values(item_e, item_a, f"{path}[{idx}]", rel_tol, abs_tol)
+            if diff is not None:
+                return diff
+        return None
+    if expected != actual:
+        return f"{path}: {expected!r} != {actual!r}"
+    return None
+
+
+def _find_result_diff(expected, actual, path="result", rel_tol=1e-11, abs_tol=1e-12):
+    """Return a concise diff message when nested results differ beyond floating-point ULP noise."""
+    return _compare_json_values(
+        loads(dumps(expected, sort_keys=True)),
+        loads(dumps(actual, sort_keys=True)),
+        path,
+        rel_tol,
+        abs_tol,
+    )
 
 
 def export_graph(window, entry, path, tab="Graph"):
@@ -33,8 +82,9 @@ def verify_saved_results(window, path, entries):
         if saved["recipe"] != entry["recipe"] or dumps(saved["result"], sort_keys=True) != dumps(entry["result"], sort_keys=True):
             raise RuntimeError(f"Saved analysis changed: {entry['title']}")
         rerun = restored.rerun_result(saved)
-        if dumps(rerun["result"], sort_keys=True) != dumps(saved["result"], sort_keys=True):
-            raise RuntimeError(f"Rerun changed: {entry['title']}")
+        diff = _find_result_diff(saved["result"], rerun["result"])
+        if diff is not None:
+            raise RuntimeError(f"Rerun changed: {entry['title']} ({diff})")
 
 
 def verify_fractional_graphs(window, folder):

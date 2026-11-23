@@ -159,6 +159,37 @@ class VerifyBuiltExecutableTests(unittest.TestCase):
             self.assertEqual(report["sha256"], expected_hash)
             self.assertEqual(report["version"], statcraft.__version__)
 
+    def test_smoke_result_diff_tolerates_blas_ulp_noise_and_flags_real_drift(self):
+        from statcraft.everyday_smoke import _find_result_diff
+
+        base = {
+            "residuals": [-4.8166598914506786e-15, 0.0],
+            "cooks_distance": [4.860768862322053e-27, 1.0],
+            "lack_of_fit": {"f": 3.700743415417188e-16, "status": "exact_fit"},
+            "raw_pairs": [["A", 1.0]],
+            "test_failures": {"1": [0], "2": []},
+            "flag": False,
+        }
+        ulp_shifted = {
+            "residuals": [1.1e-15, -0.0],
+            "cooks_distance": [0.0, 1.0 + 1e-14],
+            "lack_of_fit": {"f": 0.0, "status": "exact_fit"},
+            "raw_pairs": [("A", 1.0)],
+            "test_failures": {1: [0], 2: []},
+            "flag": False,
+        }
+        self.assertIsNone(_find_result_diff(base, ulp_shifted))
+
+        real_drift = {**base, "cooks_distance": [4.860768862322053e-27, 1.0001]}
+        diff_num = _find_result_diff(base, real_drift)
+        self.assertIsNotNone(diff_num)
+        self.assertIn("cooks_distance[1]", diff_num)
+
+        type_drift = {**base, "flag": 0}
+        diff_bool = _find_result_diff(base, type_drift)
+        self.assertIsNotNone(diff_bool)
+        self.assertIn("flag", diff_bool)
+
 
 if __name__ == "__main__":
     unittest.main()

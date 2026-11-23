@@ -156,7 +156,10 @@ def main(argv: list[str] | None = None) -> int:
             json_out=args.json_out,
         )
     except Exception as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            escaped = str(exc).strip()[-1800:].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            print(f"::error title=StatCraft Smoke Verification::{escaped}", flush=True)
+        print(f"ERROR: {exc}", file=sys.stderr, flush=True)
         return 1
 
     print(f"Target: {report['target']}")
