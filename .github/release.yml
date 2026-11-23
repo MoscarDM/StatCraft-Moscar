@@ -1,0 +1,20 @@
+changelog:
+  categories:
+    - title: Features & Workflow Improvements
+      labels:
+        - feat
+        - enhancement
+    - title: Bug Fixes & Stability
+      labels:
+        - fix
+        - bug
+    - title: Documentation & Showcase
+      labels:
+        - docs
+    - title: CI, Packaging & Maintenance
+      labels:
+        - ci
+        - chore
+    - title: Other Changes
+      labels:
+        - '*'

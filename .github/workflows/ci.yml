@@ -1,0 +1,96 @@
+name: Multi-Platform Test & Quality Assurance
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+      - 'CONTRIBUTORS.md'
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+      - 'CONTRIBUTORS.md'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xfixes0 libxcb-xinerama0 libgl1 libglx-mesa0 libegl1 libdbus-1-3 libfontconfig1
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify Version Metadata Alignment
+        run: python scripts/bump_version.py --check
+
+      - name: Run Test Suite (Offscreen)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          STATCRAFT_TESTING: '1'
+        run: |
+          python -c "import ctypes, os, sys, unittest, tests; res = unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.discover('tests', top_level_dir='.')); sys.stdout.flush(); sys.stderr.flush(); code = 0 if res.wasSuccessful() else 1; k32 = ctypes.windll.kernel32 if os.name == 'nt' else None; (setattr(k32.GetCurrentProcess, 'restype', ctypes.c_void_p), setattr(k32.TerminateProcess, 'argtypes', [ctypes.c_void_p, ctypes.c_uint]), k32.TerminateProcess(k32.GetCurrentProcess(), code)) if k32 else os._exit(code)"
+
+      - name: Run Source Smoke Verification
+        env:
+          QT_QPA_PLATFORM: offscreen
+          STATCRAFT_TESTING: '1'
+        run: |
+          python scripts/verify_built_executable.py --python-module --timeout 120
+
+      - name: Build Windows Pre-Release Test Binaries
+        if: runner.os == 'Windows'
+        run: |
+          pip install pyinstaller
+          python -m PyInstaller --noconfirm --distpath dist/setup installer.spec
+          python -m PyInstaller --noconfirm --distpath dist/app StatCraft.spec
+
+      - name: Verify Built Windows Executable (Smoke & SHA-256)
+        if: runner.os == 'Windows'
+        env:
+          QT_QPA_PLATFORM: offscreen
+          STATCRAFT_TESTING: '1'
+        run: |
+          python scripts/verify_built_executable.py --exe dist/app/StatCraft.exe --timeout 120
+
+      - name: Upload Test Executable Artifacts (Pre-Release Testing)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: StatCraft-Windows-PreRelease-Executables
+          path: |
+            dist/setup/StatCraft-Setup.exe
+            dist/app/StatCraft.exe
+          retention-days: 14

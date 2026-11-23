@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StatCraft — Open-Source Desktop Statistics</title>
+  <meta name="description" content="Open-source desktop software for statistical analysis, design of experiments, quality engineering, and interactive charts.">
+  <link rel="icon" type="image/png" href="images/logo.png">
+
+  <!-- Google Fonts & Tailwind CDN -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'system-ui', '-apple-system', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace']
+          },
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              400: '#60a5fa',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              accent: '#38bdf8'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Google Stitch & Glassmorphic Custom Utilities */
+    body {
+      background-color: #07090e;
+      color: #f1f5f9;
+      font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+      overflow-x: hidden;
+    }
+    .stitch-glow {
+      background: radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.18) 0%, rgba(139, 92, 246, 0.08) 35%, transparent 70%);
+    }
+    .stitch-card {
+      background: rgba(15, 23, 42, 0.65);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .stitch-card:hover {
+      border-color: rgba(96, 165, 250, 0.35);
+      transform: translateY(-2px);
+      box-shadow: 0 12px 30px -10px rgba(37, 99, 235, 0.2);
+    }
+    .stitch-badge {
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(96, 165, 250, 0.25);
+    }
+    .mesh-gradient {
+      background: radial-gradient(at 0% 0%, rgba(37, 99, 235, 0.15) 0px, transparent 50%),
+                  radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.12) 0px, transparent 50%),
+                  radial-gradient(at 50% 50%, rgba(14, 165, 233, 0.1) 0px, transparent 60%);
+    }
+    .hero-shadow {
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.7), 0 0 40px -10px rgba(59, 130, 246, 0.25);
+    }
+    /* Hide scrollbar for Chrome, Safari and Opera */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    /* Hide scrollbar for IE, Edge and Firefox */
+    .no-scrollbar {
+      -ms-overflow-style: none;  /* IE and Edge */
+      scrollbar-width: none;  /* Firefox */
+    }
+  </style>
+</head>
+<body class="min-h-screen selection:bg-brand-500/30 selection:text-white">
+
+  <!-- Ambient Background Glows -->
+  <div class="fixed inset-0 stitch-glow pointer-events-none -z-10"></div>
+  <div class="fixed inset-0 mesh-gradient pointer-events-none -z-10"></div>
+
+  <!-- Navigation -->
+  <header class="sticky top-0 z-50 backdrop-blur-xl bg-[#07090e]/80 border-b border-white/5">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-18 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <a href="#" class="flex items-center space-x-3">
+          <img src="images/logo.png" alt="StatCraft Logo" class="w-8 h-8 sm:w-9 sm:h-9 rounded-xl shadow-lg ring-1 ring-white/10">
+          <span class="text-lg sm:text-xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-400 bg-clip-text text-transparent">StatCraft</span>
+        </a>
+        <span id="nav-version" class="hidden sm:inline-flex items-center px-2 py-0.5 text-xs font-semibold rounded-full stitch-badge text-brand-400 font-mono">v122.0.0</span>
+      </div>
+
+      <nav class="hidden md:flex items-center space-x-8 text-sm font-medium text-slate-300">
+        <a href="#features" class="hover:text-white transition-colors">Features</a>
+        <a href="#innovations" class="hover:text-white transition-colors">Innovations</a>
+        <a href="#showcase" class="hover:text-white transition-colors">Showcase</a>
+        <a href="#releases" class="hover:text-white transition-colors">What's New</a>
+        <a href="#install" class="hover:text-white transition-colors">Installation</a>
+        <a href="https://github.com/SkinnDeep/StatCraft/releases" target="_blank" class="hover:text-white transition-colors">Releases</a>
+      </nav>
+
+      <!-- Desktop Action Buttons -->
+      <div class="hidden sm:flex items-center space-x-3">
+        <a href="https://github.com/SkinnDeep/StatCraft" target="_blank" class="inline-flex items-center space-x-2 px-3.5 py-2 text-sm font-medium text-slate-300 bg-white/5 hover:bg-white/10 hover:text-white border border-white/10 rounded-xl transition-all">
+          <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          <span>GitHub</span>
+        </a>
+        <a href="#download" class="inline-flex items-center space-x-2 px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 rounded-xl shadow-lg shadow-blue-500/20 transition-all">
+          <span>Get StatCraft</span>
+        </a>
+      </div>
+
+      <!-- Mobile Hamburger Button -->
+      <div class="flex items-center space-x-2 sm:hidden">
+        <a href="#download" class="inline-flex items-center px-3 py-1.5 text-xs font-semibold text-white bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg shadow-sm">
+          Get
+        </a>
+        <button id="mobile-menu-btn" onclick="toggleMobileMenu()" class="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 focus:outline-none" aria-label="Toggle Navigation">
+          <svg id="menu-icon-open" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+          <svg id="menu-icon-close" class="w-6 h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile Navigation Drawer -->
+    <div id="mobile-menu" class="hidden md:hidden px-4 pt-2 pb-6 space-y-1 border-b border-white/10 bg-[#07090e]/95 backdrop-blur-2xl">
+      <a href="#features" onclick="toggleMobileMenu()" class="block px-3 py-2.5 rounded-xl text-base font-medium text-slate-300 hover:text-white hover:bg-white/5">Features</a>
+      <a href="#innovations" onclick="toggleMobileMenu()" class="block px-3 py-2.5 rounded-xl text-base font-medium text-slate-300 hover:text-white hover:bg-white/5">Innovations</a>
+      <a href="#showcase" onclick="toggleMobileMenu()" class="block px-3 py-2.5 rounded-xl text-base font-medium text-slate-300 hover:text-white hover:bg-white/5">Showcase</a>
+      <a href="#releases" onclick="toggleMobileMenu()" class="block px-3 py-2.5 rounded-xl text-base font-medium text-slate-300 hover:text-white hover:bg-white/5">What's New</a>
+      <a href="#install" onclick="toggleMobileMenu()" class="block px-3 py-2.5 rounded-xl text-base font-medium text-slate-300 hover:text-white hover:bg-white/5">Installation</a>
+      <div class="pt-3 mt-2 border-t border-white/5 flex items-center justify-between">
+        <a href="https://github.com/SkinnDeep/StatCraft" target="_blank" class="flex items-center space-x-2 text-sm text-slate-300 hover:text-white px-2 py-1.5">
+          <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          <span>Star on GitHub</span>
+        </a>
+        <a href="#download" onclick="toggleMobileMenu()" class="px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-xl">
+          Download App
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="relative pt-20 pb-24 overflow-hidden">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+      
+      <!-- Announcement Pill -->
+      <div class="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full stitch-badge text-sm text-slate-300 mb-8 border border-blue-500/30">
+        <span class="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span class="text-slate-400">Latest Release:</span>
+        <span id="hero-badge-tag" class="font-semibold text-white font-mono">v122.0.0</span>
+        <span class="text-blue-400 font-medium">· Windows, macOS & Linux &rarr;</span>
+      </div>
+
+      <!-- Main Headline -->
+      <h1 class="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-white max-w-4xl mx-auto leading-[1.12]">
+        The Modern, Native Statistical Engine for <span class="bg-gradient-to-r from-blue-400 via-sky-300 to-indigo-400 bg-clip-text text-transparent">Engineers & Scientists</span>
+      </h1>
+
+      <p class="mt-6 text-lg sm:text-xl text-slate-400 max-w-2xl mx-auto leading-relaxed">
+        StatCraft brings statistical analysis, design of experiments, and interactive charts to a local desktop app. Explore fitted models and run scripts using a local R installation.
+      </p>
+
+      <!-- Dynamic Download CTA Box -->
+      <div id="download" class="mt-10 flex flex-col items-center justify-center space-y-4">
+        
+        <!-- Primary Dynamic Download Button -->
+        <a id="primary-download-btn" href="https://github.com/SkinnDeep/StatCraft/releases/download/v122.0.0/StatCraft-Setup-v122.0.0-Windows-x64.exe"
+           class="group relative inline-flex items-center justify-center space-x-3 px-8 py-4.5 rounded-2xl bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 text-white font-semibold text-lg shadow-2xl shadow-blue-500/35 hover:shadow-blue-500/50 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 ring-1 ring-white/20">
+          <div id="primary-icon" class="w-6 h-6 flex items-center justify-center">
+            <!-- Dynamic Icon (Default Windows) -->
+            <svg class="w-6 h-6 fill-current" viewBox="0 0 24 24"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+          </div>
+          <div class="text-left">
+            <div id="primary-text" class="leading-none text-base sm:text-lg font-bold">Download for Windows</div>
+            <div id="primary-subtext" class="text-xs text-blue-100/80 font-normal mt-0.5">Setup Installer (64-bit) · v122.0.0</div>
+          </div>
+          <svg class="w-5 h-5 ml-1 text-blue-200 group-hover:translate-y-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+        </a>
+
+        <!-- Detected OS Confirmation & Secondary Platforms -->
+        <div class="flex flex-wrap items-center justify-center gap-2 pt-2 text-xs text-slate-400">
+          <span class="text-slate-500">All Platforms:</span>
+          
+          <a id="link-win-setup" href="https://github.com/SkinnDeep/StatCraft/releases/download/v122.0.0/StatCraft-Setup-v122.0.0-Windows-x64.exe"
+             class="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-white border border-white/5 transition-all">
+            Windows Setup (.exe)
+          </a>
+          <a id="link-win-portable" href="https://github.com/SkinnDeep/StatCraft/releases/download/v122.0.0/StatCraft-v122.0.0-Windows-x64.exe"
+             class="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-white border border-white/5 transition-all">
+            Windows Portable (.exe)
+          </a>
+          <a id="link-macos-arm64" href="https://github.com/SkinnDeep/StatCraft/releases/download/v122.0.0/StatCraft-v122.0.0-macOS-arm64.dmg"
+             class="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-white border border-white/5 transition-all">
+            macOS Apple Silicon (.dmg)
+          </a>
+          <a id="link-macos-x64" href="https://github.com/SkinnDeep/StatCraft/releases/download/v122.0.0/StatCraft-v122.0.0-macOS-x86_64.dmg"
+             class="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-white border border-white/5 transition-all">
+            macOS Intel (.dmg)
+          </a>
+          <a id="link-linux" href="https://github.com/SkinnDeep/StatCraft/releases/download/v122.0.0/StatCraft-v122.0.0-Linux-x86_64.tar.gz"
+             class="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-white border border-white/5 transition-all">
+            Linux x86_64 (.tar.gz)
+          </a>
+        </div>
+
+        <!-- Privacy & Integrity Note -->
+        <div class="text-xs text-slate-500 flex items-center space-x-3 pt-1">
+          <span class="flex items-center"><svg class="w-3.5 h-3.5 mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> 100% Free & Open Source</span>
+          <span>&bull;</span>
+          <span class="flex items-center"><svg class="w-3.5 h-3.5 mr-1 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg> 100% Local & Offline</span>
+        </div>
+      </div>
+
+      <!-- Hero Visual / App Mockup Window -->
+      <div class="mt-16 max-w-5xl mx-auto rounded-3xl p-2 sm:p-3 bg-gradient-to-b from-white/10 to-transparent border border-white/10 hero-shadow">
+        <div class="rounded-2xl overflow-hidden bg-slate-950 border border-slate-800">
+          <!-- Window Header Bar -->
+          <div class="h-10 bg-slate-900/90 px-4 flex items-center justify-between border-b border-slate-800">
+            <div class="flex items-center space-x-2">
+              <span class="w-3 h-3 rounded-full bg-red-500/80"></span>
+              <span class="w-3 h-3 rounded-full bg-yellow-500/80"></span>
+              <span class="w-3 h-3 rounded-full bg-green-500/80"></span>
+              <span class="ml-3 text-xs font-mono text-slate-400">StatCraft 2026 — Analysis & DOE Suite</span>
+            </div>
+            <div class="text-[11px] font-mono text-slate-500">Cross-Platform Qt6 Desktop · Windows, macOS & Linux</div>
+          </div>
+          <!-- Hero Screenshot -->
+          <img src="images/hero-preview.png" alt="StatCraft Workspace Preview" class="w-full object-cover">
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- Metric Badges Section -->
+  <section class="border-y border-white/5 bg-slate-950/50 py-12">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+        <div>
+          <div class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight font-mono">3</div>
+          <div class="text-sm text-slate-400 mt-1">Workspace Modes</div>
+        </div>
+        <div>
+          <div class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight font-mono">DOE</div>
+          <div class="text-sm text-slate-400 mt-1">Design and Analysis</div>
+        </div>
+        <div>
+          <div class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight font-mono">R</div>
+          <div class="text-sm text-slate-400 mt-1">Universal R Translator</div>
+        </div>
+        <div>
+          <div class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight font-mono">$0 / mo</div>
+          <div class="text-sm text-slate-400 mt-1">Zero Cloud Lock-in</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+<!-- Feature Grid Section -->
+  <section id="features" class="py-24 relative">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      
+      <div class="text-center max-w-3xl mx-auto mb-16">
+        <h2 class="text-xs uppercase tracking-widest font-bold text-brand-400 font-mono mb-2">Capabilities</h2>
+        <p class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">Engineered for Rigorous Industrial & Academic Workflows</p>
+        <p class="mt-4 text-slate-400 text-base">Tools for exploring data, fitting models, planning experiments, and monitoring processes.</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        
+        <!-- StatCraft Connect Feature Card -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mb-5">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+            </div>
+            <h3 class="text-lg font-bold text-white mb-2">R Script Generation & Regression</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Generate R scripts using tidyverse, ggplot2, Base R, or vroom. Explore multiple regression and linear, quadratic, and cubic fits with confidence and prediction intervals, sequential ANOVA, PRESS, predicted R-squared, and residual plots.
+            </p>
+          </div>
+          <div class="mt-4 pt-4 border-t border-white/5 flex items-center text-xs text-indigo-400 font-mono">
+            <span>Tidyverse · ggplot2 · Base R</span>
+          </div>
+        </div>
+
+        <!-- Card 1 -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-5">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+            </div>
+            <h3 class="text-lg font-bold text-white mb-2">Minitab and JMP Data Import</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Open supported Minitab projects (.mpx), Minitab worksheets (.mwx, read-only), and JMP tables (.jmp). Import literal table data from .jsl files. Export worksheets to Excel or CSV.
+            </p>
+            <p class="mt-2 text-xs text-slate-400">
+              StatCraft is not affiliated with or endorsed by Minitab or JMP.
+            </p>
+          </div>
+          <div class="mt-4 pt-4 border-t border-white/5 flex items-center text-xs text-brand-400 font-mono">
+            <span>See the import notes for file-specific limitations</span>
+          </div>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 mb-5">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+            </div>
+            <h3 class="text-lg font-bold text-white mb-2">DOE and Prediction Profilers</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Design Definitive Screening (DSD), Custom D-Optimal designs with Color Map on Correlations, 2-level Factorials, Response Surface (CCD & Box-Behnken), ALT, and interactive prediction profilers.
+            </p>
+          </div>
+          <div class="mt-4 pt-4 border-t border-white/5 flex items-center text-xs text-purple-400 font-mono">
+            <span>Complete alias structures & desirability traces</span>
+          </div>
+        </div>
+
+        <!-- Card 3 -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-5">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </div>
+            <h3 class="text-lg font-bold text-white mb-2">Quality & Capability Sixpack</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Johnson Transformation, Individual Distribution Identification (16 continuous distributions & Box-Cox/Johnson transformations), Cause-and-Effect (Ishikawa / Fishbone) diagrams, Analysis of Means (ANOM for Normal, Binomial, Poisson), SPC control charts (Xbar-R, Xbar-S, I-MR), Normal & Non-normal capability (Cp, Cpk, Pp, Ppk), and Gage R&R ANOVA nested studies.
+            </p>
+          </div>
+          <div class="mt-4 pt-4 border-t border-white/5 flex items-center text-xs text-emerald-400 font-mono">
+            <span>AIAG & ISO 22514-2 compliant</span>
+          </div>
+        </div>
+
+        <!-- Card 4 -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-12 h-12 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 mb-5">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/></svg>
+            </div>
+            <h3 class="text-lg font-bold text-white mb-2">High-DPI Interactive Graphics</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Render beautiful interactive 2D and 3D wireframe plots with ViewCube navigation, contour slices, Pareto charts, and boxplots. Protected 16:10 / 4:3 aspect ratios prevent widescreen distortion on ultra-wide and 4K displays.
+            </p>
+          </div>
+          <div class="mt-4 pt-4 border-t border-white/5 flex items-center text-xs text-sky-400 font-mono">
+            <span>Native vector & print rendering</span>
+          </div>
+        </div>
+
+        <!-- Card 5 -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-5">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+            </div>
+            <h3 class="text-lg font-bold text-white mb-2">Bivariate and Group Analysis</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Explore bivariate regression with confidence bands and density ellipses, one-way ANOVA with means diamonds and Tukey circles, and contingency tables with mosaic plots.
+            </p>
+          </div>
+          <div class="mt-4 pt-4 border-t border-white/5 flex items-center text-xs text-amber-400 font-mono">
+            <span>Bivariate, Oneway & Contingency</span>
+          </div>
+        </div>
+
+        <!-- Card 6 -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-12 h-12 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-5">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+            </div>
+            <h3 class="text-lg font-bold text-white mb-2">100% Offline & Private Core</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Your proprietary research and production data never touches a third-party cloud. Fully air-gapped support on Windows, macOS, and Linux with zero telemetry and silent deployments.
+            </p>
+          </div>
+          <div class="mt-4 pt-4 border-t border-white/5 flex items-center text-xs text-rose-400 font-mono">
+            <span>Air-gapped enterprise ready</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- Analysis Tools -->
+  <section id="innovations" class="py-20 relative bg-slate-950/40 border-t border-white/5">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="text-center max-w-3xl mx-auto mb-16">
+        <h2 class="text-xs uppercase tracking-widest font-bold text-sky-400 font-mono mb-2">Next-Gen Advantages</h2>
+        <p class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">Tools for Analysis and Reporting</p>
+        <p class="mt-4 text-slate-400 text-base">Thoughtfully engineered capabilities designed for high-velocity quality engineering, live simulation, and modern team workflows.</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        
+        <!-- 1. What-If Sliders -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 mb-4 font-mono font-bold text-sm">01</div>
+            <h3 class="text-lg font-bold text-white mb-2">Interactive "What-If" Spec Sliders</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Non-destructive tolerance simulation directly on Capability & Distribution outputs. Drag sliders to instantly test tighter LSL/USL or process variance shifts with live recalculation of Cp, Cpk, and PPM.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-white/5 text-xs text-sky-400 font-mono">Live Vector Re-shading</div>
+        </div>
+
+        <!-- 2. Plain English Summary -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mb-4 font-mono font-bold text-sm">02</div>
+            <h3 class="text-lg font-bold text-white mb-2">"Plain English" Executive Summaries</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              One-click executive briefing badge that translates ANOVA tables, p-values, and effect sizes into concise, publication-grade bullet points ready for plant managers and PowerPoint decks.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-white/5 text-xs text-indigo-400 font-mono">Deterministic Briefings</div>
+        </div>
+
+        <!-- 3. Audit Anonymizer -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-4 font-mono font-bold text-sm">03</div>
+            <h3 class="text-lg font-bold text-white mb-2">"Clean for Audit" Dataset Scrambler</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Instantly sanitize confidential pharma, medtech, or aerospace datasets for external auditors by hashing patient/operator IDs while mathematically preserving exact statistical distributions and correlations.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-white/5 text-xs text-emerald-400 font-mono">Regulatory Privacy Safe</div>
+        </div>
+
+        <!-- 4. Brush & Link -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 mb-4 font-mono font-bold text-sm">04</div>
+            <h3 class="text-lg font-bold text-white mb-2">Interactive Brush & Link Highlighting</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Lasso or hover an outlier on any scatterplot, I-MR control chart, or residual plot to immediately highlight matching rows in the Data Table and across open diagnostic charts in real time.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-white/5 text-xs text-purple-400 font-mono">Bidirectional Visual Brushing</div>
+        </div>
+
+        <!-- 5. Run Comparator -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-4 font-mono font-bold text-sm">05</div>
+            <h3 class="text-lg font-bold text-white mb-2">Side-by-Side Model & Run Comparator</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Diff any two historical recipes (Before vs After Kaizen, or Stepwise vs Full Model) with side-by-side delta tables for ΔR², ΔCpk, and AIC/BIC, complete with dual-curve overlays.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-white/5 text-xs text-amber-400 font-mono">Visual Model Diffs</div>
+        </div>
+
+        <!-- 6. Pre-Flight Doctor -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-4 font-mono font-bold text-sm">06</div>
+            <h3 class="text-lg font-bold text-white mb-2">Pre-Flight Data Doctor</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Automated 5ms sanity audit that flags hidden trailing whitespace in factor levels, zero-variance columns, extreme sentinel missing codes (e.g., -999), and collinearity traps before modeling.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-white/5 text-xs text-rose-400 font-mono">Automated Data Sanity</div>
+        </div>
+
+        <!-- 7. SVG & HTML Export -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-400 mb-4 font-mono font-bold text-sm">07</div>
+            <h3 class="text-lg font-bold text-white mb-2">Direct SVG & Single-File HTML Reports</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Copy crisp scalable vector graphics (SVG) straight to your clipboard for razor-sharp PowerPoint, LaTeX, and Figma slides, plus one-click standalone interactive HTML5 session reports.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-white/5 text-xs text-teal-400 font-mono">Lossless Vector Clipboard</div>
+        </div>
+
+        <!-- 8. Guidance Chips -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-4 font-mono font-bold text-sm">08</div>
+            <h3 class="text-lg font-bold text-white mb-2">"Next Best Step" Guidance Chips</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Context-aware workflow suggestions at the foot of every result. Failed normality? Click to jump into Johnson Transformation. Significant ANOVA? Click to run Tukey multiple comparisons.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-white/5 text-xs text-blue-400 font-mono">Smart Workflow Navigation</div>
+        </div>
+
+        <!-- 9. Live Formula Preview -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 mb-4 font-mono font-bold text-sm">09</div>
+            <h3 class="text-lg font-bold text-white mb-2">Live Formula Column Preview</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Modern formula bar supporting Excel and vectorized NumPy expressions with an instant 5-row live preview showing calculated values before pressing Enter.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-white/5 text-xs text-cyan-400 font-mono">Vectorized Column Syntax</div>
+        </div>
+
+        <!-- 10. Auto-Fill & Excel TSV Integration -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 mb-4 font-mono font-bold text-sm">10</div>
+            <h3 class="text-lg font-bold text-white mb-2">Excel TSV Grid & Auto-Fill Engine</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              1-click "Copy Table (TSV for Excel)" with sanitized scientific notation, plus smart drag-to-fill sequence prediction supporting arithmetic progressions, geometric intervals, and text-number suffixes (e.g., Lot-01, Lot-02).
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-white/5 text-xs text-violet-400 font-mono">Excel Seamless Interop</div>
+        </div>
+
+        <!-- 11. Worksheet Workflows -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-4 font-mono font-bold text-sm">11</div>
+            <h3 class="text-lg font-bold text-white mb-2">Worksheet Navigation & Editing</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              40 expected usability fixes: seamless in-cell arrow traversal, smart paste with header detection, Ctrl+E dialog state memory, F3 reset, double-click auto-fit columns, status bar quick stats (Sum, Mean, Min, Max), and multi-column sorting.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-white/5 text-xs text-emerald-400 font-mono">Keyboard Navigation · Drag-Fill</div>
+        </div>
+
+        <!-- 12. Universal R Fallback Engine -->
+        <div class="stitch-card rounded-2xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-4 font-mono font-bold text-sm">12</div>
+            <h3 class="text-lg font-bold text-white mb-2">Universal R Code Translator & Runner</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Translates every statistical operation into production-grade Tidyverse and ggplot2 scripts. Run directly against local R runtimes with automatic visualization capture and vector SVG export.
+            </p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-white/5 text-xs text-amber-400 font-mono">Tidyverse & ggplot2 Native</div>
+        </div>
+
+
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Visual Showcase Section -->
+  <section id="showcase" class="py-24 bg-slate-950/70 border-t border-white/5">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      
+      <div class="text-center max-w-3xl mx-auto mb-12">
+        <h2 class="text-xs uppercase tracking-widest font-bold text-brand-400 font-mono mb-2">Interactive Showcase</h2>
+        <p class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">Precision Analysis in Action</p>
+        <p class="mt-4 text-slate-400 text-base">Explore actual screenshots generated directly from our verified test suite and production builds.</p>
+      </div>
+
+      <!-- Showcase Tabs -->
+      <div class="flex overflow-x-auto no-scrollbar sm:flex-wrap items-center sm:justify-center gap-2 mb-8 px-2 py-2 -mx-2 sm:mx-0">
+        <button onclick="switchTab('connect')" id="tab-connect" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-brand-600 text-white shadow-lg shadow-blue-500/20 transition-all">Universal R Translator</button>
+        <button onclick="switchTab('jmp_ui')"
+ id="tab-jmp_ui" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Regression Diagnostics</button>
+        <button onclick="switchTab('r_bench')" id="tab-r_bench" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Tidyverse & ggplot2 Viewer</button>
+        <button onclick="switchTab('jmp_dist')" id="tab-jmp_dist" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Distribution</button>
+        <button onclick="switchTab('sixpack')" id="tab-sixpack" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Capability Sixpack</button>
+        <button onclick="switchTab('jmp_biv')" id="tab-jmp_biv" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Bivariate Fit</button>
+        <button onclick="switchTab('jmp_one')" id="tab-jmp_one" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">One-Way ANOVA</button>
+        <button onclick="switchTab('profiler')" id="tab-profiler" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Prediction Profiler</button>
+        <button onclick="switchTab('optimal')" id="tab-optimal" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Custom D-Optimal</button>
+        <button onclick="switchTab('tree')" id="tab-tree" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Decision Trees</button>
+        <button onclick="switchTab('dsd')" id="tab-dsd" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Definitive Screening (DSD)</button>
+        <button onclick="switchTab('surface')" id="tab-surface" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">3D Surface Plot</button>
+        <button onclick="switchTab('alt')" id="tab-alt" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Accelerated Life Testing (ALT)</button>
+        <button onclick="switchTab('emp')" id="tab-emp" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">EMP Gauge (Wheeler)</button>
+        <button onclick="switchTab('contour')" id="tab-contour" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Contour Slices</button>
+        <button onclick="switchTab('optimizer')" id="tab-optimizer" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Response Optimizer</button>
+        <button onclick="switchTab('control')" id="tab-control" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Xbar-R Control Chart</button>
+        <button onclick="switchTab('ccb')" id="tab-ccb" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Control Chart Builder</button>
+        <button onclick="switchTab('screening')" id="tab-screening" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Process Screening</button>
+        <button onclick="switchTab('variability')" id="tab-variability" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Variability &amp; Gauge Charts</button>
+        <button onclick="switchTab('factorial')" id="tab-factorial" class="tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all">Factorial Main Effects</button>
+      </div>
+
+      <!-- Showcase Image Display Area -->
+      <div class="max-w-4xl mx-auto rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 p-2 sm:p-4 shadow-2xl">
+        <div class="rounded-xl overflow-hidden bg-black flex items-center justify-center min-h-[380px]">
+          <img id="showcase-img" src="images/statcraft-connect.png" alt="StatCraft Feature Showcase" class="w-full h-auto max-h-[600px] object-contain transition-all duration-300">
+        </div>
+        <div class="mt-4 px-2 flex items-center justify-between text-xs text-slate-400">
+          <span id="showcase-caption" class="font-medium text-slate-300">StatCraft Connect: Explore worksheet data, inspect fitted models in interactive profilers, and extend your analysis in R Workbench.</span>
+          <span class="font-mono text-slate-500">Worksheet · Profiler · R</span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- Live Release & What's New Section -->
+  <section id="releases" class="py-20 border-t border-white/5 bg-slate-950/40">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="text-center mb-10">
+        <h2 class="text-xs uppercase tracking-widest font-bold text-brand-400 font-mono mb-2">Live Release Feed</h2>
+        <p class="text-3xl font-extrabold text-white tracking-tight">What's New in StatCraft</p>
+      </div>
+
+      <div class="stitch-card rounded-3xl p-6 sm:p-8 border border-slate-800 shadow-2xl relative overflow-hidden">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-white/10">
+          <div>
+            <div class="flex items-center space-x-3">
+              <span class="inline-flex items-center px-3 py-1 rounded-full stitch-badge text-xs font-mono font-semibold text-brand-400" id="release-card-tag">v122.0.0</span>
+              <span class="text-xs text-slate-500 font-mono" id="release-card-date">Latest Release</span>
+            </div>
+            <h3 class="text-2xl font-bold text-white mt-2" id="release-card-title">StatCraft v122.0.0</h3>
+          </div>
+          <a id="release-card-link" href="https://github.com/SkinnDeep/StatCraft/releases/latest" target="_blank" class="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-300 hover:text-white border border-white/10 transition-all self-start sm:self-auto">
+            <span>View on GitHub</span>
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+          </a>
+        </div>
+
+        <!-- Release Notes Content Body -->
+        <div class="mt-6 text-sm text-slate-300 leading-relaxed font-normal space-y-3" id="release-card-body">
+          <p class="text-slate-400">Loading live release highlights from GitHub...</p>
+        </div>
+
+        <!-- Live Asset Download Badges -->
+        <div class="mt-8 pt-6 border-t border-white/10">
+          <div class="text-xs text-slate-400 font-medium mb-3">Live Release Binaries & Packages:</div>
+          <div class="flex flex-wrap items-center gap-2.5" id="release-card-assets">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Installation & Quick Start -->
+  <section id="install" class="py-24 bg-slate-950/60 border-t border-white/5">
+    <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+      
+      <div class="text-center max-w-3xl mx-auto mb-16">
+        <h2 class="text-xs uppercase tracking-widest font-bold text-brand-400 font-mono mb-2">Quick Start</h2>
+        <p class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">Install StatCraft</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        
+        <!-- Windows -->
+        <div class="stitch-card rounded-2xl p-6">
+          <div class="flex items-center space-x-3 mb-4">
+            <svg class="w-6 h-6 text-blue-400 fill-current" viewBox="0 0 24 24"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+            <h3 class="text-lg font-bold text-white">Windows</h3>
+          </div>
+          <p class="text-slate-400 text-sm mb-4">Run the guided GUI Setup installer or run the standalone portable `.exe` directly without administrative rights.</p>
+          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 text-xs font-mono text-slate-300">
+            StatCraft-Setup.exe<br>
+            <span class="text-slate-500"># or silent enterprise setup:</span><br>
+            StatCraft-Setup.exe --silent
+          </div>
+        </div>
+
+        <!-- macOS -->
+        <div class="stitch-card rounded-2xl p-6">
+          <div class="flex items-center space-x-3 mb-4">
+            <svg class="w-6 h-6 text-slate-200 fill-current" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 3.5c.62-.75 1.04-1.8 0.92-2.85-.9.04-1.99.6-2.61 1.34-.55.63-1.03 1.67-.9 2.7.99.08 2.02-.51 2.59-1.19z"/></svg>
+            <h3 class="text-lg font-bold text-white">macOS</h3>
+          </div>
+          <p class="text-slate-400 text-sm mb-4">Open the Apple Silicon (<code class="text-slate-300">arm64</code>) or Intel (<code class="text-slate-300">x86_64</code>) <code class="text-slate-300">.dmg</code> (or extract the <code class="text-slate-300">.zip</code>), drag <code class="text-slate-300">StatCraft.app</code> to Applications, and clear quarantine.</p>
+          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 text-xs font-mono text-slate-300">
+            <span class="text-slate-500"># Apple Silicon (arm64) or Intel (x86_64):</span><br>
+            open StatCraft-*-macOS-*.dmg<br>
+            xattr -cr /Applications/StatCraft.app
+          </div>
+        </div>
+
+        <!-- Linux -->
+        <div class="stitch-card rounded-2xl p-6">
+          <div class="flex items-center space-x-3 mb-4">
+            <svg class="w-6 h-6 text-amber-400 fill-current" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.419 2.865 8.166 6.839 9.489.5.09.682-.218.682-.484 0-.237-.009-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.455-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.004.07 1.532 1.03 1.532 1.03.892 1.529 2.341 1.087 2.912.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.268 2.75 1.026A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.026 2.747-1.026.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .269.18.579.688.481C19.138 20.161 22 16.416 22 12c0-5.523-4.477-10-10-10z"/></svg>
+            <h3 class="text-lg font-bold text-white">Linux</h3>
+          </div>
+          <p class="text-slate-400 text-sm mb-4">Extract the standalone `.tar.gz` archive. Includes desktop icon and launcher for Ubuntu, Debian, Fedora, and Arch.</p>
+          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 text-xs font-mono text-slate-300">
+            tar -xzvf StatCraft-*.tar.gz<br>
+            cd StatCraft-*<br>
+            ./StatCraft
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="border-t border-white/5 py-12 bg-slate-950 text-slate-500 text-xs">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-6">
+      <div class="flex items-center space-x-3">
+        <img src="images/logo.png" alt="StatCraft" class="w-6 h-6 rounded-lg opacity-80">
+        <span class="text-sm font-bold text-slate-300">StatCraft</span>
+        <span>&bull;</span>
+        <span>Created by <a href="https://github.com/SkinnDeep" target="_blank" class="text-slate-400 hover:text-white transition-colors">SkinnDeep</a> &bull; Co-developed with <span class="text-slate-300 font-medium">Antigravity</span> (Google DeepMind) &amp; <span class="text-slate-300 font-medium">Codex</span></span>
+      </div>
+
+      <div class="flex items-center space-x-6">
+        <a href="https://github.com/SkinnDeep/StatCraft" target="_blank" class="hover:text-white transition-colors">GitHub Repository</a>
+        <a href="https://github.com/SkinnDeep/StatCraft/releases" target="_blank" class="hover:text-white transition-colors">Release Notes</a>
+        <a href="https://github.com/SkinnDeep/StatCraft/issues" target="_blank" class="hover:text-white transition-colors">Issues & Support</a>
+        <a href="https://github.com/SkinnDeep/StatCraft/blob/main/LICENSE" target="_blank" class="hover:text-white transition-colors">MIT License</a>
+      </div>
+    </div>
+    <p class="mt-4 px-4 text-center text-slate-400">StatCraft is not affiliated with or endorsed by Minitab or JMP.</p>
+  </footer>
+
+  <!-- Dynamic OS Detection & Showcase Script -->
+  <script>
+    // Asset Mapping & Fallback Registry
+    const BASE_RELEASE_URL = "https://github.com/SkinnDeep/StatCraft/releases/download/";
+    let currentVersion = "v122.0.0";
+    let assets = {
+      win_setup: BASE_RELEASE_URL + "v122.0.0/StatCraft-Setup-v122.0.0-Windows-x64.exe",
+      win_portable: BASE_RELEASE_URL + "v122.0.0/StatCraft-v122.0.0-Windows-x64.exe",
+      macos_arm64: BASE_RELEASE_URL + "v122.0.0/StatCraft-v122.0.0-macOS-arm64.dmg",
+      macos_x64: BASE_RELEASE_URL + "v122.0.0/StatCraft-v122.0.0-macOS-x86_64.dmg",
+      linux: BASE_RELEASE_URL + "v122.0.0/StatCraft-v122.0.0-Linux-x86_64.tar.gz"
+    };
+
+    // SVGs for OS Icons
+    const ICONS = {
+      windows: `<svg class="w-6 h-6 fill-current" viewBox="0 0 24 24"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>`,
+      mac: `<svg class="w-6 h-6 fill-current" viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 3.5c.62-.75 1.04-1.8 0.92-2.85-.9.04-1.99.6-2.61 1.34-.55.63-1.03 1.67-.9 2.7.99.08 2.02-.51 2.59-1.19z"/></svg>`,
+      linux: `<svg class="w-6 h-6 fill-current" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.419 2.865 8.166 6.839 9.489.5.09.682-.218.682-.484 0-.237-.009-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.455-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.004.07 1.532 1.03 1.532 1.03.892 1.529 2.341 1.087 2.912.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.268 2.75 1.026A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.026 2.747-1.026.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .269.18.579.688.481C19.138 20.161 22 16.416 22 12c0-5.523-4.477-10-10-10z"/></svg>`
+    };
+
+    // Detect Client OS
+    function detectOS() {
+      const userAgent = window.navigator.userAgent.toLowerCase();
+      const platform = (window.navigator?.userAgentData?.platform || window.navigator?.platform || "").toLowerCase();
+
+      if (platform.includes('mac') || userAgent.includes('macintosh') || userAgent.includes('mac os')) {
+        return 'mac';
+      } else if (platform.includes('linux') || userAgent.includes('linux') || userAgent.includes('x11')) {
+        return 'linux';
+      } else {
+        return 'windows';
+      }
+    }
+
+    // Apply Dynamic Button Configuration
+    function applyDynamicDownload(os) {
+      const btn = document.getElementById('primary-download-btn');
+      const icon = document.getElementById('primary-icon');
+      const text = document.getElementById('primary-text');
+      const subtext = document.getElementById('primary-subtext');
+
+      if (os === 'mac') {
+        btn.href = assets.macos_arm64;
+        icon.innerHTML = ICONS.mac;
+        text.innerText = "Download for macOS";
+        subtext.innerText = `Apple Silicon (.dmg) · ${currentVersion}`;
+      } else if (os === 'linux') {
+        btn.href = assets.linux;
+        icon.innerHTML = ICONS.linux;
+        text.innerText = "Download for Linux";
+        subtext.innerText = `Standalone x86_64 (.tar.gz) · ${currentVersion}`;
+      } else {
+        btn.href = assets.win_setup;
+        icon.innerHTML = ICONS.windows;
+        text.innerText = "Download for Windows";
+        subtext.innerText = `Setup Installer (64-bit) · ${currentVersion}`;
+      }
+    }
+
+    // Fetch Live Latest Release from GitHub API
+    async function syncLatestRelease() {
+      try {
+        const res = await fetch("https://api.github.com/repos/SkinnDeep/StatCraft/releases/latest");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data || !data.tag_name) return;
+
+        currentVersion = data.tag_name;
+        document.getElementById('nav-version').innerText = currentVersion;
+        document.getElementById('hero-badge-tag').innerText = currentVersion;
+
+        let foundArmDmg = false;
+        let foundX64Dmg = false;
+        data.assets?.forEach(a => {
+          const n = a.name.toLowerCase();
+          if (n.includes("setup") && n.endsWith(".exe")) {
+            assets.win_setup = a.browser_download_url;
+          } else if (n.endsWith(".exe")) {
+            assets.win_portable = a.browser_download_url;
+          } else if (n.includes("macos") && n.includes("arm64")) {
+            if (n.endsWith(".dmg") || !foundArmDmg) {
+              assets.macos_arm64 = a.browser_download_url;
+              if (n.endsWith(".dmg")) foundArmDmg = true;
+            }
+          } else if (n.includes("macos") && (n.includes("x86_64") || n.includes("intel"))) {
+            if (n.endsWith(".dmg") || !foundX64Dmg) {
+              assets.macos_x64 = a.browser_download_url;
+              if (n.endsWith(".dmg")) foundX64Dmg = true;
+            }
+          } else if (n.endsWith(".dmg") || n.endsWith(".zip")) {
+            if (!foundArmDmg) assets.macos_arm64 = a.browser_download_url;
+            if (!foundX64Dmg) assets.macos_x64 = a.browser_download_url;
+          } else if (n.endsWith(".tar.gz")) {
+            assets.linux = a.browser_download_url;
+          }
+        });
+
+        // Update secondary buttons
+        document.getElementById('link-win-setup').href = assets.win_setup;
+        document.getElementById('link-win-portable').href = assets.win_portable;
+        document.getElementById('link-macos-arm64').href = assets.macos_arm64;
+        document.getElementById('link-macos-x64').href = assets.macos_x64;
+        document.getElementById('link-linux').href = assets.linux;
+
+        // Re-apply to primary button with updated version text
+        applyDynamicDownload(detectOS());
+
+        // Update Live Release Feed Card
+        const cardTag = document.getElementById('release-card-tag');
+        const cardTitle = document.getElementById('release-card-title');
+        const cardDate = document.getElementById('release-card-date');
+        const cardLink = document.getElementById('release-card-link');
+        const cardBody = document.getElementById('release-card-body');
+        const cardAssets = document.getElementById('release-card-assets');
+
+        if (cardTag) cardTag.innerText = currentVersion;
+        if (cardTitle) cardTitle.innerText = data.name || `StatCraft ${currentVersion}`;
+        if (cardLink && data.html_url) cardLink.href = data.html_url;
+        if (cardDate && data.published_at) {
+          const d = new Date(data.published_at);
+          cardDate.innerText = 'Released ' + d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+        }
+
+        if (cardBody) {
+          if (data.body && data.body.trim()) {
+            let formatted = data.body
+              .replace(/^### (.*$)/gim, '<h4 class="text-base font-bold text-white mt-3 mb-1">$1</h4>')
+              .replace(/^## (.*$)/gim, '<h3 class="text-lg font-bold text-white mt-4 mb-2">$1</h3>')
+              .replace(/^\* (.*$)/gim, '<li class="ml-4 list-disc text-slate-300">$1</li>')
+              .replace(/^- (.*$)/gim, '<li class="ml-4 list-disc text-slate-300">$1</li>')
+              .replace(/\*\*(.*?)\*\*/gim, '<strong class="text-white font-semibold">$1</strong>')
+              .replace(/\[(.*?)\]\((.*?)\)/gim, '<a href="$2" target="_blank" class="text-brand-400 hover:underline">$1</a>');
+            cardBody.innerHTML = formatted;
+          } else {
+            cardBody.innerHTML = '<p class="text-slate-300">StatCraft includes statistical analysis, design of experiments, process capability analysis, and exportable charts.</p>';
+          }
+        }
+
+        if (cardAssets && data.assets && data.assets.length > 0) {
+          cardAssets.innerHTML = data.assets.map(a => {
+            const sizeText = a.size < 1024 * 1024
+              ? `${(a.size / 1024).toFixed(1)} KB`
+              : `${(a.size / (1024 * 1024)).toFixed(1)} MB`;
+            let icon = '📦';
+            if (a.name.endsWith('.exe')) icon = '🪟';
+            else if (a.name.endsWith('.zip') || a.name.endsWith('.dmg')) icon = '🍎';
+            else if (a.name.endsWith('.tar.gz')) icon = '🐧';
+            else if (a.name.toUpperCase().includes('SHA256')) icon = '🔐';
+            return `<a href="${a.browser_download_url}" class="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 hover:text-white hover:border-slate-700 transition-all font-mono">
+              <span>${icon}</span>
+              <span class="font-medium">${a.name}</span>
+              <span class="text-slate-500">(${sizeText})</span>
+            </a>`;
+          }).join('');
+        }
+      } catch (err) {
+        console.warn("Using offline fallback release links:", err);
+      }
+    }
+
+    // Interactive Showcase Gallery Tab Switcher
+    const showcaseData = {
+      connect: {
+        img: 'images/statcraft-connect.png',
+        caption: 'Universal R Code Translator: Instant, one-click translation of any analysis into standalone, executable R code (Tidyverse, ggplot2, Base R, and vroom) with real calculations for ANOVA, PRESS, Predicted R-sq, and normal curve overlays.'
+      },
+      jmp_ui: {
+        img: 'images/jmp-platform-ui.png',
+        caption: 'Regression diagnostics include fitted equations, model summaries, predicted R-squared, unusual observations, and residual plots.'
+      },
+      jmp_dist: {
+        img: 'images/jmp-distribution.png',
+        caption: 'The distribution view combines an outlier box plot, histogram, fitted normal curve, and quantile summary.'
+      },
+      sixpack: {
+        img: 'images/sixpack.png',
+        caption: 'Process Capability Sixpack: I-MR Chart, Capability Histogram with specs, Normal Probability Plot, and detailed within/overall capability indices (Cp, Cpk, Pp, Ppk).'
+      },
+      jmp_biv: {
+        img: 'images/jmp-bivariate.png',
+        caption: 'Bivariate fit shows a linear regression line, a 95% confidence band, density ellipses, and a grand mean reference line.'
+      },
+      jmp_one: {
+        img: 'images/jmp-oneway.png',
+        caption: 'One-way ANOVA shows group means and confidence intervals as diamonds alongside jittered observations and Tukey–Kramer comparison circles.'
+      },
+      profiler: {
+        img: 'images/prediction-profiler.png',
+        caption: 'Interactive Prediction Profiler: Real-time draggable crosshairs, confidence interval bands, and Derringer-Suich multi-response desirability optimization.'
+      },
+      optimal: {
+        img: 'images/d-optimal-correlations.png',
+        caption: 'Custom D-Optimal Design & Color Map on Correlations: Algorithmic Fedorov coordinate exchange, D/A/G-efficiency diagnostics, and correlation heatmap for confounding inspection.'
+      },
+      tree: {
+        img: 'images/decision-tree.png',
+        caption: 'CART® Classification & Regression Trees (Partition): Hierarchical split tree with branch rules, observation purity, predictor importance ranking, and non-linear interaction discovery.'
+      },
+      dsd: {
+        img: 'images/dsd-pareto.png',
+        caption: 'Definitive Screening Designs (DSD): Orthogonal main effects, foldover structure, stepwise heredity model selection, and standardized effects Pareto chart with critical t-reference line (Jones & Nachtsheim).'
+      },
+      alt: {
+        img: 'images/alt-life-vs-stress.png',
+        caption: 'Accelerated Life Testing (ALT): Maximum Likelihood Estimation with right-censoring, Arrhenius & Inverse Power Law stress models, and use-condition percentile extrapolation with 95% confidence bounds.'
+      },
+      emp: {
+        img: 'images/emp-gauge.png',
+        caption: 'Evaluating the Measurement Process (EMP): Dr. Donald J. Wheeler classification spectrum (First to Fourth Class), Intraclass Correlation (ICC), signal attenuation, Probable Error, and shift detection power curves.'
+      },
+      surface: {
+        img: 'images/surface.png',
+        caption: '3D Response Surface: Interactive vector rendering visualizing factor interactions, stationary points, and response curvature.'
+      },
+      contour: {
+        img: 'images/contour.png',
+        caption: '2D Contour Slices: Multi-factor gradient contours with iso-response curves and customizable hold levels.'
+      },
+      optimizer: {
+        img: 'images/optimizer.png',
+        caption: 'Multi-Response Optimizer: Composite desirability analysis ($D$) calculating global optimal factor settings.'
+      },
+      control: {
+        img: 'images/control-chart.png',
+        caption: 'Statistical Process Control: Xbar-R chart with automated zone detection, Nelson test rules, and out-of-control point flags.'
+      },
+      ccb: {
+        img: 'images/control-chart-builder.png',
+        caption: 'Control Chart Builder. Interactive dual vector canvas (Individual/Xbar & Moving Range/R/S) with dynamic multi-phase separation, phase dividers, step control limits, and Western Electric / Nelson alarm detection.'
+      },
+      screening: {
+        img: 'images/process-screening.png',
+        caption: 'Process screening summarizes stability, capability indices, and out-of-spec signals across process variables. Open Control Chart Builder for a closer look.'
+      },
+      variability: {
+        img: 'images/jmp-variability.png',
+        caption: 'Variability and gauge charts. Multi-factor hierarchical nested variance canvas, subgroup standard deviation (S) chart, ANOVA variance components, AIAG evaluation, and Number of Distinct Categories (ndc).'
+      },
+      factorial: {
+        img: 'images/doe-factorial.png',
+        caption: 'Factorial DOE Effects: Main effects and two-way interaction plots with grand mean references and full ANOVA decomposition.'
+      },
+      r_bench: {
+        img: 'images/r-workbench.png',
+        caption: 'Multi-Engine R Code Viewer: Inspect and copy Tidyverse, ggplot2, Base R, and vroom scripts ready for Positron, RStudio, or VS Code with zero package installation headaches.'
+      }
+    };
+
+    function switchTab(key) {
+      const data = showcaseData[key];
+      if (!data) return;
+
+      const img = document.getElementById('showcase-img');
+      const caption = document.getElementById('showcase-caption');
+
+      img.style.opacity = '0';
+      setTimeout(() => {
+        img.src = data.img;
+        caption.innerText = data.caption;
+        img.style.opacity = '1';
+      }, 150);
+
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.className = 'tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-slate-800/80 text-slate-400 hover:text-white transition-all';
+      });
+      const activeBtn = document.getElementById('tab-' + key);
+      if (activeBtn) {
+        activeBtn.className = 'tab-btn flex-shrink-0 whitespace-nowrap px-4 py-2.5 rounded-xl text-sm font-semibold bg-brand-600 text-white shadow-lg shadow-blue-500/20 transition-all';
+      }
+    }
+
+    // Toggle Mobile Navigation Drawer
+    function toggleMobileMenu() {
+      const menu = document.getElementById('mobile-menu');
+      const iconOpen = document.getElementById('menu-icon-open');
+      const iconClose = document.getElementById('menu-icon-close');
+      if (!menu) return;
+      const isHidden = menu.classList.contains('hidden');
+      if (isHidden) {
+        menu.classList.remove('hidden');
+        if (iconOpen) iconOpen.classList.add('hidden');
+        if (iconClose) iconClose.classList.remove('hidden');
+      } else {
+        menu.classList.add('hidden');
+        if (iconOpen) iconOpen.classList.remove('hidden');
+        if (iconClose) iconClose.classList.add('hidden');
+      }
+    }
+
+    // Initialize on DOM load
+    document.addEventListener('DOMContentLoaded', () => {
+      const detected = detectOS();
+      applyDynamicDownload(detected);
+      syncLatestRelease();
+    });
+  </script>
+</body>
+</html>
