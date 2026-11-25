@@ -8,7 +8,7 @@ KINDS=('full_factorial','fractional_factorial','general_factorial','plackett_bur
        'extreme_vertices','custom_optimal','definitive_screening')
 
 
-def build_plan(kind,factors,replicates=1,centers=0,randomize=True,seed=1,blocks=1,options=None,name='DOE plan'):
+def build_plan(kind,factors,replicates=1,centers=0,randomize=True,seed=1,blocks=1,options=None,name='DOE plan',**_extra):
     if kind not in KINDS:raise ValueError('Choose a supported design family.')
     if not isinstance(name,str) or not name.strip() or name!=name.strip() or len(name)>128:
         raise ValueError('Use a worksheet name of 1–128 characters without surrounding blanks.')
@@ -16,6 +16,9 @@ def build_plan(kind,factors,replicates=1,centers=0,randomize=True,seed=1,blocks=
         raise ValueError('Complete-replicate blocks must divide the number of replicates.')
     if options is not None and not isinstance(options,dict):raise ValueError('Design options must be an object.')
     options=copy.deepcopy(options or {})
+    if seed is None:
+        import random as _rnd
+        seed = _rnd.SystemRandom().randint(1, 2_147_483_647)
     configuration=dict(kind=kind,factors=copy.deepcopy(factors),replicates=replicates,centers=centers,
                        randomize=randomize,seed=seed,blocks=blocks,options=options,name=name)
     if kind in ('full_factorial','fractional_factorial'):

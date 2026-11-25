@@ -85,7 +85,7 @@ class TestConnectSubgroupSPC(unittest.TestCase):
         bridge = StatCraftAnalysisBar(mock_window, entry, conn.to_dict())
         buttons = bridge.findChildren(QPushButton)
         labels = [b.text() for b in buttons]
-        self.assertTrue(any("Minitab Dialog" in text for text in labels), f"Got labels: {labels}")
+        self.assertTrue(any("Recall Dialog" in text for text in labels), f"Got labels: {labels}")
         self.assertTrue(any("Copy R Script" in text for text in labels), f"Got labels: {labels}")
         self.assertTrue(any("View R Code" in text for text in labels), f"Got labels: {labels}")
 

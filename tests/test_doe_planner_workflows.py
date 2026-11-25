@@ -13,7 +13,7 @@ class DOEPlannerWorkflows(unittest.TestCase):
         factors=[dict(name='A',low=-1,high=1),dict(name='B',low=2,high=4)]
         a=p.create_doe_plan(kind='full_factorial',factors=factors,name='Plan')
         b=p.create_doe_plan(kind='full_factorial',factors=factors,name='Plan')
-        self.assertEqual([s.name for s in p.native_project.worksheets],['Original','Plan','Plan (2)'])
+        self.assertEqual([s.name for s in p.native_project.worksheets],['Original','Plan','Plan 2'])
         self.assertEqual(p.rerun_result(old)['result']['count'],3)
         self.assertIn('Factorial',format_entry(a))
         with scratch() as temp:

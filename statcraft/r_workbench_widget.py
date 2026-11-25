@@ -94,8 +94,10 @@ class VSCodeRSyntaxHighlighter(QSyntaxHighlighter):
 
     def __init__(self, parent=None, is_dark: bool = False):
         super().__init__(parent)
-        self._is_dark = is_dark
+        self._is_dark = bool(is_dark)
         self.rules: List[Tuple[re.Pattern, QTextCharFormat]] = []
+        self._str_format = QTextCharFormat()
+        self._comm_format = QTextCharFormat()
         self._rebuild_rules()
 
     @property
@@ -103,6 +105,7 @@ class VSCodeRSyntaxHighlighter(QSyntaxHighlighter):
         return self._is_dark
 
     def set_dark_mode(self, is_dark: bool) -> None:
+        is_dark = bool(is_dark)
         if self._is_dark != is_dark:
             self._is_dark = is_dark
             self._rebuild_rules()
@@ -112,64 +115,75 @@ class VSCodeRSyntaxHighlighter(QSyntaxHighlighter):
         self.rules = []
         is_dark = self._is_dark
 
+        # Function calls (#795e26 in Light, #dcdcaa in Dark) — broad identifier followed by '('
+        fn_format = QTextCharFormat()
+        fn_format.setForeground(QColor("#dcdcaa" if is_dark else "#795e26"))
+        self.rules.append((re.compile(r"\b[A-Za-z.][A-Za-z0-9._]*(?=\s*\()"), fn_format))
+
         # Keywords (#0000ff in Light, #569cd6 in Dark)
         kw_format = QTextCharFormat()
         kw_format.setForeground(QColor("#569cd6" if is_dark else "#0000ff"))
         kw_format.setFontWeight(QFont.Weight.Bold)
-        keywords = [
-            r"\bif\b", r"\belse\b", r"\brepeat\b", r"\bwhile\b", r"\bfunction\b",
-            r"\bfor\b", r"\bin\b", r"\bnext\b", r"\bbreak\b", r"\bTRUE\b",
-            r"\bFALSE\b", r"\bNULL\b", r"\bInf\b", r"\bNaN\b", r"\bNA\b",
-            r"\blibrary\b", r"\brequire\b", r"\bstatcraft_export\b", r"\bView\b",
-        ]
-        for kw in keywords:
-            self.rules.append((re.compile(kw), kw_format))
+        keywords = (
+            "if", "else", "repeat", "while", "function", "for", "in", "next", "break",
+            "return", "TRUE", "FALSE", "NULL", "Inf", "NaN", "NA", "NA_integer_",
+            "NA_real_", "NA_character_", "library", "require", "requireNamespace",
+            "source", "statcraft_export", "View",
+        )
+        kw_pattern = r"\b(?:" + "|".join(keywords) + r")\b"
+        self.rules.append((re.compile(kw_pattern), kw_format))
 
-        # Functions (#795e26 in Light, #dcdcaa in Dark)
-        fn_format = QTextCharFormat()
-        fn_format.setForeground(QColor("#dcdcaa" if is_dark else "#795e26"))
-        functions = [
-            r"\blm\b", r"\baov\b", r"\bglm\b", r"\bsummary\b", r"\bplot\b",
-            r"\bhist\b", r"\bboxplot\b", r"\babline\b", r"\bprint\b",
-            r"\bcat\b", r"\bc\b", r"\blist\b", r"\bnames\b", r"\bcolnames\b",
-            r"\bhead\b", r"\btail\b", r"\bstr\b", r"\bpredict\b", r"\bresid\b",
-            r"\bprcomp\b", r"\bcor\b", r"\bvar\b", r"\bsd\b", r"\bmean\b",
-            r"\bmedian\b", r"\bquantile\b", r"\bt\.test\b", r"\bdata\.frame\b",
-            r"\bas\.data\.frame\b", r"\btransform\b", r"\bgrid\b", r"\bpar\b",
-            r"\bhelp\b", r"\binteraction\.plot\b", r"\bbiplot\b",
-        ]
-        for fn in functions:
-            self.rules.append((re.compile(fn), fn_format))
-
-        # Strings (#a31515 in Light, #ce9178 in Dark)
-        str_format = QTextCharFormat()
-        str_format.setForeground(QColor("#ce9178" if is_dark else "#a31515"))
-        self.rules.append((re.compile(r'"[^"\\]*(\\.[^"\\]*)*"'), str_format))
-        self.rules.append((re.compile(r"'[^'\\]*(\\.[^'\\]*)*'"), str_format))
-
-        # Comments (#008000 in Light, #6a9955 in Dark)
-        comm_format = QTextCharFormat()
-        comm_format.setForeground(QColor("#6a9955" if is_dark else "#008000"))
-        comm_format.setFontItalic(True)
-        self.rules.append((re.compile(r"#.*"), comm_format))
-
-        # Numbers (#098658 in Light, #b5cea8 in Dark)
+        # Numbers including scientific notation (#098658 in Light, #b5cea8 in Dark)
         num_format = QTextCharFormat()
         num_format.setForeground(QColor("#b5cea8" if is_dark else "#098658"))
-        self.rules.append((re.compile(r"\b[0-9]+(\.[0-9]+)?\b"), num_format))
+        self.rules.append((re.compile(r"\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?[iL]?\b"), num_format))
 
-        # Operators (#000000 in Light, #d4d4d4 in Dark)
+        # Operators (#0f172a in Light, #d4d4d4 in Dark)
         op_format = QTextCharFormat()
         op_format.setForeground(QColor("#d4d4d4" if is_dark else "#0f172a"))
         op_format.setFontWeight(QFont.Weight.Bold)
-        for op in [r"<-", r"->", r"%>%", r"\+", r"-", r"\*", r"/", r"==", r"!=", r"<=", r">="]:
-            self.rules.append((re.compile(op), op_format))
+        op_pattern = r"<<-|->>|<-|->|\|>|%>%|%in%|%%|%/%|%[\*xo]%|:::|::|==|!=|<=|>=|[~+\-*/^$=<>@]"
+        self.rules.append((re.compile(op_pattern), op_format))
+
+        # Strings (#a31515 in Light, #ce9178 in Dark)
+        self._str_format = QTextCharFormat()
+        self._str_format.setForeground(QColor("#ce9178" if is_dark else "#a31515"))
+
+        # Comments (#008000 in Light, #6a9955 in Dark)
+        self._comm_format = QTextCharFormat()
+        self._comm_format.setForeground(QColor("#6a9955" if is_dark else "#008000"))
+        self._comm_format.setFontItalic(True)
 
     def highlightBlock(self, text: str) -> None:
         for pattern, fmt in self.rules:
             for match in pattern.finditer(text):
                 start, end = match.span()
                 self.setFormat(start, end - start, fmt)
+
+        # Single-pass scan for strings and comments so quotes beat '#' and comments beat tokens.
+        n = len(text)
+        i = 0
+        while i < n:
+            ch = text[i]
+            if ch in ('"', "'"):
+                quote = ch
+                start = i
+                i += 1
+                while i < n:
+                    cur = text[i]
+                    if cur == "\\" and i + 1 < n:
+                        i += 2
+                        continue
+                    if cur == quote:
+                        i += 1
+                        break
+                    i += 1
+                self.setFormat(start, i - start, self._str_format)
+            elif ch == "#":
+                self.setFormat(i, n - i, self._comm_format)
+                break
+            else:
+                i += 1
 
 
 class LineNumberGutter(QWidget):
@@ -187,23 +201,41 @@ class LineNumberGutter(QWidget):
 
 
 class RCodeEditor(QPlainTextEdit):
-    """VS Code-style R Code Editor with line gutter, active highlight, and Positron shortcuts."""
+    """VS Code-style R Code Editor with line gutter, syntax highlighting, and Positron shortcuts."""
 
-    def __init__(self, workbench: Optional[RWorkbenchWidget] = None, parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        workbench: Optional[RWorkbenchWidget] = None,
+        parent: Optional[QWidget] = None,
+        *,
+        is_dark: bool = False,
+        read_only: bool = False,
+        with_highlighter: bool = False,
+    ):
         super().__init__(parent)
         self.workbench = workbench
-        self._is_dark = False
+        self._is_dark = bool(is_dark)
         self.gutter = LineNumberGutter(self)
 
-        font = QFont("Cascadia Code" if QFont("Cascadia Code").exactMatch() else "Consolas", 10)
+        font_family = next(
+            (name for name in ("Cascadia Code", "Consolas", "Courier New") if QFont(name).exactMatch()),
+            "Consolas",
+        )
+        font = QFont(font_family, 10)
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(font)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setReadOnly(bool(read_only))
+        self.highlighter: Optional[VSCodeRSyntaxHighlighter] = (
+            VSCodeRSyntaxHighlighter(self.document(), is_dark=self._is_dark) if with_highlighter else None
+        )
 
         self.blockCountChanged.connect(self.update_gutter_width)
         self.updateRequest.connect(self.update_gutter)
         self.cursorPositionChanged.connect(self.highlight_current_line)
 
+        self._apply_editor_palette()
         self.update_gutter_width(0)
         self.highlight_current_line()
 
@@ -211,8 +243,25 @@ class RCodeEditor(QPlainTextEdit):
     def is_dark(self) -> bool:
         return self._is_dark
 
+    def _apply_editor_palette(self) -> None:
+        if self._is_dark:
+            self.setStyleSheet(
+                "QPlainTextEdit { background-color: #1e1e1e; color: #d4d4d4; "
+                "border: 1px solid #3f3f46; border-radius: 4px; padding: 4px 6px; "
+                "selection-background-color: #264f78; }"
+            )
+        else:
+            self.setStyleSheet(
+                "QPlainTextEdit { background-color: #ffffff; color: #0f172a; "
+                "border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 6px; "
+                "selection-background-color: #bfdbfe; }"
+            )
+
     def set_dark_mode(self, is_dark: bool) -> None:
-        self._is_dark = is_dark
+        self._is_dark = bool(is_dark)
+        self._apply_editor_palette()
+        if self.highlighter is not None:
+            self.highlighter.set_dark_mode(self._is_dark)
         self.gutter.update()
         self.highlight_current_line()
 
@@ -1372,13 +1421,14 @@ class RWorkbenchWidget(QWidget):
         p = Path(path)
         if p.is_file():
             text = p.read_text(encoding="utf-8", errors="ignore")
-            # Open in new editor tab
-            new_ed = RCodeEditor(workbench=self)
-            new_ed.setPlainText(text)
-            VSCodeRSyntaxHighlighter(new_ed.document(), is_dark=self._is_dark)
-            idx = self.editor_tabs.addTab(new_ed, p.name)
-            self.editor_tabs.setCurrentIndex(idx)
-            self.editor = new_ed
+            self.open_script_tab(p.name, text)
+
+    def open_script_tab(self, name, text):
+        editor = RCodeEditor(workbench=self, is_dark=self._is_dark, with_highlighter=True)
+        editor.setPlainText(text)
+        index = self.editor_tabs.addTab(editor, name)
+        self.editor_tabs.setCurrentIndex(index)
+        self.editor = editor
 
     def _save_script_file(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Save R Script", "script.R", "R Scripts (*.R);;All Files (*.*)")

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag (e.g. v106.0.0)'
+        description: 'Release Tag (e.g. v122.0.0)'
         required: false
         default: ''
 
@@ -15,18 +15,59 @@ permissions:
   contents: write
 
 jobs:
+  prepare:
+    name: Validate Release Version
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Validate Tag & Metadata Alignment
+        id: meta
+        run: |
+          INPUT_TAG="${{ github.event.inputs.tag_name }}"
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            VER=$(python -c "from pathlib import Path; import re; print(re.search(r'^__version__\s*=\s*[\"\x27]([^\"\x27]+)', Path('statcraft/__init__.py').read_text(), re.M).group(1))")
+            TAG="v$VER"
+          fi
+          RAW_VER="${TAG#v}"
+          RAW_VER="${RAW_VER#V}"
+          echo "Resolved release tag: $TAG (version $RAW_VER)"
+          python scripts/bump_version.py --check
+          SRC_VER=$(python -c "from pathlib import Path; import re; print(re.search(r'^__version__\s*=\s*[\"\x27]([^\"\x27]+)', Path('statcraft/__init__.py').read_text(), re.M).group(1))")
+          if [ "$SRC_VER" != "$RAW_VER" ]; then
+            echo "::error::Release tag ($TAG -> $RAW_VER) does not match statcraft/__init__.py ($SRC_VER). Run scripts/bump_version.py first."
+            exit 1
+          fi
+          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$RAW_VER" >> "$GITHUB_OUTPUT"
+
   build-windows:
     name: Build Windows x64
+    needs: prepare
     runs-on: windows-latest
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+          cache: 'pip'
 
       - name: Install Dependencies
         run: |
@@ -34,62 +75,57 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Determine Version
-        id: version
-        shell: pwsh
-        run: |
-          $inputTag = "${{ github.event.inputs.tag_name }}"
-          if ($inputTag) {
-            $tag = $inputTag
-          } elseif ($env:GITHUB_REF -like "refs/tags/*") {
-            $tag = $env:GITHUB_REF -replace "refs/tags/", ""
-          } else {
-            $updaterContent = Get-Content statcraft/updater.py -Raw
-            if ($updaterContent -match 'STATCRAFT_VERSION\s*=\s*"([^"]+)"') { $ver = $matches[1] } else { $ver = "104.0.0" }
-            $tag = "v$ver"
-          }
-          $rawVer = $tag.TrimStart('vV')
-          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "STATCRAFT_VER=$rawVer" | Out-File -FilePath $env:GITHUB_ENV -Append
-
       - name: Build Application & Setup
         run: |
-          pyinstaller --noconfirm --distpath dist/app --workpath build/app StatCraft.spec
-          pyinstaller --noconfirm --distpath dist/setup --workpath build/setup installer.spec
+          python -m PyInstaller --noconfirm --distpath dist/app --workpath build/app StatCraft.spec
+          python -m PyInstaller --noconfirm --distpath dist/setup --workpath build/setup installer.spec
 
       - name: Verify Built Windows Executable (Smoke & SHA-256)
         env:
           QT_QPA_PLATFORM: offscreen
           STATCRAFT_TESTING: '1'
         run: |
-          python scripts/verify_built_executable.py --exe dist/app/StatCraft.exe
+          python scripts/verify_built_executable.py --exe dist/app/StatCraft.exe --expected-version "${{ needs.prepare.outputs.version }}" --timeout 120
 
       - name: Stage Windows Binaries
         shell: pwsh
         run: |
+          $ver = "${{ needs.prepare.outputs.version }}"
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          Copy-Item "dist/setup/StatCraft-Setup.exe" "artifacts/StatCraft-Setup-v${env:STATCRAFT_VER}-Windows-x64.exe"
-          Copy-Item "dist/app/StatCraft.exe" "artifacts/StatCraft-v${env:STATCRAFT_VER}-Windows-x64.exe"
+          Copy-Item "dist/setup/StatCraft-Setup.exe" "artifacts/StatCraft-Setup-v$ver-Windows-x64.exe"
+          Copy-Item "dist/app/StatCraft.exe" "artifacts/StatCraft-v$ver-Windows-x64.exe"
 
       - name: Upload Windows Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-binaries
           path: artifacts/*
 
   build-macos:
-    name: Build macOS (Universal/Apple Silicon & Intel)
-    runs-on: macos-latest
+    name: Build macOS (${{ matrix.label }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+            label: Apple Silicon arm64
+          - runner: macos-15-intel
+            arch: x86_64
+            label: Intel x86_64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+          cache: 'pip'
 
       - name: Install Dependencies
         run: |
@@ -97,75 +133,72 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Determine Version
+      - name: Generate macOS Icon (.icns)
         run: |
-          INPUT_TAG="${{ github.event.inputs.tag_name }}"
-          if [ -n "$INPUT_TAG" ]; then
-            TAG="$INPUT_TAG"
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-          else
-            VER=$(python -c 'from statcraft.updater import STATCRAFT_VERSION; print(STATCRAFT_VERSION)')
-            TAG="v$VER"
+          if [ -f StatCraft.png ]; then
+            mkdir -p StatCraft.iconset
+            for size in 16 32 128 256 512; do
+              sips -z $size $size StatCraft.png --out "StatCraft.iconset/icon_${size}x${size}.png" >/dev/null
+              retina=$((size * 2))
+              sips -z $retina $retina StatCraft.png --out "StatCraft.iconset/icon_${size}x${size}@2x.png" >/dev/null
+            done
+            iconutil -c icns StatCraft.iconset -o StatCraft.icns || rm -f StatCraft.icns
+            rm -rf StatCraft.iconset
           fi
-          RAW_VER="${TAG#v}"
-          echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV
-          echo "STATCRAFT_VER=$RAW_VER" >> $GITHUB_ENV
 
       - name: Build macOS Application Bundle
         run: |
-          pyinstaller --noconfirm --distpath dist/app --workpath build/app StatCraft.spec
+          python -m PyInstaller --noconfirm --distpath dist/app --workpath build/app StatCraft.spec
 
-      - name: Verify macOS Application Runs (Offscreen Smoke Test)
+      - name: Verify macOS Application (Offscreen Smoke & Version)
         env:
           QT_QPA_PLATFORM: offscreen
+          STATCRAFT_TESTING: '1'
         run: |
-          ./dist/app/StatCraft.app/Contents/MacOS/StatCraft &
-          PID=$!
-          sleep 4
-          kill -0 $PID && kill -9 $PID || true
-          echo "macOS App launch smoke test verified"
+          python scripts/verify_built_executable.py --exe dist/app/StatCraft.app/Contents/MacOS/StatCraft --expected-version "${{ needs.prepare.outputs.version }}" --timeout 120
 
       - name: Package DMG and ZIP
         run: |
+          VER="${{ needs.prepare.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
           mkdir -p artifacts
           cd dist/app
-          # Create DMG (use HFS+ and retry; fall back to ZIP-only if runner blocks hdiutil)
           for attempt in 1 2 3; do
-            hdiutil create -fs HFS+ -volname "StatCraft" -srcfolder "StatCraft.app" -ov -format UDZO "../../artifacts/StatCraft-v${STATCRAFT_VER}-macOS.dmg" && break
+            hdiutil create -fs HFS+ -volname "StatCraft" -srcfolder "StatCraft.app" -ov -format UDZO "../../artifacts/StatCraft-v${VER}-macOS-${ARCH}.dmg" && break
             echo "hdiutil attempt $attempt failed, retrying in 5s..."
             sleep 5
           done
-          if [ ! -f "../../artifacts/StatCraft-v${STATCRAFT_VER}-macOS.dmg" ]; then
+          if [ ! -f "../../artifacts/StatCraft-v${VER}-macOS-${ARCH}.dmg" ]; then
             echo "::warning::DMG creation failed on runner; continuing with macOS ZIP bundle."
           fi
-          # Create ZIP
-          ditto -c -k --sequesterRsrc --keepParent "StatCraft.app" "../../artifacts/StatCraft-v${STATCRAFT_VER}-macOS.zip"
+          ditto -c -k --sequesterRsrc --keepParent "StatCraft.app" "../../artifacts/StatCraft-v${VER}-macOS-${ARCH}.zip"
           cd ../..
 
       - name: Upload macOS Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: macos-binaries
+          name: macos-binaries-${{ matrix.arch }}
           path: artifacts/*
 
   build-linux:
     name: Build Linux x86_64
+    needs: prepare
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+          cache: 'pip'
 
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xfixes0 libxcb-xinerama0 libgl1 libglx-mesa0 libegl1
+          sudo apt-get install -y libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xfixes0 libxcb-xinerama0 libgl1 libglx-mesa0 libegl1 libdbus-1-3 libfontconfig1
 
       - name: Install Dependencies
         run: |
@@ -173,112 +206,91 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Determine Version
-        run: |
-          INPUT_TAG="${{ github.event.inputs.tag_name }}"
-          if [ -n "$INPUT_TAG" ]; then
-            TAG="$INPUT_TAG"
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-          else
-            VER=$(python -c 'from statcraft.updater import STATCRAFT_VERSION; print(STATCRAFT_VERSION)')
-            TAG="v$VER"
-          fi
-          RAW_VER="${TAG#v}"
-          echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV
-          echo "STATCRAFT_VER=$RAW_VER" >> $GITHUB_ENV
-
       - name: Build Standalone Linux Executable
         run: |
-          pyinstaller --noconfirm --distpath dist/app --workpath build/app StatCraft.spec
+          python -m PyInstaller --noconfirm --distpath dist/app --workpath build/app StatCraft.spec
 
-      - name: Verify Linux Executable (Offscreen Smoke Test)
+      - name: Verify Linux Executable (Offscreen Smoke & Version)
         env:
           QT_QPA_PLATFORM: offscreen
+          STATCRAFT_TESTING: '1'
         run: |
-          ./dist/app/StatCraft &
-          PID=$!
-          sleep 4
-          kill -0 $PID && kill -9 $PID || true
-          echo "Linux standalone binary verified"
+          python scripts/verify_built_executable.py --exe dist/app/StatCraft --expected-version "${{ needs.prepare.outputs.version }}" --timeout 120
 
       - name: Package Linux Tarball (.tar.gz)
         run: |
+          VER="${{ needs.prepare.outputs.version }}"
           mkdir -p artifacts
-          STAGE="StatCraft-v${STATCRAFT_VER}-Linux-x86_64"
+          STAGE="StatCraft-v${VER}-Linux-x86_64"
           mkdir -p "$STAGE"
           cp dist/app/StatCraft "$STAGE/"
           cp StatCraft.png "$STAGE/"
           cp statcraft.desktop "$STAGE/"
           chmod +x "$STAGE/StatCraft"
-          tar -czvf "artifacts/StatCraft-v${STATCRAFT_VER}-Linux-x86_64.tar.gz" "$STAGE"
+          tar -czvf "artifacts/StatCraft-v${VER}-Linux-x86_64.tar.gz" "$STAGE"
 
       - name: Upload Linux Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-binaries
           path: artifacts/*
 
   publish-release:
     name: Publish Multi-Platform Release
-    needs: [build-windows, build-macos, build-linux]
+    needs: [prepare, build-windows, build-macos, build-linux]
     # Publish whenever Windows and Linux succeeded; macOS runners can be
     # unavailable or queued indefinitely and must not block the release.
-    if: ${{ !cancelled() && needs.build-windows.result == 'success' && needs.build-linux.result == 'success' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.build-windows.result == 'success' && needs.build-linux.result == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Determine Version
-        run: |
-          INPUT_TAG="${{ github.event.inputs.tag_name }}"
-          if [ -n "$INPUT_TAG" ]; then
-            TAG="$INPUT_TAG"
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-          else
-            VER=$(grep -oP 'STATCRAFT_VERSION\s*=\s*"\K[^"]+' statcraft/updater.py || true)
-            TAG="v${VER:-104.0.0}"
-          fi
-          echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV
+        uses: actions/checkout@v7
 
       - name: Download Windows Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: windows-binaries
           path: release-all/
 
-      - name: Download macOS Artifacts
+      - name: Download macOS arm64 Artifacts
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
-          name: macos-binaries
+          name: macos-binaries-arm64
+          path: release-all/
+
+      - name: Download macOS x86_64 Artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: macos-binaries-x86_64
           path: release-all/
 
       - name: Download Linux Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: linux-binaries
           path: release-all/
 
-      - name: Display Release Files
+      - name: Generate Checksums & Display Release Files
         run: |
+          (cd release-all && sha256sum * > SHA256SUMS.txt)
           ls -lh release-all/
+          cat release-all/SHA256SUMS.txt
 
       - name: Publish All Assets to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ env.RELEASE_TAG }}"
+          TAG="${{ needs.prepare.outputs.release_tag }}"
           FILES=(release-all/*)
-          
+
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG exists. Updating with multi-platform assets..."
+            echo "Release $TAG exists. Updating multi-platform assets..."
             gh release upload "$TAG" "${FILES[@]}" --clobber
           else
             echo "Creating new release $TAG with multi-platform assets..."
             gh release create "$TAG" "${FILES[@]}" --title "StatCraft $TAG" --generate-notes
           fi
-          echo "Multi-platform release successfully published!"
+          echo "Multi-platform release $TAG published successfully!"

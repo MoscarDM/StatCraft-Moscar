@@ -1,10 +1,13 @@
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("STATCRAFT_TESTING", "1")
 
+from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit
 
 _app = QApplication.instance() or QApplication(sys.argv)
@@ -29,7 +32,11 @@ class TestFittedLinePlotAndRegressionOptions(unittest.TestCase):
         self.win.refresh()
 
     def tearDown(self):
+        self.win.presenter.dirty = False
+        self.win.presenter._results_dirty = False
         self.win.close()
+        self.win.deleteLater()
+        QCoreApplication.sendPostedEvents(self.win, QEvent.Type.DeferredDelete)
 
     def test_fitted_line_plot_residual_graphs_and_coefficients_storage(self):
         from statcraft.fitted_line_plot_dialog import FittedLinePlotDialog
@@ -110,6 +117,66 @@ class TestFittedLinePlotAndRegressionOptions(unittest.TestCase):
         joined = "\n".join(texts)
         self.assertNotIn("Regression Equation", joined)
         self.assertNotIn("Summary", joined)
+
+    def test_rerun_keeps_saved_report_and_graph_options(self):
+        from statcraft.app import Presenter
+        from statcraft.regression_dialog import FitRegressionModelDialog
+
+        dialog = FitRegressionModelDialog(self.win)
+        dialog.controls["response_index"].setText("Y")
+        dialog.controls["predictor_indices"].setText("X")
+        dialog.options["graphs"] = "order"
+        dialog.options["results"]["equation"] = False
+        dialog.validate()
+        entry = dialog.entry
+        self.assertIsNotNone(entry, dialog.error.text())
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "regression.mpx"
+            self.win.presenter.save(path)
+            restored = Presenter()
+            restored.load(path)
+            saved = restored.history[-1]
+            rerun = restored.rerun_result(saved)
+
+        self.assertEqual(rerun["result"], saved["result"])
+        self.assertIsNot(rerun["result"]["options"], saved["result"]["options"])
+
+    def test_fitted_line_rejects_unestimable_polynomial(self):
+        from statcraft.fitted_line_plot import fit_fitted_line_plot
+
+        with self.assertRaisesRegex(ValueError, "rank-deficient"):
+            fit_fitted_line_plot([1, 2, 1, 2, 1, 2], [1, 4, 2, 5, 3, 6], "quadratic")
+
+    def test_fitted_line_residual_order_uses_original_rows(self):
+        from statcraft.regression_residual_chart import RegressionResidualChartWidget
+
+        self.win.presenter.worksheet.columns[1].values[2] = None
+        entry = self.win.presenter.fitted_line_plot(1, 0)
+        self.assertEqual(RegressionResidualChartWidget(entry).observation_order, [1, 2, 4, 5, 6, 7, 8])
+
+    def test_fitted_line_residual_title_names_response(self):
+        from statcraft.regression_residual_chart import RegressionResidualChartWidget
+
+        self.win.presenter.worksheet.columns[1].name = "Reading"
+        entry = self.win.presenter.fitted_line_plot(1, 0)
+        self.assertEqual(RegressionResidualChartWidget(entry).response_name, "Reading")
+
+    def test_fitted_line_and_intervals_are_stable_after_predictor_shift(self):
+        import numpy as np
+
+        from statcraft.fitted_line_plot import fit_fitted_line_plot
+
+        x = list(range(8))
+        y = [8, 8, 10, 14, 16, 16, 18, 22]
+        raw = fit_fitted_line_plot(x, y)
+        shifted = fit_fitted_line_plot([value + 10_000 for value in x], y)
+        self.assertAlmostEqual(shifted["coefficients"][0]["coef"], -19_993)
+        self.assertAlmostEqual(shifted["coefficients"][1]["coef"], 2)
+        self.assertAlmostEqual(shifted["anova"]["error"]["ss"], 8)
+        np.testing.assert_allclose(shifted["fits"], raw["fits"], atol=1e-8, rtol=0)
+        for key in ("fit", "ci_low", "ci_high", "pi_low", "pi_high"):
+            np.testing.assert_allclose(shifted["curve"][key], raw["curve"][key], atol=1e-8, rtol=0)
 
 
 if __name__ == "__main__":

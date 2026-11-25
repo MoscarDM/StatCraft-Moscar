@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
 )
+from .dialog_theme import AutoErrorLabel
 from .model_plots import (
     contour_plot_settings,
     discover_models,
@@ -168,9 +169,7 @@ class HoldSettingsDialog(QDialog):
                 txt = '' if saved_val is None else format(float(saved_val), '.6g')
                 self.table.setItem(row, 2, QTableWidgetItem(txt))
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = _footer(self, layout, self.validate)
 
@@ -240,9 +239,7 @@ class FactorialPlotsGraphsDialog(QDialog):
         form.addRow('Terms to display:', self.terms_mode)
         layout.addLayout(form)
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = _footer(self, layout, self.validate)
 
@@ -331,9 +328,7 @@ class FactorialPlotsOptionsDialog(QDialog):
                 txt = '' if saved_val is None else format(float(saved_val), '.6g')
                 self.table.setItem(row, 2, QTableWidgetItem(txt))
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = _footer(self, layout, self.validate)
 
@@ -451,9 +446,7 @@ class FactorialPlotsDialog(QDialog):
         note.setWordWrap(True)
         layout.addWidget(note)
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = _footer(self, layout, self.validate)
 
@@ -659,9 +652,7 @@ class ContourLevelsDialog(QDialog):
         form.addRow('Values:', self.level_values)
         layout.addLayout(form)
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = _footer(self, layout, self.validate)
 
@@ -703,9 +694,7 @@ class ContourOptionsDialog(QDialog):
         form.addRow('Title:', self.title_edit)
         layout.addLayout(form)
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = _footer(self, layout, self.validate)
 
@@ -779,9 +768,7 @@ class ModelContourPlotDialog(QDialog):
         note.setWordWrap(True)
         layout.addWidget(note)
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = _footer(self, layout, self.validate)
 
@@ -952,9 +939,7 @@ class SurfaceOptionsDialog(QDialog):
         form.addRow('Title:', self.title_edit)
         layout.addLayout(form)
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = _footer(self, layout, self.validate)
 
@@ -1033,9 +1018,7 @@ class ModelSurfacePlotDialog(QDialog):
         note.setWordWrap(True)
         layout.addWidget(note)
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = _footer(self, layout, self.validate)
 

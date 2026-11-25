@@ -20,10 +20,11 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
     QListWidget,
-    QMessageBox,
+    QListWidgetItem,
     QFrame,
     QGroupBox,
 )
+from .dialog_theme import AutoErrorLabel, dialog_stylesheet, is_dark_active
 
 
 class CapabilityOptionsDialog(QDialog):
@@ -33,6 +34,7 @@ class CapabilityOptionsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Options: Capability Analysis")
         self.setModal(True)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.options = dict(options or {})
 
         layout = QVBoxLayout(self)
@@ -154,6 +156,9 @@ class CapabilityOptionsDialog(QDialog):
         title_layout.addWidget(self.edit_title)
         layout.addLayout(title_layout)
 
+        self.error = AutoErrorLabel()
+        layout.addWidget(self.error)
+
         # Buttons
         btn_layout = QHBoxLayout()
         btn_ok = QPushButton("OK")
@@ -171,12 +176,14 @@ class CapabilityOptionsDialog(QDialog):
         self.combo_ctype.setEnabled(enabled)
 
     def _accept(self):
+        self.error.hide()
         try:
             k = float(self.edit_k.text().strip())
             if k <= 0:
                 raise ValueError
         except ValueError:
-            QMessageBox.critical(self, "StatCraft", "Tolerance K must be a positive number.")
+            self.error.setText("Tolerance K must be a positive number.")
+            self.error.show()
             return
 
         target_text = self.edit_target.text().strip()
@@ -185,7 +192,8 @@ class CapabilityOptionsDialog(QDialog):
             try:
                 target_val = float(target_text)
             except ValueError:
-                QMessageBox.critical(self, "StatCraft", "Target value must be numeric.")
+                self.error.setText("Target value must be numeric.")
+                self.error.show()
                 return
 
         conf_val = 95.0
@@ -195,7 +203,8 @@ class CapabilityOptionsDialog(QDialog):
                 if not (0.0 < conf_val < 100.0):
                     raise ValueError
             except ValueError:
-                QMessageBox.critical(self, "StatCraft", "Confidence level must be between 0 and 100.")
+                self.error.setText("Confidence level must be between 0 and 100.")
+                self.error.show()
                 return
 
         self.options["tolerance_k"] = k
@@ -218,6 +227,7 @@ class CapabilityEstimateDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Options: Estimating Standard Deviation")
         self.setModal(True)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.options = dict(options or {})
 
         layout = QVBoxLayout(self)
@@ -294,6 +304,9 @@ class CapabilityEstimateDialog(QDialog):
 
         layout.addWidget(all_box)
 
+        self.error = AutoErrorLabel()
+        layout.addWidget(self.error)
+
         # Buttons
         btn_layout = QHBoxLayout()
         btn_ok = QPushButton("OK")
@@ -307,12 +320,14 @@ class CapabilityEstimateDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def _accept(self):
+        self.error.hide()
         try:
             mr_len = int(self.edit_mr_len.text().strip())
             if not (2 <= mr_len <= 100):
                 raise ValueError
         except ValueError:
-            QMessageBox.critical(self, "StatCraft", "Length of moving range must be an integer between 2 and 100.")
+            self.error.setText("Length of moving range must be an integer between 2 and 100.")
+            self.error.show()
             return
 
         if self.rb_rbar.isChecked():
@@ -359,10 +374,14 @@ class CapabilityDialog(QDialog):
         else:
             self.setWindowTitle("Capability Analysis (Normal Distribution)")
         self.setModal(True)
-        if hasattr(worksheet_or_cols, "columns"):
-            self.columns = [c.name for c in worksheet_or_cols.columns]
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
+        self._worksheet = worksheet_or_cols if hasattr(worksheet_or_cols, "columns") else None
+        if self._worksheet is not None:
+            self.columns = [c.name for c in self._worksheet.columns]
+            self._col_meta = [(i, c.name, c.kind) for i, c in enumerate(self._worksheet.columns)]
         else:
             self.columns = list(worksheet_or_cols)
+            self._col_meta = [(i, str(c), "number") for i, c in enumerate(self.columns)]
         self.selected_params: Optional[Dict[str, Any]] = None
 
         # Options state
@@ -394,9 +413,14 @@ class CapabilityDialog(QDialog):
         lbl_cols = QLabel("Columns:")
         left_layout.addWidget(lbl_cols)
 
+        self._last_filter_kinds: Optional[tuple[str, ...]] = ("number",)
+        self.var_filter = QLineEdit()
+        self.var_filter.setPlaceholderText("Filter variables…")
+        self.var_filter.setClearButtonEnabled(True)
+        self.var_filter.textChanged.connect(lambda _txt: self._populate_col_list(self._last_filter_kinds))
+        left_layout.addWidget(self.var_filter)
+
         self.col_list = QListWidget()
-        for c in self.columns:
-            self.col_list.addItem(c)
         self.col_list.itemDoubleClicked.connect(self._insert_selected_column)
         left_layout.addWidget(self.col_list)
 
@@ -423,11 +447,10 @@ class CapabilityDialog(QDialog):
 
         sc_grid = QGridLayout()
         self.edit_single_col = QLineEdit()
-        self.rb_single_col.toggled.connect(self._update_arrangement_state)
         sc_grid.addWidget(self.rb_single_col, 0, 0)
         sc_grid.addWidget(self.edit_single_col, 0, 1)
 
-        lbl_sub_size = QLabel("&Subgroup size:")
+        lbl_sub_size = QLabel("&Subgroup size or ID column:")
         self.edit_sub_size = QLineEdit("1")
         lbl_sub_size.setBuddy(self.edit_sub_size)
         sc_grid.addWidget(lbl_sub_size, 1, 0, Qt.AlignmentFlag.AlignRight)
@@ -451,6 +474,7 @@ class CapabilityDialog(QDialog):
         self.edit_lsl = QLineEdit()
         lbl_lsl.setBuddy(self.edit_lsl)
         self.chk_lsl_bound = QCheckBox("Bound")
+        self.chk_lsl_bound.setToolTip("Treat Lower spec as a physical boundary rather than a two-sided target limit.")
         spec_grid.addWidget(lbl_lsl, 0, 0)
         spec_grid.addWidget(self.edit_lsl, 0, 1)
         spec_grid.addWidget(self.chk_lsl_bound, 0, 2)
@@ -459,6 +483,7 @@ class CapabilityDialog(QDialog):
         self.edit_usl = QLineEdit()
         lbl_usl.setBuddy(self.edit_usl)
         self.chk_usl_bound = QCheckBox("Bound")
+        self.chk_usl_bound.setToolTip("Treat Upper spec as a physical boundary rather than a two-sided target limit.")
         spec_grid.addWidget(lbl_usl, 1, 0)
         spec_grid.addWidget(self.edit_usl, 1, 1)
         spec_grid.addWidget(self.chk_usl_bound, 1, 2)
@@ -482,6 +507,10 @@ class CapabilityDialog(QDialog):
         hist_grid.addWidget(self.edit_hsd, 1, 1)
 
         center_layout.addWidget(hist_box)
+
+        self.error = AutoErrorLabel()
+        center_layout.addWidget(self.error)
+
         main_layout.addLayout(center_layout, 2)
 
         # Right Action Buttons
@@ -519,23 +548,50 @@ class CapabilityDialog(QDialog):
         self.edit_lsl.installEventFilter(self)
         self.edit_usl.installEventFilter(self)
 
+        self.rb_single_col.toggled.connect(self._update_arrangement_state)
         self._update_arrangement_state()
+
+    def _eligible_kinds_for(self, obj) -> Optional[tuple[str, ...]]:
+        if obj in (self.edit_single_col, self.edit_across_rows):
+            return ("number",)
+        if obj is self.edit_sub_size:
+            return ("number", "text")
+        return None
+
+    def _populate_col_list(self, kinds: Optional[tuple[str, ...]] = None):
+        self._last_filter_kinds = kinds
+        self.col_list.clear()
+        needle = self.var_filter.text().strip().lower() if hasattr(self, "var_filter") else ""
+        for i, name, kind in self._col_meta:
+            if self._worksheet is not None and kinds is not None and kind not in kinds:
+                continue
+            if needle and needle not in name.lower() and needle not in f"c{i + 1}":
+                continue
+            item = QListWidgetItem(f"C{i + 1}   {name}")
+            item.setToolTip(f"C{i + 1}: {name} ({kind})")
+            item.setData(Qt.ItemDataRole.UserRole, (i, name, kind))
+            self.col_list.addItem(item)
 
     def eventFilter(self, obj, event):
         if event.type() == event.Type.FocusIn:
-            self._last_focused_edit = obj
+            if obj in (self.edit_single_col, self.edit_sub_size, self.edit_across_rows):
+                self._last_focused_edit = obj
+                self._populate_col_list(self._eligible_kinds_for(obj))
+            elif obj in (self.edit_lsl, self.edit_usl):
+                self._populate_col_list(None)
         return super().eventFilter(obj, event)
 
     def _insert_selected_column(self):
         cur_item = self.col_list.currentItem()
         if not cur_item or not self._last_focused_edit:
             return
-        col_text = cur_item.text()
+        meta = cur_item.data(Qt.ItemDataRole.UserRole)
+        col_name = meta[1] if isinstance(meta, tuple) and len(meta) >= 2 else cur_item.text()
         if self._last_focused_edit == self.edit_across_rows:
             current = self.edit_across_rows.text().strip()
-            self.edit_across_rows.setText(f"{current} '{col_text}'" if current else f"'{col_text}'")
+            self.edit_across_rows.setText(f"{current} '{col_name}'" if current else f"'{col_name}'")
         else:
-            self._last_focused_edit.setText(col_text)
+            self._last_focused_edit.setText(col_name)
 
     def _update_arrangement_state(self):
         single = self.rb_single_col.isChecked()
@@ -546,6 +602,7 @@ class CapabilityDialog(QDialog):
             self._last_focused_edit = self.edit_single_col
         else:
             self._last_focused_edit = self.edit_across_rows
+        self._populate_col_list(self._eligible_kinds_for(self._last_focused_edit))
 
     def _open_options(self):
         dlg = CapabilityOptionsDialog(self.options, self)
@@ -557,7 +614,31 @@ class CapabilityDialog(QDialog):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.options.update(dlg.options)
 
+    def _resolve_col_name(self, raw: str, allowed_kinds: Optional[tuple[str, ...]] = None) -> str:
+        s = raw.strip().strip("'\"")
+        for i, name, kind in self._col_meta:
+            if s.lower() == f"C{i + 1}   {name}".lower():
+                if self._worksheet is not None and allowed_kinds and kind not in allowed_kinds:
+                    raise ValueError(f"Column '{name}' is not eligible for this field.")
+                return name
+        if self._worksheet is None:
+            for i, name, _kind in self._col_meta:
+                if s.lower() in (name.lower(), f"c{i + 1}"):
+                    return name
+            return s
+        from .variable_dialogs import resolve_variables
+        tokens = resolve_variables(raw, self._worksheet, kinds=allowed_kinds or ("number", "text", "date"))
+        if not tokens:
+            raise ValueError(f"Column '{s}' not found in worksheet.")
+        return self._worksheet.columns[tokens[0]].name
+
+    def _show_error(self, message: str):
+        self.error.setText(message)
+        self.error.show()
+
     def _accept(self):
+        self.error.hide()
+        self.error.clear()
         # Validation
         single = self.rb_single_col.isChecked()
         col_name = ""
@@ -565,48 +646,70 @@ class CapabilityDialog(QDialog):
         cols_across: List[str] = []
 
         if single:
-            col_name = self.edit_single_col.text().strip().strip("'\"")
-            if not col_name:
-                QMessageBox.critical(self, "StatCraft", "Please select or enter a data column.")
+            raw_col = self.edit_single_col.text().strip()
+            if not raw_col.strip("'\""):
+                self._show_error("Please select or enter a numeric data column.")
+                return
+            try:
+                col_name = self._resolve_col_name(raw_col, ("number",))
+            except ValueError as exc:
+                self._show_error(str(exc))
                 return
             sub_text = self.edit_sub_size.text().strip().strip("'\"")
             if not sub_text:
                 subgroup_spec = 1
-            elif sub_text.isdigit():
-                subgroup_spec = int(sub_text)
             else:
-                # Column name as subgroup indicator
-                subgroup_spec = sub_text
+                try:
+                    sub_num = int(sub_text)
+                except ValueError:
+                    try:
+                        subgroup_spec = self._resolve_col_name(self.edit_sub_size.text().strip(), ("number", "text"))
+                    except ValueError as exc:
+                        self._show_error(str(exc))
+                        return
+                else:
+                    if sub_num < 1:
+                        self._show_error("Subgroup size must be a positive integer.")
+                        return
+                    subgroup_spec = sub_num
         else:
             raw_across = self.edit_across_rows.text().strip()
             if not raw_across:
-                QMessageBox.critical(self, "StatCraft", "Please enter columns for subgroups across rows.")
+                self._show_error("Please enter columns for subgroups across rows.")
                 return
-            # Parse multiple columns
-            import shlex
-            try:
-                cols_across = [c.strip("'\"") for c in shlex.split(raw_across)]
-            except ValueError:
-                cols_across = [c.strip("'\"") for c in raw_across.split()]
+            if self._worksheet is not None:
+                from .variable_dialogs import resolve_variables
+                try:
+                    tokens = resolve_variables(raw_across, self._worksheet, kinds=("number",))
+                except ValueError as exc:
+                    self._show_error(str(exc))
+                    return
+                cols_across = [self._worksheet.columns[i].name for i in tokens]
+            else:
+                import shlex
+                try:
+                    cols_across = [c.strip("'\"") for c in shlex.split(raw_across)]
+                except ValueError:
+                    cols_across = [c.strip("'\"") for c in raw_across.split()]
             if not cols_across:
-                QMessageBox.critical(self, "StatCraft", "Please enter valid columns for subgroups across rows.")
+                self._show_error("Please enter valid columns for subgroups across rows.")
                 return
 
         if self.analysis_mode == "between_within":
             if single:
                 if isinstance(subgroup_spec, int) and subgroup_spec <= 1:
-                    QMessageBox.critical(self, "StatCraft", "Subgroup size must be an integer greater than 1, or specify a subgroup column.")
+                    self._show_error("Subgroup size must be an integer greater than 1, or specify a subgroup column.")
                     return
             else:
                 if len(cols_across) < 2:
-                    QMessageBox.critical(self, "StatCraft", "Between/Within capability analysis across rows requires at least two columns.")
+                    self._show_error("Between/Within capability analysis across rows requires at least two columns.")
                     return
 
         # Specs
         lsl_text = self.edit_lsl.text().strip()
         usl_text = self.edit_usl.text().strip()
         if not lsl_text and not usl_text:
-            QMessageBox.critical(self, "StatCraft", "Enter at least one specification limit (Lower spec or Upper spec).")
+            self._show_error("Enter at least one specification limit (Lower spec or Upper spec).")
             return
 
         lsl_val = None
@@ -614,7 +717,7 @@ class CapabilityDialog(QDialog):
             try:
                 lsl_val = float(lsl_text)
             except ValueError:
-                QMessageBox.critical(self, "StatCraft", "Lower spec must be numeric.")
+                self._show_error("Lower spec must be numeric.")
                 return
 
         usl_val = None
@@ -622,11 +725,11 @@ class CapabilityDialog(QDialog):
             try:
                 usl_val = float(usl_text)
             except ValueError:
-                QMessageBox.critical(self, "StatCraft", "Upper spec must be numeric.")
+                self._show_error("Upper spec must be numeric.")
                 return
 
         if lsl_val is not None and usl_val is not None and lsl_val >= usl_val:
-            QMessageBox.critical(self, "StatCraft", "Lower specification must be strictly less than upper specification.")
+            self._show_error("Lower specification must be strictly less than upper specification.")
             return
 
         # Historical
@@ -635,7 +738,7 @@ class CapabilityDialog(QDialog):
             try:
                 hmean_val = float(self.edit_hmean.text().strip())
             except ValueError:
-                QMessageBox.critical(self, "StatCraft", "Historical mean must be numeric.")
+                self._show_error("Historical mean must be numeric.")
                 return
 
         hsd_val = None
@@ -645,7 +748,7 @@ class CapabilityDialog(QDialog):
                 if hsd_val <= 0:
                     raise ValueError
             except ValueError:
-                QMessageBox.critical(self, "StatCraft", "Historical standard deviation must be a positive number.")
+                self._show_error("Historical standard deviation must be a positive number.")
                 return
 
         self.selected_params = {

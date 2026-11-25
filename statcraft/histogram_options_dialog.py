@@ -4,6 +4,7 @@ from copy import deepcopy
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFormLayout, QGroupBox, QLabel, QSpinBox, QVBoxLayout)
 
+from .dialog_theme import AutoErrorLabel
 from .histogram_options import build_histogram_panel, validate_histogram_settings
 
 
@@ -53,9 +54,9 @@ class HistogramOptionsDialog(QDialog):
         note.setWordWrap(True)
         note.setObjectName('secondary')
         layout.addWidget(note)
-        self.error = QLabel(initial_error)
-        self.error.setWordWrap(True)
-        self.error.setObjectName('error')
+        self.error = AutoErrorLabel()
+        if initial_error:
+            self.error.setText(initial_error)
         layout.addWidget(self.error)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
                                        QDialogButtonBox.StandardButton.Cancel)

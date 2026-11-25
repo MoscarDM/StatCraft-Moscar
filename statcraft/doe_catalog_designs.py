@@ -182,7 +182,11 @@ def create_design(kind,factors,replicates=1,centers=0,randomize=True,seed=1,bloc
         raise ValueError('Choose general_factorial, plackett_burman or taguchi.')
     coding=_factors(factors)
     _integer(replicates,1,20,'Replicates');_integer(centers,0,100,'Center runs')
-    _integer(blocks,1,20,'Blocks');_integer(seed,-(2**63),2**63-1,'Randomization seed')
+    _integer(blocks,1,20,'Blocks')
+    if seed is None:
+        seed = random.SystemRandom().randint(1, 2_147_483_647)
+    else:
+        _integer(seed,-(2**63),2**63-1,'Randomization seed')
     if type(randomize) is not bool:raise ValueError('Randomize must be Boolean.')
     if not isinstance(name,str) or not name.strip() or len(name)>256:
         raise ValueError('Worksheet name must be nonblank text of at most 256 characters.')

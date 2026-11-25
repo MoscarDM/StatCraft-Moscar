@@ -78,7 +78,7 @@ def format_two_sample_t_report(entry: Dict[str, Any]) -> str:
     t_val = res.get("t_statistic", 0.0)
     df = res.get("df", 0)
     p_val = res.get("p_value", 1.0)
-    lines.append(f"  {'T-Value':>10} {'DF':>6} {'P-Value':>10}")
-    lines.append(f"  {t_val:>10.2f} {df:>6} {p_val:>10.3f}")
+    lines.append(f"  {'T-Value':>10} {'DF':>8} {'P-Value':>10}")
+    lines.append(f"  {t_val:>10.2f} {df:>8.5g} {p_val:>10.3f}")
 
     return "\n".join(lines)

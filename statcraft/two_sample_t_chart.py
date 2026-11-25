@@ -59,7 +59,7 @@ def draw_two_sample_t_panel(
     p_val = res.get("p_value", 1.0)
     diff = res.get("difference", 0.0)
     df = res.get("df", 0)
-    sub = f"Diff = {diff:.4f}   T-Value = {t_val:.2f}   DF = {df}   P-Value = {p_val:.3f}"
+    sub = f"Diff = {diff:.4f}   T-Value = {t_val:.2f}   DF = {df:.5g}   P-Value = {p_val:.3f}"
     p.drawText(QRectF(rect.left(), rect.top() + 32, rect.width(), 20), Qt.AlignmentFlag.AlignCenter, sub)
 
     # Plot area

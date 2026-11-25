@@ -42,11 +42,34 @@ class TestTwoSampleTEngine(unittest.TestCase):
         self.assertAlmostEqual(res["se_difference"], np.sqrt(0.6))
         # t = 4.0 / sqrt(0.6) = 5.16397779
         self.assertAlmostEqual(res["t_statistic"], 4.0 / np.sqrt(0.6), places=4)
-        # Welch df = (0.6)^2 / [ (0.5)^2/4 + (0.1)^2/4 ] = 0.36 / [ 0.0625 + 0.0025 ] = 0.36 / 0.065 = 5.538 -> round to 6
-        self.assertEqual(res["df"], 6)
+        # Welch df = (0.6)^2 / [ (0.5)^2/4 + (0.1)^2/4 ] = 0.36 / [ 0.0625 + 0.0025 ] = 0.36 / 0.065 = 5.538461538...
+        self.assertAlmostEqual(res["df"], .36 / .065)
         self.assertLess(res["p_value"], 0.01)
         self.assertIsNotNone(res["ci_lower"])
         self.assertIsNotNone(res["ci_upper"])
+
+    def test_welch_unequal_sample_sizes_against_scipy(self):
+        from math import sqrt
+        from statistics import mean, variance
+
+        from scipy import stats
+
+        first = [2, 2, 3, None, 4, 5, 6, 7, 30]
+        second = [1, 2, None, 4, 3, 4, 5, 6]
+        sheet = Worksheet(columns=[Column("Before", values=first), Column("After", values=second)])
+        result = run_two_sample_t(sheet, two_sample_t_settings(sample1_col=0, sample2_col=1))
+        a = [value for value in first if value is not None]
+        b = [value for value in second if value is not None]
+        expected = stats.ttest_ind(a, b, equal_var=False)
+        va, vb = variance(a)/len(a), variance(b)/len(b)
+        df = (va + vb)**2 / (va**2/(len(a) - 1) + vb**2/(len(b) - 1))
+        margin = stats.t.ppf(.975, df) * sqrt(va + vb)
+        self.assertEqual((result["sample1"]["n"], result["sample2"]["n"]), (8, 7))
+        self.assertAlmostEqual(result["df"], df)
+        self.assertAlmostEqual(result["t_statistic"], expected.statistic)
+        self.assertAlmostEqual(result["p_value"], expected.pvalue)
+        self.assertAlmostEqual(result["ci_lower"], mean(a) - mean(b) - margin)
+        self.assertAlmostEqual(result["ci_upper"], mean(a) - mean(b) + margin)
 
     def test_unstacked_pooled(self):
         st = two_sample_t_settings(

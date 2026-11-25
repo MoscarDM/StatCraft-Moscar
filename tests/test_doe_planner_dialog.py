@@ -58,7 +58,11 @@ class DOEPlannerDialogTests(unittest.TestCase):
         self.assertEqual(dialog.values()['centers'],0)
 
     def test_live_preview_and_create_uses_fresh_current_parameters(self):
-        dialog=self.dialog();QTest.qWait(400)
+        dialog=self.dialog()
+        for _ in range(40):
+            if dialog.preview_sheet is not None:
+                break
+            QTest.qWait(50)
         self.assertIsNotNone(dialog.preview_sheet)
         self.assertEqual(dialog.preview_sheet.row_count,8)
         first=dialog.preview_sheet
@@ -67,7 +71,11 @@ class DOEPlannerDialogTests(unittest.TestCase):
         QTest.mouseClick(dialog.create_button,Qt.MouseButton.LeftButton)
         # The button is disabled while a delayed preview is pending; Enter/Create
         # after the preview runs must use the updated run plan.
-        QTest.qWait(400);QTest.mouseClick(dialog.create_button,Qt.MouseButton.LeftButton)
+        for _ in range(40):
+            if dialog.preview_sheet is not None:
+                break
+            QTest.qWait(50)
+        QTest.mouseClick(dialog.create_button,Qt.MouseButton.LeftButton)
         self.assertEqual(dialog.result(),QDialog.DialogCode.Accepted)
         self.assertEqual(dialog.parameters['replicates'],2)
         self.assertEqual(dialog.preview_sheet.row_count,16)

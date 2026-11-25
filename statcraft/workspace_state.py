@@ -12,7 +12,7 @@ def empty():
     return dict(open_ids=[],active=None,closed_ids=[],views={},report_pad='')
 
 
-def validate(state):
+def validate(state, view_names=VIEWS):
     if not isinstance(state,dict) or set(state)!=set(empty()):raise io.FormatError('Invalid output workspace fields.')
     for field in ('open_ids','closed_ids'):
         items=state[field]
@@ -22,10 +22,10 @@ def validate(state):
     if not isinstance(state['views'],dict) or len(state['views'])>101:raise io.FormatError('Invalid output view state.')
     for key,value in state['views'].items():
         if not isinstance(key,str) or len(key)>160 or not isinstance(value,dict) or set(value)!={'view','zoom','scroll','editor'}:raise io.FormatError('Invalid output view properties.')
-        if value['view'] not in VIEWS or type(value['editor']) is not bool:raise io.FormatError('Invalid selected output view.')
+        if value['view'] not in view_names or type(value['editor']) is not bool:raise io.FormatError('Invalid selected output view.')
         for field in ('zoom','scroll'):
             values=value[field]
-            if not isinstance(values,dict) or set(values)-set(VIEWS):raise io.FormatError('Invalid output viewport state.')
+            if not isinstance(values,dict) or set(values)-set(view_names):raise io.FormatError('Invalid output viewport state.')
             for item in values.values():
                 if field=='zoom':
                     if type(item) is not int or not 10<=item<=500:raise io.FormatError('Output zoom must be 10 to 500 percent.')

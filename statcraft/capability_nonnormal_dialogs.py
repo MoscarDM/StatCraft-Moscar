@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
+    QDialogButtonBox,
     QVBoxLayout,
     QHBoxLayout,
     QGridLayout,
@@ -17,13 +18,16 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QFrame,
     QGroupBox,
     QWidget,
 )
 
+from .dialog_theme import AutoErrorLabel, clamp_dialog_to_screen, dialog_stylesheet, is_dark_active
 from .model import Worksheet
+from .variable_dialogs import resolve_variables
 
 
 class CapabilityNonnormalDialog(QDialog):
@@ -34,7 +38,8 @@ class CapabilityNonnormalDialog(QDialog):
         self.worksheet = worksheet
         self.setWindowTitle("Capability Analysis (Nonnormal Distribution)")
         self.setModal(True)
-        self.resize(540, 420)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
+        self.setSizeGripEnabled(True)
 
         from .variable_dialogs import default_confidence_percent
         self.options: Dict[str, Any] = {
@@ -54,10 +59,14 @@ class CapabilityNonnormalDialog(QDialog):
         # Variable list
         v_box = QVBoxLayout()
         v_box.addWidget(QLabel("Columns:"))
+        self.var_filter = QLineEdit()
+        self.var_filter.setPlaceholderText("Filter variables…")
+        self.var_filter.setClearButtonEnabled(True)
+        self.var_filter.textChanged.connect(self._populate_col_list)
+        v_box.addWidget(self.var_filter)
+
         self.col_list = QListWidget()
-        for col in self.worksheet.columns:
-            if col.kind == "number":
-                self.col_list.addItem(col.name)
+        self._populate_col_list()
         self.col_list.itemDoubleClicked.connect(self._on_col_double_clicked)
         v_box.addWidget(self.col_list)
 
@@ -102,41 +111,67 @@ class CapabilityNonnormalDialog(QDialog):
         main_grid.addLayout(form_layout, 0, 1, 5, 1)
         layout.addLayout(main_grid)
 
+        self.error = AutoErrorLabel()
+        layout.addWidget(self.error)
+
         # Dialog Buttons
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setDefault(True)
+        buttons.accepted.connect(self._on_ok)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        clamp_dialog_to_screen(self, 580, 440, min_w=520, min_h=380)
 
-        btn_ok = QPushButton("OK")
-        btn_ok.clicked.connect(self._on_ok)
-        btn_cancel = QPushButton("Cancel")
-        btn_cancel.clicked.connect(self.reject)
-
-        btn_layout.addWidget(btn_ok)
-        btn_layout.addWidget(btn_cancel)
-        layout.addLayout(btn_layout)
+    def _populate_col_list(self):
+        self.col_list.clear()
+        needle = self.var_filter.text().strip().lower() if hasattr(self, "var_filter") else ""
+        for idx, col in enumerate(self.worksheet.columns):
+            if col.kind != "number":
+                continue
+            if needle and needle not in col.name.lower() and needle not in f"c{idx + 1}":
+                continue
+            item = QListWidgetItem(f"C{idx + 1}   {col.name}")
+            item.setToolTip(f"C{idx + 1}: {col.name} ({col.kind})")
+            item.setData(Qt.ItemDataRole.UserRole, (idx, col.name))
+            self.col_list.addItem(item)
 
     def _on_col_double_clicked(self, item):
-        self.edit_single_col.setText(item.text())
+        meta = item.data(Qt.ItemDataRole.UserRole)
+        self.edit_single_col.setText(meta[1] if isinstance(meta, tuple) else item.text())
 
     def _on_select_clicked(self):
         item = self.col_list.currentItem()
         if item:
-            self.edit_single_col.setText(item.text())
+            meta = item.data(Qt.ItemDataRole.UserRole)
+            self.edit_single_col.setText(meta[1] if isinstance(meta, tuple) else item.text())
 
     def _on_ok(self):
-        col_name = self.edit_single_col.text().strip().strip("'\"")
-        if not col_name:
-            QMessageBox.warning(self, "Invalid Selection", "Please specify a numeric measurement column.")
+        self.error.clear()
+        raw_col = self.edit_single_col.text().strip()
+        if not raw_col:
+            self.error.setText("Please specify a numeric measurement column.")
             return
 
         col_idx = None
+        cleaned = raw_col.strip("'\"")
         for i, c in enumerate(self.worksheet.columns):
-            if c.name == col_name or f"C{i+1}" == col_name:
+            if cleaned.lower() == f"C{i + 1}   {c.name}".lower() or c.name == cleaned or f"C{i+1}" == cleaned.upper():
+                if c.kind != "number":
+                    self.error.setText(f"Column '{c.name}' must be numeric.")
+                    return
                 col_idx = i
                 break
+        if col_idx is None:
+            try:
+                tokens = resolve_variables(raw_col, self.worksheet, kinds=("number",))
+                if tokens:
+                    col_idx = tokens[0]
+            except ValueError as exc:
+                self.error.setText(str(exc))
+                return
 
         if col_idx is None:
-            QMessageBox.warning(self, "Invalid Selection", f"Column '{col_name}' not found.")
+            self.error.setText(f"Column '{cleaned}' not found.")
             return
 
         lsl_val = None
@@ -144,7 +179,7 @@ class CapabilityNonnormalDialog(QDialog):
             try:
                 lsl_val = float(self.edit_lsl.text().strip())
             except ValueError:
-                QMessageBox.warning(self, "Invalid Limit", "LSL must be a valid number.")
+                self.error.setText("LSL must be a valid number.")
                 return
 
         usl_val = None
@@ -152,15 +187,15 @@ class CapabilityNonnormalDialog(QDialog):
             try:
                 usl_val = float(self.edit_usl.text().strip())
             except ValueError:
-                QMessageBox.warning(self, "Invalid Limit", "USL must be a valid number.")
+                self.error.setText("USL must be a valid number.")
                 return
 
         if lsl_val is None and usl_val is None:
-            QMessageBox.warning(self, "Missing Specification", "At least one specification limit (LSL or USL) must be entered.")
+            self.error.setText("At least one specification limit (LSL or USL) must be entered.")
             return
 
         if lsl_val is not None and usl_val is not None and lsl_val >= usl_val:
-            QMessageBox.warning(self, "Invalid Specifications", "LSL must be strictly less than USL.")
+            self.error.setText("LSL must be strictly less than USL.")
             return
 
         target_val = None
@@ -168,7 +203,8 @@ class CapabilityNonnormalDialog(QDialog):
             try:
                 target_val = float(self.edit_target.text().strip())
             except ValueError:
-                target_val = None
+                self.error.setText("Target must be a valid number.")
+                return
 
         dist_val = self.combo_dist.currentData()
         naming = "aiag_vda" if self.chk_aiag_vda.isChecked() else "classical"

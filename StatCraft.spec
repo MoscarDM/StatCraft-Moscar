@@ -1,3 +1,4 @@
+import runpy
 import sys
 from pathlib import Path
 
@@ -33,8 +34,25 @@ a = Analysis(
         'statcraft.calc_data_dialogs',
         'statcraft.session_commands',
         'statcraft.xlsx_import',
+        'statcraft.xlsx_import_dialog',
         'statcraft.onboarding',
         'statcraft.crash_dialog',
+        'statcraft.operating_window',
+        'statcraft.confirmation_experiments',
+        'statcraft.operating_window_chart',
+        'statcraft.operating_window_report',
+        'statcraft.operating_window_dialogs',
+        'statcraft.doe_custom',
+        'statcraft.doe_custom_dialog',
+        'statcraft.r_verification',
+        'statcraft.xlsx_verification',
+        'statcraft.quality_sensitivity',
+        'statcraft.subgroup_workflows',
+        'statcraft.capability_workflows',
+        'statcraft.attribute_workflows',
+        'statcraft.imr_trace',
+        'statcraft.imr_investigation',
+        'statcraft.imr_replay',
         'PySide6.QtSvg',
     ],
     datas=datas,
@@ -88,6 +106,7 @@ exe = EXE(
 )
 
 if sys.platform == 'darwin':
+    version = runpy.run_path(str(root / 'statcraft' / '__init__.py'))['__version__']
     app = BUNDLE(
         exe,
         name='StatCraft.app',
@@ -97,8 +116,8 @@ if sys.platform == 'darwin':
             'CFBundleName': 'StatCraft',
             'CFBundleDisplayName': 'StatCraft',
             'CFBundleIdentifier': 'com.statcraft.desktop',
-            'CFBundleVersion': '118.0.0',
-            'CFBundleShortVersionString': '118.0.0',
+            'CFBundleVersion': version,
+            'CFBundleShortVersionString': version,
             'NSHighResolutionCapable': True,
             'LSMinimumSystemVersion': '11.0',
         }

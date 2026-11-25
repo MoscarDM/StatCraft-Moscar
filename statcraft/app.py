@@ -396,6 +396,41 @@ class Presenter:
             self.notices.append("Column types were inferred. Numeric-looking labels become numeric; use explicit text types when preparing data.")
         return self.notices
 
+    def load_worksheets(self, sheets, source_path=None, notices=None):
+        """Activate one or more already-parsed worksheets (for example from Excel preview import)."""
+        if not sheets:
+            raise io.FormatError("Select at least one worksheet to import.")
+        native_project = None
+        if len(sheets) == 1:
+            worksheet = sheets[0]
+        else:
+            from .mpx_create import create_project
+            worksheet = sheets[0]
+            native_project = create_project(sheets)
+            native_project.statcraft_owned = True
+        self.worksheet = worksheet
+        self.native_project = native_project
+        self.workspace = copy.deepcopy(native_project.workspace) if native_project else copy.deepcopy(worksheet.metadata.get("statcraft_workspace"))
+        self.project_path = None
+        self.history = []
+        self._results_dirty = False
+        self.dirty = False
+        self._reset_edits()
+        extra_notices = list(notices or [])
+        suffix = Path(source_path).suffix.lower() if source_path else ""
+        base_notices = list(worksheet.metadata.get("import", {}).get("warnings", []))
+        if suffix in (".xlsx", ".xls", ".xlsm"):
+            sheet_names = ", ".join(s.name for s in sheets)
+            base_notices = [
+                f"Imported Excel workbook '{Path(source_path).name}': loaded {len(sheets)} worksheet(s) ({sheet_names}). Save as an MPX project to retain all worksheets, analyses, and graphs."
+            ] + base_notices
+        elif native_project is not None:
+            base_notices = [
+                "StatCraft-authored MPX project: worksheet data, design metadata and saved StatCraft analyses are editable. Native application compatibility remains unverified."
+            ]
+        self.notices = base_notices + extra_notices
+        return self.notices
+
     def save(self, path=None):
         path = path or self.project_path
         if not path:
@@ -442,18 +477,56 @@ class Presenter:
         sheets=self.native_project.worksheets if all_worksheets and self.native_project else [self.worksheet]
         return write_workbook(path,sheets,protected_paths=[self.project_path] if self.project_path else [])
 
+    @staticmethod
+    def _is_blank_worksheet(worksheet):
+        if worksheet is None:
+            return False
+        if getattr(worksheet, 'constants', None) or getattr(worksheet, 'matrices', None):
+            return False
+        if isinstance(getattr(worksheet, 'metadata', None), dict) and worksheet.metadata.get('doe'):
+            return False
+        for col in getattr(worksheet, 'columns', ()):
+            for val in getattr(col, 'values', ()):
+                if val is not None and (not isinstance(val, str) or val.strip() != ''):
+                    return False
+        return True
+
+    def _store_design_worksheet(self, sheet, *, store_in_worksheet=True):
+        if not store_in_worksheet:
+            return False
+        if self._is_blank_worksheet(self.worksheet):
+            self.worksheet.columns = copy.deepcopy(sheet.columns)
+            self.worksheet.constants = copy.deepcopy(sheet.constants)
+            self.worksheet.matrices = copy.deepcopy(sheet.matrices)
+            self.worksheet.metadata = copy.deepcopy(sheet.metadata)
+            self.dirty = True
+            return True
+        from .data_prep import store_prepared
+        store_prepared(self, sheet, 'worksheet', unique_name=True)
+        self.worksheet.metadata = copy.deepcopy(sheet.metadata)
+        return True
+
     def create_doe_plan(self,**parameters):
         from .doe_planner import build_plan,summarize
-        from .data_prep import store_prepared
-        sheet=build_plan(**parameters)
-        # Complete validation before changing this project. Name conflicts get a new tab.
-        used={s.name.casefold() for s in self.native_project.worksheets} if self.native_project else {self.worksheet.name.casefold()}
-        base=sheet.name;number=2
-        while sheet.name.casefold() in used:
-            suffix=' ('+str(number)+')';sheet.name=base[:128-len(suffix)]+suffix;number+=1
-        store_prepared(self,sheet,'worksheet')
-        self.worksheet.metadata=copy.deepcopy(sheet.metadata)
-        return self._record('DOE Plan: '+sheet.name,summarize(sheet))
+        params = dict(parameters)
+        store_in_worksheet = bool(params.pop('store_in_worksheet', True))
+        result_level = params.pop('result_level', 'summary_alias')
+        params.pop('alias_order', None)
+        sheet=build_plan(**params)
+        self._store_design_worksheet(sheet, store_in_worksheet=store_in_worksheet)
+        if result_level == 'none':
+            return None
+        summary = summarize(sheet)
+        summary['stored_in_worksheet'] = store_in_worksheet
+        summary['worksheet_name'] = self.worksheet.name if store_in_worksheet else '(Preview only)'
+        if result_level == 'full':
+            headers = [c.name for c in sheet.columns]
+            summary['design_table'] = {
+                'headers': headers,
+                'rows': [sheet.row(i) for i in range(min(sheet.row_count, 100))],
+                'total_rows': sheet.row_count,
+            }
+        return self._record('DOE Plan: '+sheet.name, summary)
 
     def export_notices(self):
         notices = ["Delimited export includes the column table only. Column types, metadata and unequal column lengths are not retained."]
@@ -1047,6 +1120,186 @@ class Presenter:
         parameters=dict(responses=copy.deepcopy(result['responses']),options=copy.deepcopy(result['options']))
         return self._record(result['title'],result,recipe={'action':'optimize_responses','parameters':parameters})
 
+    def operating_window_3d(self, response_specs, x_index, y_index, options=None):
+        """Evaluate a multi-response 3D operating window under factor drift."""
+        from .operating_window import evaluate_operating_window
+        result = evaluate_operating_window(self.worksheet, response_specs, x_index, y_index, options)
+        parameters = dict(
+            response_specs=[
+                {k: copy.deepcopy(s[k]) for k in ('model_recipe', 'lower', 'upper', 'target', 'goal')}
+                for s in result['responses']
+            ],
+            x_index=result['x_index'],
+            y_index=result['y_index'],
+            options=copy.deepcopy(result['options']),
+        )
+        return self._record(result['title'], result, recipe={'action': 'operating_window_3d', 'parameters': parameters})
+
+    def operating_window_sensitivity(self, baseline, factor_index, drift):
+        """Branch an intact operating window by changing one drift tolerance."""
+        from .operating_window import evaluate_operating_window, operating_window_settings
+
+        recipe = baseline.get('recipe', {})
+        if recipe.get('action') != 'operating_window_3d':
+            raise ValueError('Select a saved 3D Operating Window as the baseline.')
+        if self.result_stale(baseline) is not False:
+            raise ValueError('Rerun the baseline Operating Window on its source worksheet first.')
+        source = self.result_worksheet(baseline)
+        original = baseline['result']
+        predictor = next((p for p in original['predictors']
+                          if p['index'] == factor_index and p['role'] != 'factor'), None)
+        if predictor is None:
+            raise ValueError('Choose a numeric factor from the baseline.')
+        parameters = copy.deepcopy(recipe['parameters'])
+        options = parameters['options']
+        drifts = {item['index']: item['delta'] for item in options['drifts']}
+        old_drift = drifts.get(factor_index, 0.0)
+        drifts[factor_index] = drift
+        options['drifts'] = drifts
+        options['selected_setting'] = original['robust_setting']['factors_by_index']
+        options = operating_window_settings(options)
+        new_drift = next(item['delta'] for item in options['drifts'] if item['index'] == factor_index)
+        if new_drift == old_drift:
+            raise ValueError('Enter a drift tolerance different from the baseline.')
+        parameters['options'] = options
+        result = evaluate_operating_window(source, **parameters)
+        result['title'] = f"Sensitivity: {predictor['name']} drift ±{new_drift:g}"
+        result['selected_setting']['label'] = 'Original Recommended Setting'
+        result['sensitivity'] = {
+            'baseline_title': baseline['title'],
+            'baseline_id': baseline.get('entry_id'),
+            'factor': predictor['name'],
+            'baseline_drift': old_drift,
+            'scenario_drift': new_drift,
+            'baseline_window': original['window_summary']['drift_feasible_pct'],
+            'baseline_empty': original['empty_window'],
+            'baseline_setting': original['robust_setting'],
+        }
+        scenario_recipe = {'action': 'operating_window_3d', 'parameters': parameters}
+        previous = self.worksheet
+        project = self.native_project
+        previous_index = project.active_index if project else None
+        try:
+            self.worksheet = source
+            if project:
+                project.active_index = next(i for i, sheet in enumerate(project.worksheets) if sheet is source)
+            return self._record(result['title'], result, recipe=scenario_recipe)
+        finally:
+            self.worksheet = previous
+            if project:
+                project.active_index = previous_index
+
+    def imr_sensitivity(self, baseline, mode, **kwargs):
+        """Branch a saved I-MR result by baseline period or flagged-batch/row exclusion."""
+        from .quality_sensitivity import run_imr_sensitivity
+        return run_imr_sensitivity(self, baseline, mode, **kwargs)
+
+    def subgroup_sensitivity(self, baseline, mode, **kwargs):
+        """Branch a saved Xbar-R / Xbar-S result by baseline period or exclusion."""
+        from .quality_sensitivity import run_subgroup_sensitivity
+        return run_subgroup_sensitivity(self, baseline, mode, **kwargs)
+
+    def capability_sensitivity(self, baseline, mode, **kwargs):
+        """Branch a saved Normal Capability result by fitted distribution or exclusion."""
+        from .quality_sensitivity import run_capability_sensitivity
+        return run_capability_sensitivity(self, baseline, mode, **kwargs)
+
+    def attribute_sensitivity(self, baseline, mode, **kwargs):
+        """Branch a saved Attribute Control Chart result by baseline period or exclusion."""
+        from .quality_sensitivity import run_attribute_sensitivity
+        return run_attribute_sensitivity(self, baseline, mode, **kwargs)
+
+    def create_confirmation_plan(
+        self,
+        operating_window_result,
+        setting_keys=None,
+        custom_settings=None,
+        replicates=3,
+        seed=42,
+        confidence=0.95,
+        sheet_name='Confirmation_Runs',
+        source_worksheet=None,
+    ):
+        """Generate a randomized confirmation run worksheet with predeclared acceptance criteria."""
+        from .confirmation_experiments import create_confirmation_plan as run_plan
+        src_sheet = source_worksheet or self.worksheet
+        existing_names = (
+            {s.name.casefold() for s in self.native_project.worksheets}
+            if self.native_project is not None
+            else {self.worksheet.name.casefold()}
+        )
+        base_name = (sheet_name or 'Confirmation_Runs').strip()
+        final_name = base_name
+        suffix = 2
+        while final_name.casefold() in existing_names:
+            final_name = f'{base_name}_{suffix}'
+            suffix += 1
+        run_ws, plan_result = run_plan(
+            src_sheet,
+            operating_window_result,
+            setting_keys=setting_keys,
+            custom_settings=custom_settings,
+            replicates=replicates,
+            seed=seed,
+            confidence=confidence,
+            sheet_name=final_name,
+        )
+        ws = self.add_worksheet(final_name)
+        ws.columns = run_ws.columns
+        self.dirty = True
+        return self._record(plan_result['title'], plan_result)
+
+    def evaluate_confirmation_runs(self, plan_result, response_column_map=None):
+        """Evaluate observed confirmation measurements aligned by RunID on the active worksheet."""
+        from .confirmation_experiments import evaluate_confirmation_runs as run_eval
+        result = run_eval(plan_result, self.worksheet, response_column_map=response_column_map)
+        resolved_map = {
+            row['response_name']: int(row['column_index'])
+            for row in result.get('comparisons', [])
+        }
+        parameters = dict(
+            plan_result=copy.deepcopy(plan_result),
+            response_column_map=resolved_map if resolved_map else copy.deepcopy(response_column_map),
+        )
+        return self._record(
+            result['title'],
+            result,
+            recipe={'action': 'evaluate_confirmation_runs', 'parameters': parameters},
+        )
+
+    def load_chemical_operating_window_demo(self):
+        """Load the Chemical Process CCD demo worksheet and fit both Yield & Viscosity RSM models."""
+        from .operating_window import create_chemical_operating_window_sample
+        sample = create_chemical_operating_window_sample()
+        if (
+            self.native_project is None
+            and not self.dirty
+            and not self.history
+            and self.worksheet.name in ('Untitled', 'Worksheet 1')
+            and not any(v is not None for col in self.worksheet.columns for v in col.values)
+        ):
+            self.worksheet = sample
+            self.dirty = True
+            self._reset_edits()
+        else:
+            existing_names = (
+                {s.name.casefold() for s in self.native_project.worksheets}
+                if self.native_project is not None
+                else {self.worksheet.name.casefold()}
+            )
+            base_name = sample.name
+            final_name = base_name
+            suffix = 2
+            while final_name.casefold() in existing_names:
+                final_name = f'{base_name}_{suffix}'
+                suffix += 1
+            ws = self.add_worksheet(final_name)
+            ws.columns = sample.columns
+            self.dirty = True
+        yield_entry = self.analyze_response_surface(2, [0, 1])
+        visc_entry = self.analyze_response_surface(3, [0, 1])
+        return yield_entry, visc_entry
+
     def predict_model(self,model_recipe,input_mode='values',values=None,new_indices=None,options=None):
         from .prediction import predict,normalize_recipe
         model_recipe=normalize_recipe(model_recipe)
@@ -1267,7 +1520,7 @@ class Presenter:
         parameters=dict(response_index=response_index,factor_indices=list(factor_indices),covariate_indices=list(covariate_indices),terms=result['terms'],options=result['options'])
         return self._record('General Linear Model: '+result['response_name'],result,recipe={'action':'general_linear_model','parameters':parameters})
 
-    def multiple_regression(self, response_index, predictor_indices=(), confidence=.95, categorical_indices=None, model_terms=None):
+    def multiple_regression(self, response_index, predictor_indices=(), confidence=.95, categorical_indices=None, model_terms=None, categorical_coding=None):
         from .regression import multiple_regression, fit_general_regression
         predictor_indices = list(predictor_indices or ())
         cat_indices = list(categorical_indices or ())
@@ -1300,6 +1553,7 @@ class Presenter:
             categorical_indices=cat_indices,
             terms=model_terms,
             confidence=confidence,
+            categorical_coding=categorical_coding,
         )
         all_names = [self.worksheet.columns[i].name for i in all_pred]
         recipe_params = {
@@ -1309,6 +1563,8 @@ class Presenter:
         }
         if cat_indices:
             recipe_params["categorical_indices"] = cat_indices
+            if categorical_coding:
+                recipe_params["categorical_coding"] = copy.deepcopy(categorical_coding) if isinstance(categorical_coding, dict) else categorical_coding
         if model_terms is not None:
             recipe_params["model_terms"] = [list(t) for t in model_terms]
         return self._record(
@@ -5069,26 +5325,55 @@ class Presenter:
         if settings is None:
             raise ValueError("Nonnormal Capability Analysis requires settings.")
 
-        col_ref = settings.get("column_name")
-        col_idx = settings.get("column_index")
-        col = None
-        if isinstance(col_idx, int) and 0 <= col_idx < len(self.worksheet.columns):
-            col = self.worksheet.columns[col_idx]
-        elif col_ref:
-            for ci, c in enumerate(self.worksheet.columns):
-                if c.name == col_ref:
-                    col = c
-                    col_idx = ci
-                    break
-        if col is None:
-            col_idx = settings.get("variable_index", 0)
-            col = self.worksheet.columns[col_idx]
-
         settings_rec = dict(settings)
-        settings_rec["column_index"] = col_idx
-        settings_rec["column_name"] = col.name
+        from .imr_engine import parse_subgroup_omission
+        excl_rows = parse_subgroup_omission(settings.get("exclude_rows"))
 
-        data_vals = [float(v) for v in col.values if v is not None and v != ""]
+        if settings.get("single_column", True):
+            col_ref = settings.get("column_name")
+            col_idx = settings.get("column_index")
+            col = None
+            if isinstance(col_idx, int) and 0 <= col_idx < len(self.worksheet.columns):
+                col = self.worksheet.columns[col_idx]
+            elif col_ref:
+                for ci, c in enumerate(self.worksheet.columns):
+                    if c.name == col_ref:
+                        col = c
+                        col_idx = ci
+                        break
+            if col is None:
+                col_idx = settings.get("variable_index", 0)
+                col = self.worksheet.columns[col_idx]
+
+            settings_rec["column_index"] = col_idx
+            settings_rec["column_name"] = col.name
+            var_name = col.name
+            data_vals = [
+                float(v)
+                for row_num, v in enumerate(col.values, 1)
+                if row_num not in excl_rows and v is not None and v != ""
+            ]
+        else:
+            cols_across = settings.get("cols_across", [])
+            ca_indices = settings.get("cols_across_indices")
+            if ca_indices is None:
+                ca_indices = []
+                for cn in cols_across:
+                    ci = next((idx for idx, c in enumerate(self.worksheet.columns) if c.name == cn), None)
+                    if ci is None:
+                        raise ValueError(f"Column '{cn}' not found.")
+                    ca_indices.append(ci)
+            cols = [self.worksheet.columns[ci] for ci in ca_indices]
+            settings_rec["cols_across_indices"] = list(ca_indices)
+            max_len = max((len(c.values) for c in cols), default=0)
+            data_vals = [
+                float(c.values[r])
+                for r in range(max_len)
+                if (r + 1) not in excl_rows
+                for c in cols
+                if r < len(c.values) and c.values[r] is not None and c.values[r] != ""
+            ]
+            var_name = ", ".join(c.name for c in cols)
         dist_choice = settings.get("dist_or_transform", "weibull")
         lsl_val = settings.get("lsl")
         usl_val = settings.get("usl")
@@ -5107,7 +5392,6 @@ class Presenter:
             confidence_level=settings.get("confidence_level", 0.95),
         )
 
-        var_name = col.name
         return self._record(
             f"Nonnormal Capability Analysis — {var_name}",
             {"variable": var_name, "variable_name": var_name, **res},
@@ -5216,7 +5500,7 @@ class Presenter:
             opts = settings.get("options", {})
             lsl_val = settings.get("lsl")
             usl_val = settings.get("usl")
-            target_val = opts.get("target") or settings.get("target")
+            target_val = opts["target"] if opts.get("target") is not None else settings.get("target")
             hmean = settings.get("historical_mean")
             hsd = settings.get("historical_stdev")
 
@@ -5244,17 +5528,25 @@ class Presenter:
                 sub_spec = settings.get("subgroup_spec", 1)
                 subgroup_arg = sub_spec
                 settings_rec["subgroup_col_index"] = None
-                if isinstance(sub_spec, str) and not sub_spec.isdigit():
-                    sub_col = None
-                    for ci, c in enumerate(self.worksheet.columns):
-                        if c.name == sub_spec:
-                            sub_col = c
-                            settings_rec["subgroup_col_index"] = ci
-                            break
-                    if sub_col is not None:
+                if isinstance(sub_spec, str):
+                    try:
+                        subgroup_arg = int(sub_spec)
+                    except ValueError:
+                        sub_col = None
+                        for ci, c in enumerate(self.worksheet.columns):
+                            if c.name == sub_spec:
+                                sub_col = c
+                                settings_rec["subgroup_col_index"] = ci
+                                break
+                        if sub_col is None:
+                            raise ValueError(f"Subgroup column '{sub_spec}' not found in worksheet.")
                         subgroup_arg = sub_col.values
 
                 data_vals = col.numeric_values(True)
+                if settings.get("exclude_rows"):
+                    from .imr_engine import parse_subgroup_omission
+                    excl_rows = parse_subgroup_omission(settings.get("exclude_rows"))
+                    data_vals = [None if r in excl_rows else v for r, v in enumerate(data_vals, 1)]
                 var_name = col.name
             else:
                 cols_across = settings.get("cols_across", [])
@@ -5272,10 +5564,17 @@ class Presenter:
                     cols_data.append(c_found.values)
                 settings_rec["cols_across_indices"] = ca_indices
                 max_len = max(len(cd) for cd in cols_data) if cols_data else 0
+                excl_rows = set()
+                if settings.get("exclude_rows"):
+                    from .imr_engine import parse_subgroup_omission
+                    excl_rows = parse_subgroup_omission(settings.get("exclude_rows"))
                 rows_data = []
                 for r in range(max_len):
-                    row = [cols_data[ci][r] if r < len(cols_data[ci]) else None for ci in range(len(cols_data))]
-                    rows_data.append(row)
+                    if (r + 1) in excl_rows:
+                        rows_data.append([None] * len(cols_data))
+                    else:
+                        row = [cols_data[ci][r] if r < len(cols_data[ci]) else None for ci in range(len(cols_data))]
+                        rows_data.append(row)
                 data_vals = rows_data
                 subgroup_arg = 1
                 var_name = ", ".join(cols_across)
@@ -5327,6 +5626,9 @@ class Presenter:
             )
             res["graph"] = "capability"
             res["analysis"] = "capability"
+            if analysis_mode == "normal":
+                from .capability_workflows import build_capability_trace
+                res["capability_trace"] = build_capability_trace(self.worksheet, settings_rec, res, opts)
             return self._record(
                 f"{title_prefix} — {var_name}",
                 {"variable": var_name, **res},
@@ -5344,6 +5646,18 @@ class Presenter:
         )
         res["graph"] = "capability"
         res["analysis"] = "capability"
+        from .capability_workflows import build_capability_trace
+        direct_settings = {
+            "single_column": True,
+            "column_index": index,
+            "column_name": col.name,
+            "subgroup_spec": 1,
+            "lsl": lsl,
+            "usl": usl,
+            "target": target,
+            "options": {},
+        }
+        res["capability_trace"] = build_capability_trace(self.worksheet, direct_settings, res, {})
         return self._record(
             f"Normal Capability — {col.name}",
             {"variable": col.name, **res},
@@ -5845,22 +6159,68 @@ class Presenter:
             pass
         return entry
 
-    def create_factorial(self,factors,replicates=1,centers=0,randomize=True,seed=1,generators=None,blocks=1):
+    def define_custom_factorial(self, factor_indices, design_type='two_level', *, hard_factor_indices=None, std_order_index=None, run_order_index=None, point_type_index=None, blocks_index=None, low_high=None):
+        from .doe_custom import define_custom_factorial as _define_custom
+        meta = _define_custom(
+            self.worksheet,
+            factor_indices,
+            design_type=design_type,
+            hard_factor_indices=hard_factor_indices,
+            std_order_index=std_order_index,
+            run_order_index=run_order_index,
+            point_type_index=point_type_index,
+            blocks_index=blocks_index,
+            low_high=low_high,
+        )
+        self.dirty = True
+        result = {
+            'design': meta['design'],
+            'design_type': meta['design_type'],
+            'factors': len(meta['factors']),
+            'runs': meta['runs'],
+            'blocks_mode': meta['blocks_mode'],
+            'blocks_column': meta.get('blocks_column'),
+            'std_order': meta.get('std_order_column') or 'Worksheet row order',
+            'run_order': meta.get('run_order_column') or 'Worksheet row order',
+            'point_type': meta.get('point_type_column') or 'Unknown',
+            'factor_coding': meta['factors'],
+            'convention': 'Custom design metadata attached to active worksheet; use Analyze Factorial Design or Split-Plot ANOVA.',
+        }
+        return self._record('Define Custom Factorial Design', result)
+
+    def create_factorial(self,factors,replicates=1,centers=0,randomize=True,seed=1,generators=None,blocks=1,*,store_in_worksheet=True,result_level='summary_alias',alias_order=2):
         from .doe import create_factorial
         if generators is None:worksheet=create_factorial(factors,replicates,centers,randomize,seed,blocks=blocks)
         else:
             from .fractional import create_fractional
             worksheet=create_fractional(factors,generators,replicates,centers,randomize,seed,blocks=blocks)
-        self.new(); self.worksheet=worksheet; self.dirty=True
+        actual_seed = worksheet.metadata['doe'].get('seed', seed)
+        self._store_design_worksheet(worksheet, store_in_worksheet=store_in_worksheet)
+        if result_level == 'none':
+            return None
         result={'design':'Full two-level factorial' if generators is None else 'Regular fractional factorial','factors':len(factors),
             'runs':worksheet.row_count,'replicates':replicates,'center_points':centers*blocks,'blocks':blocks,
-            'randomized':randomize,'seed':seed,'factor_coding':worksheet.metadata['doe']['factors'],
+            'randomized':randomize,'seed':actual_seed,'stored_in_worksheet':store_in_worksheet,
+            'worksheet_name':self.worksheet.name if store_in_worksheet else '(Preview only)',
+            'factor_coding':worksheet.metadata['doe']['factors'],
             'convention':'StdOrder identifies unrandomized design order; RunOrder identifies worksheet order. Add a response column after collecting results.'}
         if generators is not None:
             metadata=worksheet.metadata['doe']; result['resolution']=metadata['resolution']
             result['generators']=metadata['generators']
-            from .fractional import alias_structure
-            result['alias_structure']=[{'term':row['term'],'aliases':row['expression']} for row in alias_structure(generators,len(factors))['rows']]
+            if result_level in ('summary_alias', 'full', 'full_defining'):
+                from .fractional import alias_structure
+                alias_info = alias_structure(generators,len(factors),max_order=alias_order)
+                result['alias_structure']=[{'term':row['term'],'aliases':row['expression']} for row in alias_info['rows']]
+                if result_level == 'full_defining':
+                    words = [('-' if w['sign'] < 0 else '') + w['term'] for w in alias_info['defining_relation'] if w.get('mask')]
+                    if words:
+                        result['defining_relation'] = 'I = ' + ' = '.join(words)
+        if result_level in ('full', 'full_defining'):
+            result['design_table'] = {
+                'headers': [c.name for c in worksheet.columns],
+                'rows': [worksheet.row(i) for i in range(min(worksheet.row_count, 100))],
+                'total_rows': worksheet.row_count,
+            }
         return self._record("Factorial Design",result)
 
     def analyze_factorial(self,response_index,factor_indices,max_order=2,confidence=.95,plot_residuals=True,show_factor_coding=True,selected_terms=None,include_blocks=None):
@@ -5879,12 +6239,12 @@ class Presenter:
     def analyze_factorial_terms(self,**parameters):
         return self.analyze_factorial(**parameters)
 
-    def create_split_plot_design(self, hard_factors, easy_factors, replicates=1, seed=None, randomize=True):
+    def create_split_plot_design(self, hard_factors, easy_factors, replicates=1, seed=None, randomize=True, *, subplot_replicates=1, store_in_worksheet=True, result_level='summary_alias'):
         from .doe_split_plot import create_split_plot_design
-        worksheet = create_split_plot_design(hard_factors, easy_factors, replicates=replicates, seed=seed, randomize=randomize)
-        self.new()
-        self.worksheet = worksheet
-        self.dirty = True
+        worksheet = create_split_plot_design(hard_factors, easy_factors, replicates=replicates, seed=seed, randomize=randomize, subplot_replicates=subplot_replicates)
+        self._store_design_worksheet(worksheet, store_in_worksheet=store_in_worksheet)
+        if result_level == 'none':
+            return None
         doe_meta = worksheet.metadata['doe']
         result = {
             'design': 'Split-plot factorial design',
@@ -5893,10 +6253,20 @@ class Presenter:
             'whole_plots': doe_meta['whole_plots'],
             'runs': worksheet.row_count,
             'replicates': replicates,
+            'subplot_replicates': subplot_replicates,
             'randomized': randomize,
             'seed': seed,
+            'stored_in_worksheet': store_in_worksheet,
+            'worksheet_name': self.worksheet.name if store_in_worksheet else '(Preview only)',
+            'factor_coding': doe_meta['factors'],
             'convention': 'WP identifies whole-plot blocks for hard-to-change factors; StdOrder is unrandomized order; RunOrder is worksheet order.',
         }
+        if result_level == 'full':
+            result['design_table'] = {
+                'headers': [c.name for c in worksheet.columns],
+                'rows': [worksheet.row(i) for i in range(min(worksheet.row_count, 100))],
+                'total_rows': worksheet.row_count,
+            }
         return self._record("Split-Plot Factorial Design", result)
 
     def analyze_split_plot(self, response, whole_plot_col='WP', terms=None, confidence=0.95):
@@ -7241,6 +7611,25 @@ class Presenter:
             raise ValueError("The result's source worksheet is unavailable.")
         return self.worksheet
 
+    def resolve_entry_worksheet(self, entry):
+        """Return the source worksheet for an entry without silently falling back to an unrelated active sheet."""
+        if not isinstance(entry, dict):
+            return self.worksheet
+        try:
+            return self.result_worksheet(entry)
+        except ValueError:
+            pass
+        ws_name = entry.get("worksheet_name")
+        if self.native_project and ws_name:
+            for sheet in self.native_project.worksheets:
+                if sheet.name == ws_name:
+                    return sheet
+        if entry.get("worksheet_id") is not None or (
+            ws_name and ws_name != getattr(self.worksheet, "name", None)
+        ):
+            return None
+        return self.worksheet
+
     def result_stale(self, entry, cache=None):
         """True/False for tracked inputs; None for legacy/native snapshots."""
         if entry.get('source_unavailable'):
@@ -7295,6 +7684,13 @@ class Presenter:
             if self.native_project:
                 self.native_project.active_index = next(i for i, sheet in enumerate(self.native_project.worksheets) if sheet is source)
             result=run(self, recipe)
+            if recipe['action'] == 'multiple_regression':
+                previous_result = entry['result']
+                for field in ('options', 'graphs'):
+                    if field in previous_result:
+                        result['result'][field] = copy.deepcopy(previous_result[field])
+                if 'graphs' in entry:
+                    result['graphs'] = entry['graphs']
             if 'graph_presentation' in entry:
                 from .graph_presentation import validate_presentation
                 result['graph_presentation']=validate_presentation(entry['graph_presentation'])
@@ -8260,6 +8656,15 @@ def format_entry(entry):
     header = title_str + ("\n" + time_str if time_str else "")
     title = header + "\n" + "─" * 76 + "\n\n"
     result = entry["result"]
+    if isinstance(result, dict) and result.get('analysis') == 'imr_investigation':
+        from .imr_investigation import format_investigation
+        return title + format_investigation(result)
+    if isinstance(result, dict) and result.get('analysis') == 'subgroup_investigation':
+        from .subgroup_workflows import format_investigation as format_subgroup_investigation
+        return title + format_subgroup_investigation(result)
+    if isinstance(result, dict) and result.get('analysis') == 'attribute_investigation':
+        from .attribute_workflows import format_investigation as format_attribute_investigation
+        return title + format_attribute_investigation(result)
     if isinstance(result, dict) and (result.get('analysis') == 'bootstrap_uncertainty' or 'bootstrap_report' in result):
         return title + result.get('text', '')
     if isinstance(result, dict) and (result.get('analysis') == 'ecdf_plot' or result.get('graph') == 'ecdf_plot'):
@@ -8479,6 +8884,9 @@ def format_entry(entry):
     if isinstance(result,dict) and result.get('analysis') in ('factorial_plots','model_contour_plot','model_surface_plot'):
         from .model_plots_report import text_report
         return title+text_report(result)
+    if isinstance(result, dict) and result.get('analysis') in ('operating_window_3d', 'confirmation_plan', 'confirmation_evaluation'):
+        from .operating_window_report import text_report
+        return title + text_report(result)
     if isinstance(result, dict) and result.get("analysis") == "pca":
         from .multivariate_report import format_pca_report
         return title + format_pca_report(result)
@@ -8559,7 +8967,11 @@ def format_entry(entry):
         return title+text_report(result)
     if isinstance(result, dict) and result.get('analysis') == 'subgroup_control':
         from .subgroup_control_report import text_report
-        return title + text_report(result)
+        from .subgroup_workflows import comparison_text as subgroup_comparison_text
+        from .quality_sensitivity import comparison_text as sensitivity_comparison_text
+        parts = [p for p in (subgroup_comparison_text(result), sensitivity_comparison_text(result)) if p]
+        prefix = ('\n\n'.join(parts) + '\n\n') if parts else ''
+        return title + prefix + text_report(result)
     if isinstance(result, dict) and result.get('analysis') == 'oneway_anova':
         from .oneway_report import text_report
         return title + text_report(result)
@@ -8584,10 +8996,28 @@ def format_entry(entry):
         show_unusual = res_opts.get("unusual", True)
         lines = []
         if show_eq:
-            if result.get("regression_equation"):
+            cat_eqs = result.get("categorical_equations")
+            if cat_eqs:
+                lines += ["Regression Equation"]
+                for row in cat_eqs:
+                    lines.append(f"{row['label']}:  {row['equation']}")
+                lines.append("")
+            elif result.get("regression_equation"):
                 lines += ["Regression Equation", result["regression_equation"], ""]
             else:
                 lines += ["Response: " + resp_name, ""]
+        if result.get("categorical_predictors"):
+            scheme_lbl = result.get("categorical_coding_scheme", "(1, 0)")
+            lines += [f"Categorical Predictor Coding ({scheme_lbl})", "Factor               Levels  Values (Reference)"]
+            for info in result["categorical_predictors"]:
+                lvls = ", ".join(str(v) for v in info.get("levels", []))
+                ref = info.get("reference", "")
+                lines.append(
+                    str(info.get("name", "")).ljust(21)
+                    + str(len(info.get("levels", []))).ljust(8)
+                    + f"{lvls}  (Ref: {ref})"
+                )
+            lines.append("")
         if show_sum:
             lines += [
                 "Model Summary",
@@ -8627,18 +9057,31 @@ def format_entry(entry):
             lines += ['', 'Estimated Effects', 'Term                 Effect        SE Effect     T             P']
             for row in result['effects']:
                 lines.append(row['term'].ljust(21)+''.join(_display(row.get(key)).ljust(14) for key in ('effect','standard_error','t','p_value')))
-            if result.get('show_factor_coding',True):
-                lines += ['', 'Factor Coding', 'Factor               Low           Center        High']
-                for row in result['factor_coding']:
-                    name=(row.get('letter','')+' '+row['name']).strip()
-                    lines.append(name.ljust(21)+''.join(_display(row[key]).ljust(14) for key in ('low','center','high')))
+            if result.get('show_factor_coding',True) and result.get('factor_coding'):
+                has_multi=any(len(row.get('levels',[]))>2 or row.get('low') is None for row in result['factor_coding'])
+                if has_multi:
+                    lines += ['', 'Factor Information', 'Factor               Type      Levels  Values']
+                    for row in result['factor_coding']:
+                        name=(row.get('letter','')+' '+row['name']).strip()
+                        lvls=row.get('levels') or [row.get('low'),row.get('high')]
+                        kind_lbl='Text' if row.get('kind')=='text' else 'Numeric'
+                        lines.append(name.ljust(21)+kind_lbl.ljust(10)+str(len(lvls)).ljust(8)+', '.join(_display(v) for v in lvls))
+                else:
+                    lines += ['', 'Factor Coding', 'Factor               Low           Center        High']
+                    for row in result['factor_coding']:
+                        name=(row.get('letter','')+' '+row['name']).strip()
+                        lines.append(name.ljust(21)+''.join(_display(row.get(key)).ljust(14) for key in ('low','center','high')))
         if result.get('alias_structure'):
             lines += ['', 'Alias Structure (nominal corner fraction; letters follow factor coding)']
             lines.extend(row['aliases'] for row in result['alias_structure'])
         return title + "\n".join(lines) + _report_notes(result)
     if isinstance(result, dict) and result.get("analysis") == "attribute_control":
         from .attribute_control_report import format_attribute_control_report
-        return title + format_attribute_control_report(result)
+        from .attribute_workflows import comparison_text as attribute_comparison_text
+        from .quality_sensitivity import comparison_text as sensitivity_comparison_text
+        parts = [p for p in (attribute_comparison_text(result), sensitivity_comparison_text(result)) if p]
+        prefix = ('\n\n'.join(parts) + '\n\n') if parts else ''
+        return title + prefix + format_attribute_control_report(result)
     if isinstance(result, dict) and result.get("analysis") == "time_weighted_control":
         from .time_weighted_control_report import generate_time_weighted_report
         return title + generate_time_weighted_report(result)
@@ -8811,7 +9254,11 @@ def format_entry(entry):
         return title + "\n".join(lines) + _report_notes(result)
     if isinstance(result, dict) and result.get("analysis") == "imr_control":
         from .imr_report import format_imr_report
-        return title + format_imr_report(result)
+        from .imr_replay import comparison_text
+        from .quality_sensitivity import comparison_text as sensitivity_comparison_text
+        parts = [p for p in (comparison_text(result), sensitivity_comparison_text(result)) if p]
+        prefix = ('\n\n'.join(parts) + '\n\n') if parts else ''
+        return title + prefix + format_imr_report(result)
     if isinstance(result, dict) and "i_center" in result:
         lines = ["Variable: " + result.get("variable", ""), "",
             "N = " + _display(result["count"]) + "    N* = " + _display(result["missing"]),
@@ -8848,13 +9295,19 @@ def format_entry(entry):
         return title + format_automated_capability_report(entry)
     if isinstance(result, dict) and result.get("analysis") == "capability_nonnormal":
         from .capability_nonnormal_report import format_nonnormal_capability_report
-        return title + format_nonnormal_capability_report(entry)
+        from .quality_sensitivity import comparison_text as sensitivity_comparison_text
+        sens_text = sensitivity_comparison_text(result)
+        return title + (sens_text + '\n\n' if sens_text else '') + format_nonnormal_capability_report(entry)
     if isinstance(result, dict) and result.get("analysis") == "acceptance_control":
         from .acceptance_chart_report import format_acceptance_chart_report
         return title + format_acceptance_chart_report(result)
     if isinstance(result, dict) and "observed_perf" in result:
         from .capability_report import format_capability_report
-        return title + format_capability_report(result)
+        from .capability_workflows import comparison_text as cap_comparison_text
+        from .quality_sensitivity import comparison_text as sensitivity_comparison_text
+        parts = [p for p in (cap_comparison_text(result), sensitivity_comparison_text(result)) if p]
+        prefix = ('\n\n'.join(parts) + '\n\n') if parts else ''
+        return title + prefix + format_capability_report(result)
     if isinstance(result, dict) and "cpk" in result and "ppk" in result:
         lines = ["Variable: " + result.get("variable", ""), "",
             "N = " + _display(result["count"]) + "    N* = " + _display(result["missing"]) + "    Mean = " + _display(result["mean"]),
@@ -8907,6 +9360,29 @@ def format_entry(entry):
     lines = []
     if not isinstance(result, dict):
         return title + _display(result)
+    if 'design_table' in result or ('runs' in result and 'design' in result and 'factor_coding' in result):
+        for key in ('design', 'factors', 'runs', 'replicates', 'subplot_replicates', 'center_points', 'blocks', 'whole_plots', 'randomized', 'seed', 'stored_in_worksheet', 'worksheet_name', 'resolution', 'generators', 'defining_relation', 'blocks_mode', 'blocks_column', 'std_order', 'run_order', 'point_type'):
+            if key in result and result[key] is not None:
+                lbl = key.replace('_', ' ').capitalize()
+                lines.append(lbl.ljust(25) + _display(result[key]))
+        if result.get('factor_coding'):
+            lines += ['', 'Factors / Coding:']
+            for f in result['factor_coding']:
+                lvls = f.get('levels')
+                desc = ', '.join(_display(v) for v in lvls) if lvls else f"{_display(f.get('low'))} .. {_display(f.get('high'))}"
+                lines.append(f"  {f.get('letter', '')} {f['name']}: {desc}".strip())
+        if result.get('alias_structure'):
+            lines += ['', 'Alias Structure:']
+            lines.extend('  ' + row['aliases'] for row in result['alias_structure'])
+        dt = result.get('design_table')
+        if isinstance(dt, dict) and dt.get('headers'):
+            lines += ['', 'Design Table:']
+            lines.append('  ' + '  '.join(str(h).ljust(10) for h in dt['headers']))
+            for row in dt.get('rows', []):
+                lines.append('  ' + '  '.join(_display(v).ljust(10) for v in row))
+        if result.get('convention'):
+            lines += ['', result['convention']]
+        return title + '\n'.join(lines)
     for key, value in result.items():
         label = key.replace("_", " ").capitalize()
         if key in ("fitted", "residuals"):

@@ -19,6 +19,7 @@ from .optimizer import (
     settings, discover_models, default_desirability, normalize_response_spec,
     individual_desirability, _merge_predictors,
 )
+from .dialog_theme import AutoErrorLabel
 from .variable_dialogs import format_variable_reference
 from .chart_theme import chart_painter
 
@@ -147,9 +148,7 @@ class OptimizerDesirabilityDialog(QDialog):
         note.setObjectName('secondary')
         note.setWordWrap(True)
         layout.addWidget(note)
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = _footer(self, layout, self.validate)
         self._building = False
@@ -300,9 +299,7 @@ class OptimizerOptionsDialog(QDialog):
         form.addRow('Type of confidence interval:', self.side)
         layout.addLayout(form)
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = _footer(self, layout, self.validate)
         self._building = False
@@ -491,9 +488,7 @@ class ResponseOptimizerDialog(QDialog):
         note.setWordWrap(True)
         layout.addWidget(note)
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = _footer(self, layout, self.validate)
 

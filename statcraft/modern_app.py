@@ -10,7 +10,7 @@ import sys
 from PySide6.QtCore import Qt, QSize, QSignalBlocker, QRectF, QPointF, QTimer, QSettings, QModelIndex, QItemSelectionModel
 from PySide6.QtGui import (
     QAction, QKeySequence, QIcon, QFont, QPalette, QColor, QPixmap,
-    QPainter, QPen, QPolygonF, QActionGroup,
+    QPainter, QPen, QPolygonF, QActionGroup, QGuiApplication,
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QSplitter, QVBoxLayout, QHBoxLayout,
@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 from .app import Presenter, format_entry, _display, _number_list
 from .model import Column, finite_number, display_date
-from .modern_worksheet import WorksheetTable, WorksheetHeaderView, WorksheetDelegate, ColumnNamesTable
+from .modern_worksheet import WorksheetTable, WorksheetHeaderView, WorksheetDelegate, ColumnNamesTable, WorksheetFreezePanes
 from .modern_icons import tool_icon
 from .io import MAX_CELLS
 from .variable_dialogs import (
@@ -254,8 +254,12 @@ def get_theme_stylesheet(is_dark: bool) -> str:
             QMenuBar::item { padding: 4px 10px; background: transparent; border-radius: 4px; color: #e4e4e7; }
             QMenuBar::item:selected { background-color: #27272a; color: #38bdf8; }
             QMenu { background-color: #1f1f23; border: 1px solid #3f3f46; border-radius: 6px; padding: 4px; color: #f4f4f5; }
-            QMenu::item { padding: 6px 28px 6px 24px; border-radius: 4px; color: #e4e4e7; }
+            QMenu::item { padding: 5px 28px 5px 10px; border-radius: 4px; color: #e4e4e7; }
             QMenu::item:selected { background-color: #0284c7; color: #ffffff; }
+            QMenu::item:disabled { color: #71717a; }
+            QMenu::icon { padding-left: 6px; padding-right: 4px; }
+            QMenu::indicator { width: 14px; height: 14px; margin-left: 4px; }
+            QMenu::indicator:checked { background-color: #0284c7; border: 1px solid #38bdf8; border-radius: 3px; }
             QMenu::separator { height: 1px; background-color: #3f3f46; margin: 4px 6px; }
             QToolBar { background-color: #18181b; border-top: none; border-bottom: 1px solid #27272a; padding: 2px 6px; spacing: 3px; }
             QToolBar::separator { width: 1px; background-color: #3f3f46; margin: 4px 5px; }
@@ -286,7 +290,7 @@ def get_theme_stylesheet(is_dark: bool) -> str:
             }
             QPushButton#watermarkLink:hover { background-color: #1e293b; color: #7dd3fc; text-decoration: underline; }
             QLabel#watermarkKey { background: transparent; color: #94a3b8; font-size: 8.5pt; font-weight: 600; }
-            QTableWidget {
+            QTableWidget, QTableView[frozenWorksheetPane="true"] {
                 background-color: #18181b; color: #f4f4f5; gridline-color: #27272a; border: none;
                 selection-background-color: #094771; selection-color: #ffffff;
                 font-size: 9pt;
@@ -442,9 +446,13 @@ def get_theme_stylesheet(is_dark: bool) -> str:
             QMenuBar { background-color: #f8fafc; border-bottom: 1px solid #e2e8f0; padding: 2px 4px; }
             QMenuBar::item { padding: 4px 10px; background: transparent; border-radius: 4px; color: #1e293b; }
             QMenuBar::item:selected { background-color: #e0f2fe; color: #005a9e; }
-            QMenu { background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px; }
-            QMenu::item { padding: 6px 28px 6px 24px; border-radius: 4px; color: #1e293b; }
+            QMenu { background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px; color: #1e293b; }
+            QMenu::item { padding: 5px 28px 5px 10px; border-radius: 4px; color: #1e293b; }
             QMenu::item:selected { background-color: #e0f2fe; color: #005a9e; }
+            QMenu::item:disabled { color: #94a3b8; }
+            QMenu::icon { padding-left: 6px; padding-right: 4px; }
+            QMenu::indicator { width: 14px; height: 14px; margin-left: 4px; }
+            QMenu::indicator:checked { background-color: #0284c7; border: 1px solid #0369a1; border-radius: 3px; }
             QMenu::separator { height: 1px; background-color: #e2e8f0; margin: 4px 6px; }
             QToolBar { background-color: #f8fafc; border-top: none; border-bottom: 1px solid #e2e8f0; padding: 2px 6px; spacing: 3px; }
             QToolBar::separator { width: 1px; background-color: #cbd5e1; margin: 4px 5px; }
@@ -475,7 +483,7 @@ def get_theme_stylesheet(is_dark: bool) -> str:
             }
             QPushButton#watermarkLink:hover { background-color: #e0f2fe; color: #0c4a6e; text-decoration: underline; }
             QLabel#watermarkKey { background: transparent; color: #475569; font-size: 8.5pt; font-weight: 600; }
-            QTableWidget {
+            QTableWidget, QTableView[frozenWorksheetPane="true"] {
                 background-color: #ffffff; color: #0f172a; gridline-color: #e2e8f0; border: none;
                 selection-background-color: #e0f2fe; selection-color: #0369a1;
                 font-size: 9pt;
@@ -718,6 +726,7 @@ class ModernWindow(QMainWindow):
         self.selected_entry = None
         self._refreshing = False
         self._last_dialog_action = None
+        self._result_dialog_actions = {}
         self._custom_dialog_state = {}
         from .micro_innovations import (
             ConditionalFormatCache,
@@ -753,7 +762,7 @@ class ModernWindow(QMainWindow):
         self._r_workbench = None
         self._r_explorer_panel = None
         self.setWindowTitle("StatCraft - Untitled")
-        self.resize(1280, 760); self.setMinimumSize(920, 520)
+        self.resize(1200, 640); self.setMinimumSize(860, 480)
         self.setFont(QFont("Segoe UI", 9))
         icon = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1])) / "StatCraft.ico"
         if icon.is_file(): self.setWindowIcon(QIcon(str(icon)))
@@ -768,11 +777,12 @@ class ModernWindow(QMainWindow):
         self.splitter.addWidget(self.graph_options_pane);self.graph_options_pane.hide()
         self._create_actions(); self._create_status_bar(); self.refresh()
         self._restore_ui_preferences()
+        self._clamp_to_available_screen()
         self._show_welcome()
         self.set_ui_mode(self._ui_mode)
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setInterval(120_000)
-        self._autosave_timer.timeout.connect(self.autosave_now)
+        self._autosave_timer.timeout.connect(self._autosave_if_dirty)
         self._autosave_timer.start()
         QTimer.singleShot(800, self._check_startup_updates)
 
@@ -947,15 +957,19 @@ class ModernWindow(QMainWindow):
                 data = item.data(0, Qt.ItemDataRole.UserRole)
                 if key == Qt.Key.Key_F2:
                     if isinstance(data, dict):
-                        if data.get("kind") == "result" and "entry" in data:
-                            self.rename_output_dialog(data["entry"])
+                        if data.get("kind") == "result":
+                            entry = self._workspace.entries().get(data.get("entry_key"))
+                            if entry is not None:
+                                self.rename_output_dialog(entry)
                             return
                         elif data.get("kind") == "sheet":
                             self.rename_worksheet()
                             return
                 elif key == Qt.Key.Key_Delete:
-                    if isinstance(data, dict) and data.get("kind") == "result" and "entry" in data:
-                        self.delete_output_entry(data["entry"])
+                    if isinstance(data, dict) and data.get("kind") == "result":
+                        entry = self._workspace.entries().get(data.get("entry_key"))
+                        if entry is not None:
+                            self.delete_output_entry(entry)
                         return
             QTreeWidget.keyPressEvent(self.navigator, event)
         self.navigator.keyPressEvent = _nav_key_press
@@ -1175,8 +1189,7 @@ class ModernWindow(QMainWindow):
         self.table.verticalHeader().setFixedWidth(44)
         self.table.verticalHeader().setDefaultSectionSize(19)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.table.horizontalScrollBar().valueChanged.connect(self.column_names.horizontalScrollBar().setValue)
-        self.column_names.horizontalHeader().sectionResized.connect(lambda index, old, size: self.table.setColumnWidth(index, size))
+        self.worksheet_freeze = WorksheetFreezePanes(self.table, self.column_names)
         self.table.itemChanged.connect(self._cell_changed)
         self.table.cellPressed.connect(self._on_table_cell_interacted)
         self.table.cellClicked.connect(self._on_table_cell_interacted)
@@ -1238,6 +1251,9 @@ class ModernWindow(QMainWindow):
         self.chrome_hscroll = QScrollBar(Qt.Orientation.Horizontal)
         self.chrome_hscroll.setFixedWidth(180); self.chrome_hscroll.setFixedHeight(15)
         self.table.horizontalScrollBar().rangeChanged.connect(self.chrome_hscroll.setRange)
+        self.table.horizontalScrollBar().rangeChanged.connect(
+            lambda *_: self.chrome_hscroll.setPageStep(self.table.horizontalScrollBar().pageStep())
+        )
         self.table.horizontalScrollBar().valueChanged.connect(self.chrome_hscroll.setValue)
         self.chrome_hscroll.valueChanged.connect(self.table.horizontalScrollBar().setValue)
         tab_row.addWidget(self.chrome_hscroll)
@@ -1250,13 +1266,15 @@ class ModernWindow(QMainWindow):
         tab_row.addWidget(self.sheet_counts)
         sheet_layout.addWidget(chrome_bar)
 
+        self._work_split_ratio = 0.58
         self.worksheet_pane.setMinimumHeight(140)
         self.work_splitter.addWidget(self.worksheet_pane)
         self.work_splitter.setCollapsible(0, True)
         self.work_splitter.setCollapsible(1, False)
-        self.work_splitter.setStretchFactor(0, 2)
-        self.work_splitter.setStretchFactor(1, 3)
-        self.work_splitter.setSizes([220, 450])
+        self.work_splitter.setStretchFactor(0, 3)
+        self.work_splitter.setStretchFactor(1, 2)
+        self.work_splitter.setSizes([390, 280])
+        self.work_splitter.splitterMoved.connect(self._on_work_splitter_moved)
 
         self.work_stack = QStackedWidget()
         self.work_stack.addWidget(self.work_splitter)
@@ -1389,52 +1407,66 @@ class ModernWindow(QMainWindow):
         # 1. File menu
         file = bar.addMenu("&File")
         new_menu = file.addMenu("New")
+        new_menu.setIcon(tool_icon("new_project"))
         self.new_sheet_action = self._action(new_menu, "Worksheet", self.new_worksheet, QKeySequence("Ctrl+N"), "new_sheet")
-        new_proj = self._action(new_menu, "Project", self.new_document, QKeySequence("Ctrl+Shift+N"), "new_project")
+        self._action(new_menu, "Project", self.new_document, QKeySequence("Ctrl+Shift+N"), "new_project")
         self.open_action = self._action(file, "Open…", self.open_document, QKeySequence.StandardKey.Open, "open")
         self.recent_menu = file.addMenu("Open Recent")
+        self.recent_menu.setIcon(tool_icon("open"))
         self._update_recent_menu()
         self._action(file, "Open Sample &Dataset…", self.open_sample_library, None, "new_sheet")
-        self._action(file, "Import delimited text with column types…", lambda: self.open_document(True))
+        self._action(file, "Import delimited text with column types…", lambda: self.open_document(True), None, "worksheet")
         file.addSeparator()
         self.save_action = self._action(file, "Save Project", self.save_document, QKeySequence.StandardKey.Save, "save")
         self._action(file, "Save Project As…", lambda: self.save_document(True), QKeySequence.StandardKey.SaveAs, "save_copy")
         self._action(file, "Save Current Worksheet As…", self.export_data, None, "export")
         self._action(file, "Save All Worksheets As…", self.save_all_worksheets_dialog, None, "save_copy")
-        self._action(file, "Close Worksheet", self.close_worksheet)
-        self._action(file, "Close All Worksheets", self.close_all_worksheets)
-        self._action(file, "Export All Graphs in Project…", self.export_all_graphs_dialog, None, "export")
-        self._action(file, "Export Output to Modern &Tidyverse / ggplot2 (.R)…", self.export_active_r_file, None, "save")
-        self._action(file, "Export Output to Pure &Base R Script (.R)…", self.export_active_base_r_file, None, "save")
-        self._action(file, "Export Worksheet with &vroom / readxl (.R)…", self.export_worksheet_vroom, None, "save")
-        self._action(file, "Export Worksheet to &R Data Frame (.R)…", self.export_worksheet_r_dataframe, None, "save")
+        self._action(file, "Close Worksheet", self.close_worksheet, None, "close")
+        self._action(file, "Close All Worksheets", self.close_all_worksheets, None, "delete_sheet")
         file.addSeparator()
-        excel=file.addMenu('Export to Excel')
-        self._action(excel,'All Project Worksheets…',lambda:self.export_excel(True),None,'export')
-        self._action(excel,'Current Worksheet…',lambda:self.export_excel(False))
-        self._action(file,'Convert MPX File to Excel…',self.convert_mpx_excel)
-        self._action(file, "Export Current Report…", self.export_report)
-        self._action(file, "Export to Word…", self.send_output_to_word)
-        self._action(file, "Export to PowerPoint…", self.send_output_to_powerpoint)
-        self._action(file, "Export Executive Slide Deck (PowerPoint)…", self.export_executive_slide_deck, None, "export")
+
+        export_r_menu = file.addMenu("Export R")
+        export_r_menu.setIcon(tool_icon("code_view"))
+        self._action(export_r_menu, "Export Output to Modern &Tidyverse / ggplot2 (.R)…", self.export_active_r_file, None, "code_view")
+        self._action(export_r_menu, "Export Output to Pure &Base R Script (.R)…", self.export_active_base_r_file, None, "code_view")
+        self._action(export_r_menu, "Export Worksheet with &vroom / readxl (.R)…", self.export_worksheet_vroom, None, "save")
+        self._action(export_r_menu, "Export Worksheet to &R Data Frame (.R)…", self.export_worksheet_r_dataframe, None, "save")
+
+        export_reports_menu = file.addMenu("Export Reports")
+        export_reports_menu.setIcon(tool_icon("export"))
+        excel = export_reports_menu.addMenu("Export to Excel")
+        excel.setIcon(tool_icon("excel"))
+        self._action(excel, "All Project Worksheets…", lambda: self.export_excel(True), None, "excel")
+        self._action(excel, "Current Worksheet…", lambda: self.export_excel(False), None, "excel")
+        self._action(export_reports_menu, "Convert MPX File to Excel…", self.convert_mpx_excel, None, "excel")
+        export_reports_menu.addSeparator()
+        self._action(export_reports_menu, "Export Current Report…", self.export_report, None, "export")
+        self._action(export_reports_menu, "Export to Word…", self.send_output_to_word, None, "word")
+        self._action(export_reports_menu, "Export to PowerPoint…", self.send_output_to_powerpoint, None, "powerpoint")
+        self._action(export_reports_menu, "Export Executive Slide Deck (PowerPoint)…", self.export_executive_slide_deck, None, "powerpoint")
+        export_reports_menu.addSeparator()
+        self._action(export_reports_menu, "Export All Graphs in Project…", self.export_all_graphs_dialog, None, "copy_graph")
+        self._action(export_reports_menu, "Export Session as Clean &HTML Report…", self.export_session_html_dialog, None, "export")
+        self._action(export_reports_menu, "Export Session as &Markdown Report (.md)…", self.export_session_markdown_dialog, None, "export")
+        self._action(export_reports_menu, "Save Session Window…", self.save_session_window_dialog, None, "save")
+        self._action(export_reports_menu, "Save History As…", self.save_history_dialog, None, "save")
+        self._action(export_reports_menu, "Save ReportPad As…", self.save_report_pad_dialog, None, "save")
+        export_reports_menu.addSeparator()
+        self._action(export_reports_menu, "Export Anonymized Dataset (Clean for &Audit)…", self.anonymize_dataset_dialog, None, "export")
+        self._action(export_reports_menu, "Run Exec / Batch Script (.MTB)…", self.run_mtb_script_dialog, None, "workflow")
+
+        print_menu = file.addMenu("Print")
+        print_menu.setIcon(tool_icon("print"))
+        self._action(print_menu, "Page Setup…", lambda: self._printing().page_setup(), None, "settings")
+        self._action(print_menu, "Print Preview…", lambda: self._printing().run("preview"), None, "zoom")
+        self._action(print_menu, "Export PDF…", lambda: self._printing().run("pdf"), None, "pdf")
+        print_menu.addSeparator()
+        self.print_action = self._action(print_menu, "Print…", self.print_current, QKeySequence.StandardKey.Print, "print")
+        self._action(print_menu, "Print Session Window…", self.print_session_window, None, "print")
+        self._action(print_menu, "Print History…", self.print_history, None, "print")
+        self._action(print_menu, "Print ReportPad…", self.print_report_pad, None, "print")
         file.addSeparator()
-        self._action(file, "Export Session as Clean &HTML Report…", self.export_session_html_dialog, None, "export")
-        self._action(file, "Export Session as &Markdown Report (.md)…", self.export_session_markdown_dialog, None, "export")
-        self._action(file, "Save Session Window…", self.save_session_window_dialog, None, "save")
-        self._action(file, "Save History As…", self.save_history_dialog, None, "save")
-        self._action(file, "Save ReportPad As…", self.save_report_pad_dialog, None, "save")
-        self._action(file, "Export Anonymized Dataset (Clean for &Audit)…", self.anonymize_dataset_dialog, None, "export")
-        self._action(file, "Run Exec / Batch Script (.MTB)…", self.run_mtb_script_dialog, None, "workflow")
-        file.addSeparator()
-        self._action(file, "Page Setup…", lambda: self._printing().page_setup())
-        self._action(file, "Print Preview…", lambda: self._printing().run("preview"))
-        self._action(file, "Export PDF…", lambda: self._printing().run("pdf"))
-        self.print_action = self._action(file, "Print…", self.print_current, QKeySequence.StandardKey.Print, "print")
-        self._action(file, "Print Session Window…", self.print_session_window, None, "print")
-        self._action(file, "Print History…", self.print_history, None, "print")
-        self._action(file, "Print ReportPad…", self.print_report_pad, None, "print")
-        file.addSeparator()
-        self._action(file, "Exit", self.close, QKeySequence.StandardKey.Quit)
+        self._action(file, "Exit", self.close, QKeySequence.StandardKey.Quit, "exit")
 
         # 2. Edit menu
         edit = bar.addMenu("&Edit")
@@ -1446,24 +1478,24 @@ class ModernWindow(QMainWindow):
         self.cut_action = self._action(edit, "Cut Cells", self.cut_cells, QKeySequence.StandardKey.Cut, "cut")
         self.copy_action = self._action(edit, "Copy Cells", self.copy_cells, QKeySequence.StandardKey.Copy, "copy")
         self.copy_with_headers_action = self._action(edit, "Copy with Column Names", self.copy_with_column_names, QKeySequence("Ctrl+Shift+C"), "copy")
-        self._action(edit, "Copy &R Script for Active Output", self.copy_active_r_script, "Ctrl+Alt+R", "copy")
-        self._action(edit, "Copy Chart as &SVG (Crisp Vector)", self.copy_active_chart_svg, "Ctrl+Alt+S", "copy")
+        self._action(edit, "Copy &R Script for Active Output", self.copy_active_r_script, "Ctrl+Alt+R", "code_view")
+        self._action(edit, "Copy Chart as &SVG (Crisp Vector)", self.copy_active_chart_svg, "Ctrl+Alt+S", "copy_graph")
         self.paste_action = self._action(edit, "Paste Cells", self.paste_cells, QKeySequence.StandardKey.Paste, "paste")
         edit.addSeparator()
-        self._action(edit, "Select All Cells in Worksheet", self.select_all_dataset, QKeySequence.StandardKey.SelectAll)
+        self._action(edit, "Select All Cells in Worksheet", self.select_all_dataset, QKeySequence.StandardKey.SelectAll, "select_all")
         self._action(edit, "Clear Session Output", self.clear_session_output, None, "clear")
         self._action(edit, "Clear History", self.clear_history, None, "clear")
-        self._action(edit, "Append to ReportPad", self.append_active_to_report_pad)
-        self._action(edit, "Set Cell Comment…", self.set_cell_comment_dialog, QKeySequence("Ctrl+Shift+M"))
+        self._action(edit, "Append to ReportPad", self.append_active_to_report_pad, None, "send_report")
+        self._action(edit, "Set Cell Comment…", self.set_cell_comment_dialog, QKeySequence("Ctrl+Shift+M"), "edit_graph")
         self.last_dialog_action = self._action(edit, "Edit Last Dialog", self.edit_last_dialog, QKeySequence("Ctrl+E"), "last_dialog")
         edit.addSeparator()
         self.find_action = self._action(edit, "Find…", self.find_dialog, QKeySequence.StandardKey.Find, "find", False)
         self.find_next_action = self._action(edit, "Find Next", self.find_next, QKeySequence("F3"), "find_next")
         self.replace_action = self._action(edit, "Replace…", self.replace_dialog, QKeySequence("Ctrl+H"), "replace", False)
         self._action(edit, "Go To…", self.goto_dialog, QKeySequence("Ctrl+G"), "goto", False)
-        self._action(edit, "Go To Next Column", self.go_to_next_column, QKeySequence("Ctrl+Right"))
-        self._action(edit, "Move to Active Cell", self.move_to_active_cell, QKeySequence("Ctrl+Backspace"))
-        self._action(edit, "Edit Command Line…", self.open_command_line, QKeySequence("Ctrl+L"))
+        self._action(edit, "Go To Next Column", self.go_to_next_column, QKeySequence("Ctrl+Right"), "next_brushed")
+        self._action(edit, "Move to Active Cell", self.move_to_active_cell, QKeySequence("Ctrl+Backspace"), "goto")
+        self._action(edit, "Edit Command Line…", self.open_command_line, QKeySequence("Ctrl+L"), "code_view")
         edit.addSeparator()
         self._action(edit, "Worksheet Description…", self.worksheet_description_dialog, None, "worksheet", False)
         self._action(edit, "Project Description…", self.project_description_dialog, None, "worksheet", False)
@@ -1488,68 +1520,76 @@ class ModernWindow(QMainWindow):
         self._action(data, "Rename Column…", self.rename_column, None, "rename_sheet", True)
         self._action(data, "Change Data Type…", self.change_type, None, "format_column", True)
         recode_menu = data.addMenu("Recode")
+        recode_menu.setIcon(tool_icon("format_column"))
         self._action(recode_menu, "To &Numeric…", lambda: self.recode_dialog("number"), None, "format_column", True)
         self._action(recode_menu, "To &Text…", lambda: self.recode_dialog("text"), None, "format_column", True)
         self._action(recode_menu, "Using &Conversion Table…", self.recode_conversion_table_dialog, None, "format_column", True)
         dt_menu = data.addMenu("Date/Time")
+        dt_menu.setIcon(tool_icon("format_column"))
         self._action(dt_menu, "Convert Text to Date/Time…", self.convert_text_to_datetime_dialog, None, "format_column", True)
         self._action(dt_menu, "Round Date/Time…", self.round_datetime_dialog, None, "format_column", True)
         self._action(dt_menu, "Extract to Numeric…", self.extract_datetime_numeric_dialog, None, "format_column", True)
         self._action(dt_menu, "Extract to Text…", self.extract_datetime_text_dialog, None, "format_column", True)
         self._action(data, "Concatenate…", self.concatenate_columns_dialog, None, "table", True)
         col_prop_menu = data.addMenu("Column Properties")
+        col_prop_menu.setIcon(tool_icon("format_column"))
         self._action(col_prop_menu, "Value Order…", self.column_value_order_dialog, None, "sort", True)
         self._action(col_prop_menu, "Description…", self.column_description_dialog, None, "worksheet", True)
         self._action(col_prop_menu, "Assign Formula…", self.assign_formula_dialog, None, "assign_formula", True)
         self._action(col_prop_menu, "Conditional Formatting…", lambda: self.conditional_formatting_dialog(), None, "format_column", True)
         self._action(col_prop_menu, "Manage Rules…", self.manage_conditional_rules_dialog, None, "format_column", True)
         quick_hl_menu = col_prop_menu.addMenu("Quick Highlight")
-        quick_hl_menu.addAction("Highlight Red", lambda: self._apply_quick_highlight("#f8d7da"))
-        quick_hl_menu.addAction("Highlight Green", lambda: self._apply_quick_highlight("#d4edda"))
-        quick_hl_menu.addAction("Highlight Yellow", lambda: self._apply_quick_highlight("#fff3cd"))
+        quick_hl_menu.setIcon(tool_icon("brush_points"))
+        quick_hl_menu.addAction(tool_icon("brush_points"), "Highlight Red", lambda: self._apply_quick_highlight("#f8d7da"))
+        quick_hl_menu.addAction(tool_icon("brush_points"), "Highlight Green", lambda: self._apply_quick_highlight("#d4edda"))
+        quick_hl_menu.addAction(tool_icon("brush_points"), "Highlight Yellow", lambda: self._apply_quick_highlight("#fff3cd"))
         quick_hl_menu.addSeparator()
-        quick_hl_menu.addAction("Clear Cell Formats", lambda: self._apply_quick_highlight(None))
-        self._action(col_prop_menu, "Clear Conditional Formatting from Selected Columns", self.clear_selected_conditional_formatting)
-        self._action(col_prop_menu, "Clear Conditional Formatting from Worksheet", self.clear_all_conditional_formatting)
+        quick_hl_menu.addAction(tool_icon("erase"), "Clear Cell Formats", lambda: self._apply_quick_highlight(None))
+        self._action(col_prop_menu, "Clear Conditional Formatting from Selected Columns", self.clear_selected_conditional_formatting, None, "erase")
+        self._action(col_prop_menu, "Clear Conditional Formatting from Worksheet", self.clear_all_conditional_formatting, None, "erase")
         col_prop_menu.addSeparator()
-        self._action(col_prop_menu, "Hide or Unhide Columns…", self.hide_unhide_columns_dialog)
-        self._action(col_prop_menu, "Column Width…", self.column_width_dialog)
-        self._action(col_prop_menu, "Standard Column Width…", self.standard_column_width_dialog)
-        self._action(col_prop_menu, "Select Data Font…", self.select_data_font_dialog)
-        self._action(col_prop_menu, "Select Label Font…", self.select_label_font_dialog)
+        self._action(col_prop_menu, "Hide or Unhide Columns…", self.hide_unhide_columns_dialog, None, "format_column")
+        self._action(col_prop_menu, "Column Width…", self.column_width_dialog, None, "format_column")
+        self._action(col_prop_menu, "Standard Column Width…", self.standard_column_width_dialog, None, "format_column")
+        self._action(col_prop_menu, "Select Data Font…", self.select_data_font_dialog, None, "font")
+        self._action(col_prop_menu, "Select Label Font…", self.select_label_font_dialog, None, "font")
         self.format_column_action = self._action(col_prop_menu, "Format Column…", self.format_column_dialog, QKeySequence("Ctrl+1"), "format_column", False)
         self.format_column_action.setShortcuts([QKeySequence("Ctrl+1"), QKeySequence("Ctrl+B")])
         self._action(data, "Worksheet Information", self.show_worksheet_information, None, "worksheet")
         self._action(data, "Stored Constants…", self.stored_constants, None, "constants", True)
         data.addSeparator()
         self._action(data, "Make Indicator Variables…", self.make_indicator_variables_dialog, None, "format_column", True)
-        self._action(data, "Create Indicator Variables from Brushed Rows…", self.create_indicator_from_brushed_dialog)
+        self._action(data, "Create Indicator Variables from Brushed Rows…", self.create_indicator_from_brushed_dialog, None, "brush_points")
         self._action(data, "Recall Named Selection…", self.recall_named_selection_dialog, None, "select_all", True)
         self._action(data, "Subset Worksheet from Selection…", self.subset_worksheet_from_selection, None, "subset", True)
         self._action(data, "Subset Worksheet by Condition…", self.subset_by_condition_dialog, None, "subset", True)
         self._action(data, "Replay Saved Workflow…", self.replay_saved_workflow_dialog, None, "workflow", True)
         worksheets_menu = data.addMenu("Worksheets")
+        worksheets_menu.setIcon(tool_icon("worksheet"))
         self.rename_sheet_action = self._action(worksheets_menu, "Rename Worksheet…", self.rename_worksheet, None, "rename_sheet")
         self.duplicate_sheet_action = self._action(worksheets_menu, "Duplicate Worksheet…", self.duplicate_worksheet, None, "duplicate_sheet")
         self._action(worksheets_menu, "Split Worksheet…", lambda: prepare_dialog(self, "split_worksheet"), None, "split_worksheet", True)
         self.delete_sheet_action = self._action(worksheets_menu, "Delete Worksheet…", self.delete_worksheet, None, "delete_sheet")
         order_menu = data.addMenu("Order Columns / Constants / Matrices")
-        self._action(order_menu, "Order Columns by ID", self.order_columns_by_id)
-        self._action(order_menu, "Order Columns by Name", self.order_columns_by_name)
+        order_menu.setIcon(tool_icon("sort"))
+        self._action(order_menu, "Order Columns by ID", self.order_columns_by_id, None, "sort")
+        self._action(order_menu, "Order Columns by Name", self.order_columns_by_name, None, "sort")
         order_menu.addSeparator()
-        self._action(order_menu, "Order Constants by ID", self.order_constants_by_id)
-        self._action(order_menu, "Order Constants by Name", self.order_constants_by_name)
+        self._action(order_menu, "Order Constants by ID", self.order_constants_by_id, None, "constants")
+        self._action(order_menu, "Order Constants by Name", self.order_constants_by_name, None, "constants")
         order_menu.addSeparator()
-        self._action(order_menu, "Order Matrices by ID", self.order_matrices_by_id)
-        self._action(order_menu, "Order Matrices by Name", self.order_matrices_by_name)
+        self._action(order_menu, "Order Matrices by ID", self.order_matrices_by_id, None, "matrices")
+        self._action(order_menu, "Order Matrices by Name", self.order_matrices_by_name, None, "matrices")
 
         from .data_prep_dialogs import open_dialog as prepare_dialog
         data.addSeparator()
         copy_menu = data.addMenu("Copy")
+        copy_menu.setIcon(tool_icon("copy"))
         self._action(copy_menu, "Columns to Columns…", self.copy_columns_to_columns_dialog, None, "copy", True)
         self._action(copy_menu, "Columns to Constants…", self.copy_columns_to_constants_dialog, None, "constants", True)
         self._action(copy_menu, "Constants to Columns…", self.copy_constants_to_columns_dialog, None, "constants", True)
         stack_menu=data.addMenu("Stack")
+        stack_menu.setIcon(tool_icon("table"))
         self._action(stack_menu,"Columns…",lambda:prepare_dialog(self,'stack'),None,"table",True)
         self._action(stack_menu,"Stack Worksheets…",lambda:prepare_dialog(self,'stack_worksheets'),None,"table",True)
         self._action(data,"Unstack Columns…",lambda:prepare_dialog(self,'unstack'),None,"subset",True)
@@ -1564,27 +1604,30 @@ class ModernWindow(QMainWindow):
         self.assign_formula_action = self._action(calc, "Assign Formula to Column…", self.assign_formula_dialog, None, "assign_formula", True)
         self.standardize_action = self._action(calc, "Standardize…", self.standardize_dialog, None, "standardize", True)
         patterned_menu = calc.addMenu("Make Patterned Data")
-        self._action(patterned_menu, "Simple Set of Numbers…", self.patterned_numbers_dialog, None, None, True)
-        self._action(patterned_menu, "Arbitrary Set of Numbers…", self.patterned_arbitrary_dialog, None, None, True)
-        self._action(patterned_menu, "Text Values…", self.patterned_text_dialog, None, None, True)
-        self._action(patterned_menu, "Date/Time Values…", self.patterned_datetime_dialog, None, None, True)
+        patterned_menu.setIcon(tool_icon("table"))
+        self._action(patterned_menu, "Simple Set of Numbers…", self.patterned_numbers_dialog, None, "table", True)
+        self._action(patterned_menu, "Arbitrary Set of Numbers…", self.patterned_arbitrary_dialog, None, "table", True)
+        self._action(patterned_menu, "Text Values…", self.patterned_text_dialog, None, "table", True)
+        self._action(patterned_menu, "Date/Time Values…", self.patterned_datetime_dialog, None, "format_column", True)
         random_menu = calc.addMenu("Random Data")
-        self._action(random_menu, "Sample from Columns…", self.sample_from_columns_dialog, None, None, True)
+        random_menu.setIcon(tool_icon("histogram"))
+        self._action(random_menu, "Sample from Columns…", self.sample_from_columns_dialog, None, "subset", True)
         random_menu.addSeparator()
-        self._action(random_menu, "Normal…", self.random_normal_dialog, None, None, True)
-        self._action(random_menu, "Uniform…", self.random_uniform_dialog, None, None, True)
-        self._action(random_menu, "Exponential…", self.random_exponential_dialog, None, None, True)
-        self._action(random_menu, "Poisson…", self.random_poisson_dialog, None, None, True)
-        self._action(random_menu, "Binomial…", self.random_binomial_dialog, None, None, True)
+        self._action(random_menu, "Normal…", self.random_normal_dialog, None, "probability", True)
+        self._action(random_menu, "Uniform…", self.random_uniform_dialog, None, "histogram", True)
+        self._action(random_menu, "Exponential…", self.random_exponential_dialog, None, "line_plot", True)
+        self._action(random_menu, "Poisson…", self.random_poisson_dialog, None, "bar_chart", True)
+        self._action(random_menu, "Binomial…", self.random_binomial_dialog, None, "bar_chart", True)
         random_menu.addSeparator()
-        self._action(random_menu, "All Distributions (Weibull, Gamma, Lognormal, Beta…)…", self.random_all_distributions_dialog, None, None, True)
+        self._action(random_menu, "All Distributions (Weibull, Gamma, Lognormal, Beta…)…", self.random_all_distributions_dialog, None, "probability", True)
         matrix_menu = calc.addMenu("Matrices")
+        matrix_menu.setIcon(tool_icon("matrices"))
         self._action(matrix_menu, "Input Data…", self.stored_matrices, None, "matrices", True)
         self._action(matrix_menu, "Copy Columns to Matrix…", self.copy_columns_to_matrix_dialog, None, "matrices", True)
         self._action(matrix_menu, "Copy Matrix to Columns…", self.copy_matrix_to_columns_dialog, None, "matrices", True)
         matrix_menu.addSeparator()
         self._action(matrix_menu, "Arithmetic…", self.matrix_arithmetic_dialog, None, "matrices", True)
-        self._action(matrix_menu, "Transpose…", self.matrix_transpose_dialog, None, "matrices", True)
+        self._action(matrix_menu, "Transpose…", self.matrix_transpose_dialog, None, "transpose", True)
         self._action(matrix_menu, "Invert…", self.matrix_invert_dialog, None, "matrices", True)
         self._action(matrix_menu, "Eigenanalysis…", self.matrix_eigenanalysis_dialog, None, "matrices", True)
         matrix_menu.addSeparator()
@@ -1596,6 +1639,7 @@ class ModernWindow(QMainWindow):
         self._action(stat, "Fit &Y by X (JMP Platform)…", self.fit_y_by_x_dialog, None, "scatter", True)
         self._action(stat, "Distribution (JMP Platform)…", self.jmp_distribution_dialog, None, "graphical_summary", True)
         basic = stat.addMenu("Basic Statistics")
+        basic.setIcon(tool_icon("summary"))
         summary = self._action(basic, "Display Descriptive Statistics…", self.describe, None, "summary", True)
         self.store_descriptive_action = self._action(basic, "Store Descriptive Statistics…", self.store_descriptive_dialog, None, "summary", True)
         self.graphical_summary_action = self._action(basic, "Graphical Summary…", self.graphical_summary_dialog, None, "graphical_summary", True)
@@ -1615,6 +1659,7 @@ class ModernWindow(QMainWindow):
         self.two_sample_t_action = self._action(basic, "2-Sample t…", self.two_sample_t_dialog, None, "probability", True)
         self.paired_t_action = self._action(basic, "Paired t…", self.paired_t_dialog, None, "probability", True)
         anova = stat.addMenu("ANOVA")
+        anova.setIcon(tool_icon("boxplot"))
         self.oneway_anova_action = self._action(anova, "One-Way...", self.oneway_anova_dialog, None, "boxplot", True)
         self.twoway_anova_action = self._action(anova, "Two-Way…", self.twoway_anova_dialog, None, "matrix_plot", True)
         self.anom_action = self._action(anova, "Analysis of Means…", self.anom_dialog, None, "chart", True)
@@ -1626,28 +1671,32 @@ class ModernWindow(QMainWindow):
         self._action(anova, "General MANOVA (One-Way)…", self.oneway_manova_dialog, None, "table", True)
         self._action(anova, "Mixed Effects Model (REML)…", self.mixed_reml_dialog, None, "regression", True)
         glm_menu=anova.addMenu("General Linear Model")
+        glm_menu.setIcon(tool_icon("regression"))
         self.glm_fit_action=self._action(glm_menu,"Fit General Linear Model…",self.general_linear_model,None,"regression",True)
-        self.predict_actions={}; self.optimizer_actions={}; self.factorial_plot_actions={}; self.contour_plot_actions={}; self.surface_plot_actions={}; self.profiler_actions={}
-        self.predict_actions['general_linear_model']=self._action(glm_menu,'Predict…',lambda:self.predict_model('glm'),None,None,True)
-        self.profiler_actions['general_linear_model']=self._action(glm_menu,'Prediction Profiler…',lambda:self.prediction_profiler('glm'),None,None,True)
-        self.factorial_plot_actions['general_linear_model']=self._action(glm_menu,'Factorial Plots…',lambda:self.factorial_plots('glm'),None,None,True)
-        self.contour_plot_actions['general_linear_model']=self._action(glm_menu,'Contour Plot…',lambda:self.model_contour_plot('glm'),None,None,True)
-        self.surface_plot_actions['general_linear_model']=self._action(glm_menu,'Surface Plot…',lambda:self.model_surface_plot('glm'),None,None,True)
-        self.optimizer_actions['general_linear_model']=self._action(glm_menu,'Response Optimizer…',lambda:self.optimize_responses('glm'),None,None,True)
+        self.predict_actions={}; self.optimizer_actions={}; self.factorial_plot_actions={}; self.contour_plot_actions={}; self.surface_plot_actions={}; self.profiler_actions={}; self.operating_window_actions={}
+        self.predict_actions['general_linear_model']=self._action(glm_menu,'Predict…',lambda:self.predict_model('glm'),None,'calculator',True)
+        self.profiler_actions['general_linear_model']=self._action(glm_menu,'Prediction Profiler…',lambda:self.prediction_profiler('glm'),None,'chart',True)
+        self.factorial_plot_actions['general_linear_model']=self._action(glm_menu,'Factorial Plots…',lambda:self.factorial_plots('glm'),None,'line_plot',True)
+        self.contour_plot_actions['general_linear_model']=self._action(glm_menu,'Contour Plot…',lambda:self.model_contour_plot('glm'),None,'contour',True)
+        self.surface_plot_actions['general_linear_model']=self._action(glm_menu,'Surface Plot…',lambda:self.model_surface_plot('glm'),None,'surface3d',True)
+        self.optimizer_actions['general_linear_model']=self._action(glm_menu,'Response Optimizer…',lambda:self.optimize_responses('glm'),None,'regression',True)
         regression_root = stat.addMenu("Regression")
+        regression_root.setIcon(tool_icon("regression"))
         self.fitted_line_plot_action = self._action(regression_root, "Fitted Line Plot…", self.fitted_line_plot_dialog, None, "regression", True)
         self._action(regression_root, "Simple regression…", lambda: self.inference_dialog("linear_regression"), None, "regression", True)
         regression=regression_root.addMenu('Regression')
+        regression.setIcon(tool_icon("regression"))
         self._action(regression, "Fit regression model…", self.multiple_regression, None, "regression", True)
         self._action(regression, "Best Subsets…", self.best_subsets_dialog, None, "regression", True)
         self._action(regression, "Stepwise…", self.stepwise_regression_dialog, None, "regression", True)
-        self.predict_actions['multiple_regression']=self._action(regression,'Predict…',lambda:self.predict_model('regression'),None,None,True)
-        self.profiler_actions['multiple_regression']=self._action(regression,'Prediction Profiler…',lambda:self.prediction_profiler('regression'),None,None,True)
-        self.factorial_plot_actions['multiple_regression']=self._action(regression,'Factorial Plots…',lambda:self.factorial_plots('regression'),None,None,True)
-        self.contour_plot_actions['multiple_regression']=self._action(regression,'Contour Plot…',lambda:self.model_contour_plot('regression'),None,None,True)
-        self.surface_plot_actions['multiple_regression']=self._action(regression,'Surface Plot…',lambda:self.model_surface_plot('regression'),None,None,True)
-        self.optimizer_actions['multiple_regression']=self._action(regression,'Response Optimizer…',lambda:self.optimize_responses('regression'),None,None,True)
+        self.predict_actions['multiple_regression']=self._action(regression,'Predict…',lambda:self.predict_model('regression'),None,'calculator',True)
+        self.profiler_actions['multiple_regression']=self._action(regression,'Prediction Profiler…',lambda:self.prediction_profiler('regression'),None,'chart',True)
+        self.factorial_plot_actions['multiple_regression']=self._action(regression,'Factorial Plots…',lambda:self.factorial_plots('regression'),None,'line_plot',True)
+        self.contour_plot_actions['multiple_regression']=self._action(regression,'Contour Plot…',lambda:self.model_contour_plot('regression'),None,'contour',True)
+        self.surface_plot_actions['multiple_regression']=self._action(regression,'Surface Plot…',lambda:self.model_surface_plot('regression'),None,'surface3d',True)
+        self.optimizer_actions['multiple_regression']=self._action(regression,'Response Optimizer…',lambda:self.optimize_responses('regression'),None,'regression',True)
         binary=regression_root.addMenu('Binary Logistic Regression')
+        binary.setIcon(tool_icon("regression"))
         self._action(binary,'Fit Binary Logistic Model…',self.fit_binary_logistic,None,'regression',True)
         self._action(regression_root, "Ordinal Logistic Regression…", self.ordinal_logistic_regression_dialog, None, "regression", True)
         self._action(regression_root, "Nominal Logistic Regression…", self.nominal_logistic_regression_dialog, None, "regression", True)
@@ -1655,97 +1704,121 @@ class ModernWindow(QMainWindow):
         self._action(regression_root, "Orthogonal Regression…", self.orthogonal_regression_dialog, None, "regression", True)
         self._action(regression_root, "&Stability Study…", self.stability_study_dialog, None, "regression", True)
         self._action(regression_root, "Partial Least Squares…", self.pls_regression_dialog, None, "regression", True)
-        self.predict_actions['fit_binary_logistic']=self._action(binary,'Predict…',lambda:self.predict_model('logistic'),None,None,True)
-        self.profiler_actions['fit_binary_logistic']=self._action(binary,'Prediction Profiler…',lambda:self.prediction_profiler('logistic'),None,None,True)
-        self.factorial_plot_actions['fit_binary_logistic']=self._action(binary,'Factorial Plots…',lambda:self.factorial_plots('logistic'),None,None,True)
-        self.contour_plot_actions['fit_binary_logistic']=self._action(binary,'Contour Plot…',lambda:self.model_contour_plot('logistic'),None,None,True)
-        self.surface_plot_actions['fit_binary_logistic']=self._action(binary,'Surface Plot…',lambda:self.model_surface_plot('logistic'),None,None,True)
-        self.optimizer_actions['fit_binary_logistic']=self._action(binary,'Response Optimizer…',lambda:self.optimize_responses('logistic'),None,None,True)
+        self.predict_actions['fit_binary_logistic']=self._action(binary,'Predict…',lambda:self.predict_model('logistic'),None,'calculator',True)
+        self.profiler_actions['fit_binary_logistic']=self._action(binary,'Prediction Profiler…',lambda:self.prediction_profiler('logistic'),None,'chart',True)
+        self.factorial_plot_actions['fit_binary_logistic']=self._action(binary,'Factorial Plots…',lambda:self.factorial_plots('logistic'),None,'line_plot',True)
+        self.contour_plot_actions['fit_binary_logistic']=self._action(binary,'Contour Plot…',lambda:self.model_contour_plot('logistic'),None,'contour',True)
+        self.surface_plot_actions['fit_binary_logistic']=self._action(binary,'Surface Plot…',lambda:self.model_surface_plot('logistic'),None,'surface3d',True)
+        self.optimizer_actions['fit_binary_logistic']=self._action(binary,'Response Optimizer…',lambda:self.optimize_responses('logistic'),None,'regression',True)
         poisson_menu = regression_root.addMenu("Poisson Regression")
+        poisson_menu.setIcon(tool_icon("regression"))
         self._action(poisson_menu, "Fit Poisson Model…", self.poisson_regression_dialog, None, "regression", True)
         self._action(poisson_menu, "Fit Negative Binomial Model…", self.negative_binomial_regression_dialog, None, "regression", True)
         doe = stat.addMenu("DOE")
+        doe.setIcon(tool_icon("doe"))
         self._action(doe,'DOE Planner…',self.doe_planner,None,'doe',True)
         doe.addSeparator(); factorial = doe.addMenu("Factorial")
+        factorial.setIcon(tool_icon("doe"))
         self._action(factorial, "Create Factorial Design…", self.create_factorial, None, "doe", True)
+        self._action(factorial, "Define Custom Factorial Design…", self.define_custom_factorial, None, "doe", True)
         self._action(factorial, "Analyze Factorial Design…", self.analyze_factorial, None, "doe", True)
-        self.predict_actions['analyze_factorial']=self._action(factorial,'Predict…',lambda:self.predict_model('factorial'),None,None,True)
-        self.profiler_actions['analyze_factorial']=self._action(factorial,'Prediction Profiler…',lambda:self.prediction_profiler('factorial'),None,None,True)
-        self.factorial_plot_actions['analyze_factorial']=self._action(factorial,'Factorial Plots…',lambda:self.factorial_plots('factorial'),None,None,True)
-        self.contour_plot_actions['analyze_factorial']=self._action(factorial,'Contour Plot…',lambda:self.model_contour_plot('factorial'),None,None,True)
-        self.surface_plot_actions['analyze_factorial']=self._action(factorial,'Surface Plot…',lambda:self.model_surface_plot('factorial'),None,None,True)
-        self.optimizer_actions['analyze_factorial']=self._action(factorial,'Response Optimizer…',lambda:self.optimize_responses('factorial'),None,None,True)
+        self.predict_actions['analyze_factorial']=self._action(factorial,'Predict…',lambda:self.predict_model('factorial'),None,'calculator',True)
+        self.profiler_actions['analyze_factorial']=self._action(factorial,'Prediction Profiler…',lambda:self.prediction_profiler('factorial'),None,'chart',True)
+        self.factorial_plot_actions['analyze_factorial']=self._action(factorial,'Factorial Plots…',lambda:self.factorial_plots('factorial'),None,'line_plot',True)
+        self.contour_plot_actions['analyze_factorial']=self._action(factorial,'Contour Plot…',lambda:self.model_contour_plot('factorial'),None,'contour',True)
+        self.surface_plot_actions['analyze_factorial']=self._action(factorial,'Surface Plot…',lambda:self.model_surface_plot('factorial'),None,'surface3d',True)
+        self.optimizer_actions['analyze_factorial']=self._action(factorial,'Response Optimizer…',lambda:self.optimize_responses('factorial'),None,'regression',True)
         self._action(factorial,'Create General Factorial Design…',lambda:self.doe_planner('general_factorial'),None,'doe',True)
         self._action(factorial,'Create Plackett–Burman Design…',lambda:self.doe_planner('plackett_burman'),None,'doe',True)
         screening = doe.addMenu("Screening")
+        screening.setIcon(tool_icon("doe"))
         self._action(screening, "Create Definitive Screening Design…", self.create_dsd_dialog, None, "doe", True)
         self._action(screening, "Analyze Definitive Screening Design…", self.analyze_dsd_dialog, None, "doe", True)
-        self.profiler_actions['definitive_screening_analysis'] = self._action(screening, 'Prediction Profiler…', lambda: self.prediction_profiler('definitive_screening'), None, None, True)
+        self.profiler_actions['definitive_screening_analysis'] = self._action(screening, 'Prediction Profiler…', lambda: self.prediction_profiler('definitive_screening'), None, 'chart', True)
         self._action(screening, "Create D-&Optimal Custom Design…", self.create_d_optimal_dialog, None, "doe", True)
         diagnostics = doe.addMenu("Design Diagnostics")
+        diagnostics.setIcon(tool_icon("correlogram"))
         self._action(diagnostics, "Evaluate &Design (Color Map on Correlations)…", self.evaluate_design_dialog, None, "doe", True)
         mixtures=doe.addMenu('Mixture')
+        mixtures.setIcon(tool_icon("doe"))
         self._action(mixtures,'Create Mixture Design…',lambda:self.doe_planner('simplex_centroid'),None,'doe',True)
         self._action(mixtures,'Analyze Mixture Design…',self.analyze_mixture,None,'regression',True)
         self._action(mixtures,'Analyze Mixture with Process Variables…',self.analyze_mixture_process,None,'regression',True)
-        self._action(mixtures,'Predict with Process Variables…',self.predict_mixture_process,None,None,True)
-        self._action(mixtures,'Contour with Process Variables…',self.mixture_process_contour,None,None,True)
+        self._action(mixtures,'Predict with Process Variables…',self.predict_mixture_process,None,'calculator',True)
+        self._action(mixtures,'Contour with Process Variables…',self.mixture_process_contour,None,'contour',True)
         self._action(mixtures,'Optimize with Process Variables…',self.optimize_mixture_process,None,'regression',True)
         self._action(mixtures,'Joint Mixture and Process Optimizer…',self.optimize_mixture_joint,None,'regression',True)
-        self._action(mixtures,'Predict…',self.predict_mixture,None,None,True)
-        self._action(mixtures,'Contour Plot…',self.mixture_contour,None,None,True)
+        self._action(mixtures,'Predict…',self.predict_mixture,None,'calculator',True)
+        self._action(mixtures,'Contour Plot…',self.mixture_contour,None,'contour',True)
         self._action(mixtures,'Response Optimizer…',self.optimize_mixture,None,'regression',True)
         self._action(mixtures,'Multiple Response Optimizer…',self.optimize_mixture_multi,None,'regression',True)
         taguchi=doe.addMenu('Taguchi')
+        taguchi.setIcon(tool_icon("doe"))
         self._action(taguchi,'Create Taguchi Design…',lambda:self.doe_planner('taguchi'),None,'doe',True)
         self._action(taguchi,'Analyze Taguchi Design…',self.analyze_taguchi,None,'regression',True)
         self._action(taguchi,'Analyze Dynamic Taguchi Design…',self.analyze_dynamic_taguchi,None,'regression',True)
         self._action(doe,'Create Custom Optimal Design…',lambda:self.doe_planner('custom_optimal'),None,'doe',True)
         response_surface_menu=doe.addMenu("Response Surface")
+        response_surface_menu.setIcon(tool_icon("surface3d"))
         self._action(response_surface_menu,"Create Response Surface Design…",self.create_response_surface,None,"doe",True)
         self._action(response_surface_menu,"Analyze Response Surface Design…",self.analyze_response_surface,None,"regression",True)
-        self.predict_actions['analyze_response_surface']=self._action(response_surface_menu,'Predict…',lambda:self.predict_model('response_surface'),None,None,True)
-        self.profiler_actions['analyze_response_surface']=self._action(response_surface_menu,'Prediction Profiler…',lambda:self.prediction_profiler('response_surface'),None,None,True)
-        self.factorial_plot_actions['analyze_response_surface']=self._action(response_surface_menu,'Factorial Plots…',lambda:self.factorial_plots('response_surface'),None,None,True)
-        self.contour_plot_actions['analyze_response_surface']=self._action(response_surface_menu,'Contour Plot…',lambda:self.model_contour_plot('response_surface'),None,None,True)
-        self.surface_plot_actions['analyze_response_surface']=self._action(response_surface_menu,'Surface Plot…',lambda:self.model_surface_plot('response_surface'),None,None,True)
-        self.optimizer_actions['analyze_response_surface']=self._action(response_surface_menu,'Response Optimizer…',lambda:self.optimize_responses('response_surface'),None,None,True)
+        self.predict_actions['analyze_response_surface']=self._action(response_surface_menu,'Predict…',lambda:self.predict_model('response_surface'),None,'calculator',True)
+        self.profiler_actions['analyze_response_surface']=self._action(response_surface_menu,'Prediction Profiler…',lambda:self.prediction_profiler('response_surface'),None,'chart',True)
+        self.factorial_plot_actions['analyze_response_surface']=self._action(response_surface_menu,'Factorial Plots…',lambda:self.factorial_plots('response_surface'),None,'line_plot',True)
+        self.contour_plot_actions['analyze_response_surface']=self._action(response_surface_menu,'Contour Plot…',lambda:self.model_contour_plot('response_surface'),None,'contour',True)
+        self.surface_plot_actions['analyze_response_surface']=self._action(response_surface_menu,'Surface Plot…',lambda:self.model_surface_plot('response_surface'),None,'surface3d',True)
+        self.optimizer_actions['analyze_response_surface']=self._action(response_surface_menu,'Response Optimizer…',lambda:self.optimize_responses('response_surface'),None,'regression',True)
+        self.operating_window_actions['analyze_response_surface']=self._action(response_surface_menu,'3D Operating Window…',lambda:self.operating_window_3d_dialog('response_surface'),None,'surface3d',True)
+        conf_menu=response_surface_menu.addMenu('Confirmation Experiments')
+        conf_menu.setIcon(tool_icon("workflow"))
+        self._action(conf_menu,'Create Confirmation Run Sheet…',self.create_confirmation_plan_dialog,None,'table',True)
+        self._action(conf_menu,'Evaluate Confirmation Results…',self.evaluate_confirmation_runs_dialog,None,'chart',True)
+        conf_menu.addSeparator()
+        self._action(conf_menu,'Load Chemical Process Operating Window Demo',self.load_chemical_operating_window_demo,None,'doe',False)
         control = stat.addMenu("Control Charts")
+        control.setIcon(tool_icon("control_chart"))
         self._action(control, "Control Chart &Builder (Interactive)…", self.control_chart_builder_dialog, None, "chart", True)
         control.addSeparator()
         subgroups_menu = control.addMenu("Variables Charts for Subgroups")
-        self.xbar_r_action = self._action(subgroups_menu, "Xbar-R…", self.xbar_r_dialog, None, None, True)
-        self.xbar_s_action = self._action(subgroups_menu, "Xbar-S…", self.xbar_s_dialog, None, None, True)
-        self._action(subgroups_menu, "Xbar…", self.xbar_dialog, None, None, True)
-        self._action(subgroups_menu, "R…", self.r_chart_dialog, None, None, True)
-        self._action(subgroups_menu, "S…", self.s_chart_dialog, None, None, True)
-        self._action(subgroups_menu, "&Acceptance Control Chart\u2026", self.acceptance_control_chart_dialog, None, None, True)
+        subgroups_menu.setIcon(tool_icon("control_chart"))
+        self.xbar_r_action = self._action(subgroups_menu, "Xbar-R…", self.xbar_r_dialog, None, "control_chart", True)
+        self.xbar_s_action = self._action(subgroups_menu, "Xbar-S…", self.xbar_s_dialog, None, "control_chart", True)
+        self._action(subgroups_menu, "Xbar…", self.xbar_dialog, None, "control_chart", True)
+        self._action(subgroups_menu, "R…", self.r_chart_dialog, None, "control_chart", True)
+        self._action(subgroups_menu, "S…", self.s_chart_dialog, None, "control_chart", True)
+        self._action(subgroups_menu, "&Acceptance Control Chart\u2026", self.acceptance_control_chart_dialog, None, "control_chart", True)
 
         individuals_menu = control.addMenu("Variables Charts for Individuals")
-        self._action(individuals_menu, "&I-MR…", self.imr_dialog, None, None, True)
+        individuals_menu.setIcon(tool_icon("control_chart"))
+        self._action(individuals_menu, "&I-MR…", self.imr_dialog, None, "control_chart", True)
 
         attributes_menu = control.addMenu("Attributes Charts")
-        self._action(attributes_menu, "&P…", lambda: self.attribute_control_dialog("P"), None, None, True)
-        self._action(attributes_menu, "&NP…", lambda: self.attribute_control_dialog("NP"), None, None, True)
-        self._action(attributes_menu, "&C…", lambda: self.attribute_control_dialog("C"), None, None, True)
-        self._action(attributes_menu, "&U…", lambda: self.attribute_control_dialog("U"), None, None, True)
-        self._action(attributes_menu, "Laney &P'…", lambda: self.attribute_control_dialog("P'"), None, None, True)
-        self._action(attributes_menu, "Laney &U'…", lambda: self.attribute_control_dialog("U'"), None, None, True)
+        attributes_menu.setIcon(tool_icon("control_chart"))
+        self._action(attributes_menu, "&P…", lambda: self.attribute_control_dialog("P"), None, "control_chart", True)
+        self._action(attributes_menu, "&NP…", lambda: self.attribute_control_dialog("NP"), None, "control_chart", True)
+        self._action(attributes_menu, "&C…", lambda: self.attribute_control_dialog("C"), None, "control_chart", True)
+        self._action(attributes_menu, "&U…", lambda: self.attribute_control_dialog("U"), None, "control_chart", True)
+        self._action(attributes_menu, "Laney &P'…", lambda: self.attribute_control_dialog("P'"), None, "control_chart", True)
+        self._action(attributes_menu, "Laney &U'…", lambda: self.attribute_control_dialog("U'"), None, "control_chart", True)
 
         time_weighted_menu = control.addMenu("&Time-Weighted Charts")
-        self._action(time_weighted_menu, "&Moving Average…", self.moving_average_dialog, None, None, True)
-        self._action(time_weighted_menu, "&EWMA…", self.ewma_dialog, None, None, True)
-        self._action(time_weighted_menu, "&CUSUM…", self.cusum_dialog, None, None, True)
+        time_weighted_menu.setIcon(tool_icon("time_series"))
+        self._action(time_weighted_menu, "&Moving Average…", self.moving_average_dialog, None, "line_plot", True)
+        self._action(time_weighted_menu, "&EWMA…", self.ewma_dialog, None, "line_plot", True)
+        self._action(time_weighted_menu, "&CUSUM…", self.cusum_dialog, None, "line_plot", True)
 
         multivariate_menu = control.addMenu("&Multivariate Charts")
-        self._action(multivariate_menu, "&T²…", self.tsquared_chart_dialog, None, None, True)
-        self._action(multivariate_menu, "&Generalized Variance…", self.genvar_chart_dialog, None, None, True)
-        self._action(multivariate_menu, "&Multivariate EWMA…", self.mewma_chart_dialog, None, None, True)
+        multivariate_menu.setIcon(tool_icon("control_chart"))
+        self._action(multivariate_menu, "&T²…", self.tsquared_chart_dialog, None, "control_chart", True)
+        self._action(multivariate_menu, "&Generalized Variance…", self.genvar_chart_dialog, None, "control_chart", True)
+        self._action(multivariate_menu, "&Multivariate EWMA…", self.mewma_chart_dialog, None, "control_chart", True)
 
         rare_event_menu = control.addMenu("&Rare Event Charts")
-        self._action(rare_event_menu, "&G…", self.g_chart_dialog, None, None, True)
-        self._action(rare_event_menu, "&T…", self.t_chart_dialog, None, None, True)
+        rare_event_menu.setIcon(tool_icon("control_chart"))
+        self._action(rare_event_menu, "&G…", self.g_chart_dialog, None, "control_chart", True)
+        self._action(rare_event_menu, "&T…", self.t_chart_dialog, None, "control_chart", True)
         quality = stat.addMenu("Quality Tools")
+        quality.setIcon(tool_icon("capability"))
         self._action(quality, "Process &Screening…", self.process_screening_dialog, None, "table", True)
         self._action(quality, "&Variability / Gauge Chart…", self.variability_chart_dialog, None, "chart", True)
         self.run_chart_action = self._action(quality, "&Run Chart…", self.run_chart_dialog, None, "run_chart", True)
@@ -1756,6 +1829,7 @@ class ModernWindow(QMainWindow):
         self.box_cox_action = self._action(quality, "&Box-Cox Transformation…", self.box_cox_dialog, None, "chart", True)
         self.johnson_action = self._action(quality, "&Johnson Transformation…", self.johnson_dialog, None, "chart", True)
         capa_menu = quality.addMenu("Capability Analysis")
+        capa_menu.setIcon(tool_icon("capability"))
         self._action(capa_menu, "&Normal…", self.capability, None, "capability", True)
         self._action(capa_menu, "Between/W&ithin…", self.capability_between_within, None, "capability", True)
         self._action(capa_menu, "&Machine (Normal)…", self.capability_machine, None, "capability", True)
@@ -1768,6 +1842,7 @@ class ModernWindow(QMainWindow):
         self._action(capa_menu, "Poiss&on…", lambda: self.attribute_capability_dialog('poisson'), None, "histogram", True)
 
         sixpack_menu = quality.addMenu("Capability Sixpack")
+        sixpack_menu.setIcon(tool_icon("capability"))
         self._action(sixpack_menu, "&Normal…", self.capability_sixpack, None, "capability", True)
         self._action(sixpack_menu, "Between/W&ithin…", self.capability_sixpack_between_within, None, "capability", True)
         self._action(sixpack_menu, "Nonnorma&l…", self.capability_sixpack_nonnormal, None, "capability", True)
@@ -1777,6 +1852,7 @@ class ModernWindow(QMainWindow):
         self._action(quality, "Acceptance Sampling by &Variables…", self.acceptance_sampling_variables_dialog, None, "chart", True)
 
         gage=quality.addMenu('Gage Study')
+        gage.setIcon(tool_icon("table"))
         self._action(gage,'&Type 1 Gage Study…',self.type1_gage_dialog,None,"chart",True)
         self._action(gage,'Gage R&R Study (Crossed)…',self.gage_rr,None,"table",True)
         self._action(gage,'Gage R&R Study (&Nested)…',self.nested_gage_rr_dialog,None,"table",True)
@@ -1786,6 +1862,7 @@ class ModernWindow(QMainWindow):
         self._action(gage,'Evaluating the &Measurement Process (EMP)…',self.emp_dialog,None,"run_chart",True)
         self._action(quality, '&Attribute Agreement Analysis…', self.attribute_agreement_dialog, None, "table", True)
         six_sigma_menu = quality.addMenu("Six &Sigma Quality")
+        six_sigma_menu.setIcon(tool_icon("capability"))
         self._action(six_sigma_menu, "Six Sigma &Process Report…", self.six_sigma_process_dialog, None, "capability", True)
         self._action(six_sigma_menu, "Six Sigma &Product Report (RTY)…", self.six_sigma_product_dialog, None, "table", True)
         six_sigma_menu.addSeparator()
@@ -1793,14 +1870,18 @@ class ModernWindow(QMainWindow):
 
         # 5b. Reliability/Survival menu
         reliability = stat.addMenu("&Reliability/Survival")
+        reliability.setIcon(tool_icon("reliability"))
         dist_analysis = reliability.addMenu("&Distribution Analysis (Right Censoring)")
-        self._action(dist_analysis, "Parametric &Distribution Analysis…", self.reliability_distribution_dialog, None, None, True)
+        dist_analysis.setIcon(tool_icon("reliability"))
+        self._action(dist_analysis, "Parametric &Distribution Analysis…", self.reliability_distribution_dialog, None, "reliability", True)
         arb_analysis = reliability.addMenu("Distribution Analysis (&Arbitrary Censoring)")
-        self._action(arb_analysis, "Parametric &Distribution Analysis…", self.reliability_arbitrary_dialog, None, None, True)
-        self._action(reliability, "Accelerated &Life Testing…", self.alt_dialog, None, None, True)
+        arb_analysis.setIcon(tool_icon("reliability"))
+        self._action(arb_analysis, "Parametric &Distribution Analysis…", self.reliability_arbitrary_dialog, None, "reliability", True)
+        self._action(reliability, "Accelerated &Life Testing…", self.alt_dialog, None, "reliability", True)
         self._action(reliability, "Regression with &Life Data…", self.life_regression_dialog, None, "reliability", True)
         self._action(reliability, "&Probit Analysis…", self.probit_analysis_dialog, None, "reliability", True)
         repairable_menu = reliability.addMenu("Repairable &Systems Analysis")
+        repairable_menu.setIcon(tool_icon("reliability"))
         self._action(repairable_menu, "Nonparametric &Growth Curve…", self.nonparametric_growth_curve_dialog, None, "reliability", True)
         self._action(repairable_menu, "&Parametric Growth Curve…", self.parametric_growth_curve_dialog, None, "reliability", True)
         self._action(reliability, "&Cox Proportional Hazards Regression…", self.cox_ph_dialog, None, "reliability", True)
@@ -1808,59 +1889,64 @@ class ModernWindow(QMainWindow):
 
         # 5c. Time Series menu
         time_series = stat.addMenu("&Time Series")
-        self._action(time_series, "&Trend Analysis…", self.trend_analysis_dialog, None, None, True)
-        self._action(time_series, "&Decomposition…", self.decomposition_dialog, None, None, True)
-        self._action(time_series, "&Moving Average…", self.moving_average_dialog, None, None, True)
-        self._action(time_series, "&Single Exp Smoothing…", self.single_exp_smoothing_dialog, None, None, True)
-        self._action(time_series, "&Double Exp Smoothing…", self.double_exp_smoothing_dialog, None, None, True)
-        self._action(time_series, "&Winters' Method…", self.winters_method_dialog, None, None, True)
-        self._action(time_series, "&ARIMA…", self.arima_dialog, None, None, True)
-        self._action(time_series, "Forecast with &Best ARIMA Model…", self.best_arima_dialog, None, None, True)
+        time_series.setIcon(tool_icon("time_series"))
+        self._action(time_series, "&Trend Analysis…", self.trend_analysis_dialog, None, "line_plot", True)
+        self._action(time_series, "&Decomposition…", self.decomposition_dialog, None, "time_series", True)
+        self._action(time_series, "&Moving Average…", self.moving_average_dialog, None, "line_plot", True)
+        self._action(time_series, "&Single Exp Smoothing…", self.single_exp_smoothing_dialog, None, "line_plot", True)
+        self._action(time_series, "&Double Exp Smoothing…", self.double_exp_smoothing_dialog, None, "line_plot", True)
+        self._action(time_series, "&Winters' Method…", self.winters_method_dialog, None, "time_series", True)
+        self._action(time_series, "&ARIMA…", self.arima_dialog, None, "time_series", True)
+        self._action(time_series, "Forecast with &Best ARIMA Model…", self.best_arima_dialog, None, "time_series", True)
         time_series.addSeparator()
-        self._action(time_series, "&Autocorrelation…", self.autocorrelation_dialog, None, None, True)
-        self._action(time_series, "&Partial Autocorrelation…", self.partial_autocorrelation_dialog, None, None, True)
-        self._action(time_series, "Cross &Correlation…", self.cross_correlation_dialog, None, None, True)
+        self._action(time_series, "&Autocorrelation…", self.autocorrelation_dialog, None, "correlogram", True)
+        self._action(time_series, "&Partial Autocorrelation…", self.partial_autocorrelation_dialog, None, "correlogram", True)
+        self._action(time_series, "Cross &Correlation…", self.cross_correlation_dialog, None, "correlation", True)
         time_series.addSeparator()
-        self._action(time_series, "Di&fferences…", self.differences_dialog, None, None, True)
-        self._action(time_series, "&Lag…", self.lag_dialog, None, None, True)
+        self._action(time_series, "Di&fferences…", self.differences_dialog, None, "calculator", True)
+        self._action(time_series, "&Lag…", self.lag_dialog, None, "table", True)
 
         # 5d. Nonparametrics menu
         nonparam = stat.addMenu("&Nonparametrics")
-        self._action(nonparam, "&1-Sample Sign…", self.sign_test_dialog, None, None, True)
-        self._action(nonparam, "1-Sample &Wilcoxon…", self.one_sample_wilcoxon_dialog, None, None, True)
-        self._action(nonparam, "&Mann-Whitney…", self.mann_whitney_dialog, None, None, True)
-        self._action(nonparam, "&Kruskal-Wallis…", self.kruskal_wallis_dialog, None, None, True)
-        self._action(nonparam, "M&ood's Median Test…", self.moods_median_dialog, None, None, True)
-        self._action(nonparam, "&Friedman…", self.friedman_dialog, None, None, True)
-        self._action(nonparam, "&Runs Test…", self.runs_test_dialog, None, None, True)
-        self._action(nonparam, "&Paired Wilcoxon…", self.paired_wilcoxon_dialog, None, None, True)
+        nonparam.setIcon(tool_icon("boxplot"))
+        self._action(nonparam, "&1-Sample Sign…", self.sign_test_dialog, None, "summary", True)
+        self._action(nonparam, "1-Sample &Wilcoxon…", self.one_sample_wilcoxon_dialog, None, "summary", True)
+        self._action(nonparam, "&Mann-Whitney…", self.mann_whitney_dialog, None, "boxplot", True)
+        self._action(nonparam, "&Kruskal-Wallis…", self.kruskal_wallis_dialog, None, "boxplot", True)
+        self._action(nonparam, "M&ood's Median Test…", self.moods_median_dialog, None, "boxplot", True)
+        self._action(nonparam, "&Friedman…", self.friedman_dialog, None, "table", True)
+        self._action(nonparam, "&Runs Test…", self.runs_test_dialog, None, "run_chart", True)
+        self._action(nonparam, "&Paired Wilcoxon…", self.paired_wilcoxon_dialog, None, "summary", True)
 
         # 5e. Multivariate menu
         multivar = stat.addMenu("&Multivariate")
-        self._action(multivar, "&Principal Components...", self.pca_dialog, None, None, True)
-        self._action(multivar, "&Factor Analysis...", self.factor_analysis_dialog, None, None, True)
-        self._action(multivar, "&Item Analysis...", self.item_analysis_dialog, None, None, True)
+        multivar.setIcon(tool_icon("matrix_plot"))
+        self._action(multivar, "&Principal Components...", self.pca_dialog, None, "scatter", True)
+        self._action(multivar, "&Factor Analysis...", self.factor_analysis_dialog, None, "table", True)
+        self._action(multivar, "&Item Analysis...", self.item_analysis_dialog, None, "correlation", True)
         multivar.addSeparator()
-        self._action(multivar, "Cluster &Observations...", self.cluster_observations_dialog, None, None, True)
-        self._action(multivar, "Cluster &K-Means...", self.cluster_kmeans_dialog, None, None, True)
-        self._action(multivar, "Cluster &Variables...", self.cluster_variables_dialog, None, None, True)
+        self._action(multivar, "Cluster &Observations...", self.cluster_observations_dialog, None, "heatmap", True)
+        self._action(multivar, "Cluster &K-Means...", self.cluster_kmeans_dialog, None, "scatter", True)
+        self._action(multivar, "Cluster &Variables...", self.cluster_variables_dialog, None, "heatmap", True)
 
         multivar.addSeparator()
-        self._action(multivar, "&Discriminant Analysis...", self.discriminant_analysis_dialog, None, None, True)
-        self._action(multivar, "&Simple Correspondence Analysis...", self.simple_correspondence_dialog, None, None, True)
-        self._action(multivar, "&Multiple Correspondence Analysis...", self.multiple_correspondence_dialog, None, None, True)
+        self._action(multivar, "&Discriminant Analysis...", self.discriminant_analysis_dialog, None, "scatter", True)
+        self._action(multivar, "&Simple Correspondence Analysis...", self.simple_correspondence_dialog, None, "table", True)
+        self._action(multivar, "&Multiple Correspondence Analysis...", self.multiple_correspondence_dialog, None, "table", True)
 
         # 5f. Equivalence Tests menu
         equiv = stat.addMenu("&Equivalence Tests")
-        self._action(equiv, "&1-Sample...", self.one_sample_equivalence_dialog, None, None, True)
-        self._action(equiv, "&2-Sample...", self.two_sample_equivalence_dialog, None, None, True)
-        self._action(equiv, "&Paired...", self.paired_equivalence_dialog, None, None, True)
-        self._action(equiv, "&2x2 Crossover Design...", self.crossover_equivalence_dialog, None, None, True)
+        equiv.setIcon(tool_icon("interval"))
+        self._action(equiv, "&1-Sample...", self.one_sample_equivalence_dialog, None, "interval", True)
+        self._action(equiv, "&2-Sample...", self.two_sample_equivalence_dialog, None, "interval", True)
+        self._action(equiv, "&Paired...", self.paired_equivalence_dialog, None, "interval", True)
+        self._action(equiv, "&2x2 Crossover Design...", self.crossover_equivalence_dialog, None, "interval", True)
 
         # 5f2. Predictive Analytics menu
         predictive = stat.addMenu("&Predictive Analytics")
+        predictive.setIcon(tool_icon("regression"))
         self._action(predictive, "Fit &Y by X (Bivariate / Oneway / Contingency)…", self.fit_y_by_x_dialog, None, "scatter", True)
-        self._action(predictive, "CART® / &Partition Decision Tree…", self.cart_tree_dialog, None, None, True)
+        self._action(predictive, "CART® / &Partition Decision Tree…", self.cart_tree_dialog, None, "workflow", True)
         self._action(predictive, "Random &Forests® (Classification && Regression)…", self.random_forest_dialog, None, "regression", True)
         self._action(predictive, "&TreeNet® Gradient Boosting…", self.treenet_dialog, None, "regression", True)
         self._action(predictive, "&MARS® Regression && Classification…", self.mars_dialog, None, "regression", True)
@@ -1871,44 +1957,49 @@ class ModernWindow(QMainWindow):
 
         # 5g. Power and Sample Size menu
         power_menu = stat.addMenu("&Power and Sample Size")
-        self._action(power_menu, "&1-Sample Z...", self.one_sample_z_power_dialog, None, None, True)
-        self._action(power_menu, "1-Sample &t...", self.one_sample_t_power_dialog, None, None, True)
-        self._action(power_menu, "&2-Sample t...", self.two_sample_t_power_dialog, None, None, True)
-        self._action(power_menu, "&Paired t...", self.paired_t_power_dialog, None, None, True)
-        self._action(power_menu, "1 &Proportion...", self.one_proportion_power_dialog, None, None, True)
-        self._action(power_menu, "2 P&roportions...", self.two_proportions_power_dialog, None, None, True)
-        self._action(power_menu, "&One-Way ANOVA...", self.oneway_anova_power_dialog, None, None, True)
-        self._action(power_menu, "2-Level &Factorial Design...", self.factorial_power_dialog, None, None, True)
+        power_menu.setIcon(tool_icon("probability"))
+        self._action(power_menu, "&1-Sample Z...", self.one_sample_z_power_dialog, None, "probability", True)
+        self._action(power_menu, "1-Sample &t...", self.one_sample_t_power_dialog, None, "probability", True)
+        self._action(power_menu, "&2-Sample t...", self.two_sample_t_power_dialog, None, "probability", True)
+        self._action(power_menu, "&Paired t...", self.paired_t_power_dialog, None, "probability", True)
+        self._action(power_menu, "1 &Proportion...", self.one_proportion_power_dialog, None, "pie_chart", True)
+        self._action(power_menu, "2 P&roportions...", self.two_proportions_power_dialog, None, "pie_chart", True)
+        self._action(power_menu, "&One-Way ANOVA...", self.oneway_anova_power_dialog, None, "boxplot", True)
+        self._action(power_menu, "2-Level &Factorial Design...", self.factorial_power_dialog, None, "doe", True)
         power_menu.addSeparator()
-        self._action(power_menu, "&1 Variance…", self.one_variance_power_dialog, None, None, True)
-        self._action(power_menu, "&2 Variances…", self.two_variances_power_dialog, None, None, True)
-        self._action(power_menu, "1-Sample &Poisson Rate…", self.one_poisson_rate_power_dialog, None, None, True)
-        self._action(power_menu, "2-Sample Poisson &Rates…", self.two_poisson_rates_power_dialog, None, None, True)
+        self._action(power_menu, "&1 Variance…", self.one_variance_power_dialog, None, "probability", True)
+        self._action(power_menu, "&2 Variances…", self.two_variances_power_dialog, None, "probability", True)
+        self._action(power_menu, "1-Sample &Poisson Rate…", self.one_poisson_rate_power_dialog, None, "histogram", True)
+        self._action(power_menu, "2-Sample Poisson &Rates…", self.two_poisson_rates_power_dialog, None, "histogram", True)
         from .power_extended import EQUIVALENCE_DESIGNS
         equivalence_power_menu = power_menu.addMenu("&Equivalence Tests")
+        equivalence_power_menu.setIcon(tool_icon("interval"))
         for design in EQUIVALENCE_DESIGNS:
             self._action(equivalence_power_menu, design + "…",
-                         lambda d=design: self.equivalence_difference_power_dialog(d), None, None, True)
-        self._action(power_menu, "Plackett-&Burman Design…", self.plackett_burman_power_dialog, None, None, True)
-        self._action(power_menu, "General Full &Factorial Design…", self.general_factorial_power_dialog, None, None, True)
-        self._action(power_menu, "Sample Size for &Estimation…", self.sample_size_estimation_dialog, None, None, True)
-        self._action(power_menu, "Sample Size for &Tolerance Intervals…", self.sample_size_tolerance_dialog, None, None, True)
+                         lambda d=design: self.equivalence_difference_power_dialog(d), None, "interval", True)
+        self._action(power_menu, "Plackett-&Burman Design…", self.plackett_burman_power_dialog, None, "doe", True)
+        self._action(power_menu, "General Full &Factorial Design…", self.general_factorial_power_dialog, None, "doe", True)
+        self._action(power_menu, "Sample Size for &Estimation…", self.sample_size_estimation_dialog, None, "probability", True)
+        self._action(power_menu, "Sample Size for &Tolerance Intervals…", self.sample_size_tolerance_dialog, None, "interval", True)
         resampling_menu = stat.addMenu("Resam&pling")
-        self._action(resampling_menu, "1-Sample &Bootstrap…", self.bootstrap_1sample_dialog, None, None, True)
-        self._action(resampling_menu, "2-Sample B&ootstrap…", self.bootstrap_2sample_dialog, None, None, True)
-        self._action(resampling_menu, "1-Sample &Randomization Test…", self.randomization_1sample_dialog, None, None, True)
-        self._action(resampling_menu, "2-Sample Rando&mization Test…", self.randomization_2sample_dialog, None, None, True)
+        resampling_menu.setIcon(tool_icon("histogram"))
+        self._action(resampling_menu, "1-Sample &Bootstrap…", self.bootstrap_1sample_dialog, None, "histogram", True)
+        self._action(resampling_menu, "2-Sample B&ootstrap…", self.bootstrap_2sample_dialog, None, "histogram", True)
+        self._action(resampling_menu, "1-Sample &Randomization Test…", self.randomization_1sample_dialog, None, "histogram", True)
+        self._action(resampling_menu, "2-Sample Rando&mization Test…", self.randomization_2sample_dialog, None, "histogram", True)
 
         # 5h. Tables menu
         tables_menu = stat.addMenu("&Tables")
-        self._action(tables_menu, "&Cross Tabulation and Chi-Square...", self.cross_tabulation_dialog, None, None, True)
-        self._action(tables_menu, "Chi-Square &Goodness-of-Fit Test (One Variable)...", self.chi_square_goodness_of_fit_dialog, None, None, True)
-        self._action(tables_menu, "Chi-Square Test for &Association...", self.chi_square_association_dialog, None, None, True)
-        self._action(tables_menu, "&Tally Individual Variables...", self.tally_dialog, None, None, True)
+        tables_menu.setIcon(tool_icon("table"))
+        self._action(tables_menu, "&Cross Tabulation and Chi-Square...", self.cross_tabulation_dialog, None, "table", True)
+        self._action(tables_menu, "Chi-Square &Goodness-of-Fit Test (One Variable)...", self.chi_square_goodness_of_fit_dialog, None, "bar_chart", True)
+        self._action(tables_menu, "Chi-Square Test for &Association...", self.chi_square_association_dialog, None, "table", True)
+        self._action(tables_menu, "&Tally Individual Variables...", self.tally_dialog, None, "table", True)
 
         # 5i. R Translator menu
         stat.addSeparator()
         r_menu = stat.addMenu("&R Translator")
+        r_menu.setIcon(tool_icon("code_view"))
         self._action(r_menu, "Copy Modern &Tidyverse & ggplot2 Script", self.copy_active_r_script, "Ctrl+Alt+R", "copy")
         self._action(r_menu, "Copy Pure &Base R Script", self.copy_active_base_r_script, None, "copy")
         self._action(r_menu, "View &R Code (Tidyverse & Base R)...", self.view_active_r_code, None, "code_view")
@@ -1918,7 +2009,7 @@ class ModernWindow(QMainWindow):
         self._action(r_menu, "Export Worksheet with &vroom / readxl (.R)...", self.export_worksheet_vroom, None, "save")
         self._action(r_menu, "Export Worksheet to &R Data Frame (.R)...", self.export_worksheet_r_dataframe, None, "save")
         r_menu.addSeparator()
-        self._action(r_menu, "Run &R Script...", self.run_r_script_dialog, None, None, True)
+        self._action(r_menu, "Run &R Script...", self.run_r_script_dialog, None, "workflow", True)
 
         # 7. Graph menu
         graph = bar.addMenu("&Graph")
@@ -1929,106 +2020,118 @@ class ModernWindow(QMainWindow):
             title, method = item
             self.graph_actions[method] = self._action(graph, title + "…", lambda checked=False, m=method: self.graph(m), None, method, True)
         graph.addSeparator()
-        self.auto_update_graphs_action = QAction("Update Graph Automatically", self, checkable=True, checked=getattr(self, "_auto_update_graphs", False))
+        self.auto_update_graphs_action = QAction(tool_icon("refresh"), "Update Graph Automatically", self, checkable=True, checked=getattr(self, "_auto_update_graphs", False))
         self.auto_update_graphs_action.triggered.connect(self.toggle_auto_update_graphs)
         graph.addAction(self.auto_update_graphs_action)
         self.update_all_graphs_action = self._action(graph, "Update All Graphs", self.update_all_graphs, None, "refresh")
-        self._action(graph, "Add Reference Line…", self.add_reference_line_dialog)
-        self._action(graph, "Add Percentile Line…", self.add_percentile_line_dialog)
-        self._action(graph, "Edit Graph Title / Subtitle / Footnote…", self.edit_graph_titles_dialog)
-        self._action(graph, "Insert Graph Text Annotation…", self.insert_graph_text_annotation_dialog)
-        self._action(graph, "Duplicate Graph Annotation", self.duplicate_graph_annotation)
-        self._action(graph, "Toggle Gridlines", self.toggle_graph_gridlines_action)
-        self.graph_crosshair_action = QAction("Crosshair Mode", self, checkable=True, checked=getattr(self, "_graph_crosshair_enabled", False))
+        self._action(graph, "Add Reference Line…", self.add_reference_line_dialog, None, "edit_graph")
+        self._action(graph, "Add Percentile Line…", self.add_percentile_line_dialog, None, "edit_graph")
+        self._action(graph, "Edit Graph Title / Subtitle / Footnote…", self.edit_graph_titles_dialog, None, "rename_sheet")
+        self._action(graph, "Insert Graph Text Annotation…", self.insert_graph_text_annotation_dialog, None, "edit_graph")
+        self._action(graph, "Duplicate Graph Annotation", self.duplicate_graph_annotation, None, "copy")
+        self._action(graph, "Toggle Gridlines", self.toggle_graph_gridlines_action, None, "table")
+        self.graph_crosshair_action = QAction(tool_icon("find"), "Crosshair Mode", self, checkable=True, checked=getattr(self, "_graph_crosshair_enabled", False))
         self.graph_crosshair_action.triggered.connect(self.toggle_graph_crosshair)
         graph.addAction(self.graph_crosshair_action)
-        self._action(graph, "Reset 3D View Defaults", self.reset_graph_3d_view_defaults)
+        self._action(graph, "Reset 3D View Defaults", self.reset_graph_3d_view_defaults, None, "reset")
         graph.addSeparator()
-        self._action(graph, "Tile With Worksheet", self.tile_with_worksheet)
-        self._action(graph, "Append to ReportPad", self.append_active_to_report_pad)
-        self._action(graph, "Create Indicator Variables from Brushed Rows…", self.create_indicator_from_brushed_dialog)
-        self._action(graph, "Set Brushing Color…", self.set_brushing_color_dialog)
-        self.brushing_palette_action = QAction("Show/Hide Brushing Palette", self, checkable=True, checked=getattr(self, "_brushing_palette_visible", False))
+        self._action(graph, "Tile With Worksheet", self.tile_with_worksheet, None, "layout_tool")
+        self._action(graph, "Append to ReportPad", self.append_active_to_report_pad, None, "send_report")
+        self._action(graph, "Create Indicator Variables from Brushed Rows…", self.create_indicator_from_brushed_dialog, None, "brush_points")
+        self._action(graph, "Set Brushing Color…", self.set_brushing_color_dialog, None, "brush_points")
+        self.brushing_palette_action = QAction(tool_icon("brush_points"), "Show/Hide Brushing Palette", self, checkable=True, checked=getattr(self, "_brushing_palette_visible", False))
         self.brushing_palette_action.triggered.connect(self.toggle_brushing_palette)
         graph.addAction(self.brushing_palette_action)
-        self._action(graph, "Close Current Graph", self.close_current_graph)
+        self._action(graph, "Close Current Graph", self.close_current_graph, None, "close")
 
-        # 8. View menu (`RT_MENU 8445`: Navigator, Command Line/History, Data and Output, Data Only, Output Only, Zoom)
+        # 8. View menu
         view = bar.addMenu("&View")
-        self.dark_mode_action = QAction("Dark Mode", self, checkable=True, checked=getattr(self, "_dark_mode", False))
+        self.dark_mode_action = QAction(tool_icon("dark_mode"), "Dark Mode", self, checkable=True, checked=getattr(self, "_dark_mode", False))
         self.dark_mode_action.setShortcut(QKeySequence("Ctrl+Shift+D"))
         self.dark_mode_action.triggered.connect(self.toggle_dark_mode)
         view.addAction(self.dark_mode_action)
         view.addSeparator()
-        self.view_nav_action = QAction("Navigator", self, checkable=True, checked=True)
+        self.view_nav_action = QAction(tool_icon("navigator"), "Navigator", self, checkable=True, checked=True)
         self.view_nav_action.triggered.connect(self.toggle_navigator)
         view.addAction(self.view_nav_action)
-        self.view_cmd_action = QAction("Command Line/History", self, checkable=True, checked=False)
+        self.view_cmd_action = QAction(tool_icon("code_view"), "Command Line/History", self, checkable=True, checked=False)
         self.view_cmd_action.setShortcut(QKeySequence("Ctrl+M"))
         self.view_cmd_action.triggered.connect(self.toggle_command_line)
         view.addAction(self.view_cmd_action)
-        self.view_formula_bar_action = QAction("Formula Bar", self, checkable=True, checked=False)
-        self.view_formula_bar_action.triggered.connect(lambda checked: self.formula_bar.setVisible(bool(checked)))
-        view.addAction(self.view_formula_bar_action)
         view.addSeparator()
         self.view_mode_actions = {}
         mode_group = QActionGroup(self)
-        for mode, text, accel in (
-            ("both", "Data and Output", "Ctrl+Alt+D"),
-            ("data", "Data Only", "Ctrl+Alt+W"),
-            ("output", "Output Only", "Ctrl+Alt+O"),
+        for mode, text, accel, icon_k in (
+            ("both", "Data and Output", "Ctrl+Alt+D", "layout_tool"),
+            ("data", "Data Only", "Ctrl+Alt+W", "worksheet"),
+            ("output", "Output Only", "Ctrl+Alt+O", "report"),
         ):
-            act = QAction(text, self, checkable=True, checked=(mode == "both"))
+            act = QAction(tool_icon(icon_k), text, self, checkable=True, checked=(mode == "both"))
             act.setShortcut(QKeySequence(accel))
             act.triggered.connect(lambda checked=False, m=mode: self.set_view_mode(m))
-            mode_group.addAction(act); view.addAction(act)
+            mode_group.addAction(act)
+            view.addAction(act)
             self.view_mode_actions[mode] = act
         view.addSeparator()
         zoom_menu = view.addMenu("Zoom")
+        zoom_menu.setIcon(tool_icon("zoom"))
         self._action(zoom_menu, "Zoom In", lambda: self.set_zoom(self._zoom_percent + 10), QKeySequence.StandardKey.ZoomIn, "zoom_in")
         self._action(zoom_menu, "Zoom Out", lambda: self.set_zoom(self._zoom_percent - 10), QKeySequence.StandardKey.ZoomOut, "zoom_out")
         self._action(zoom_menu, "100%", lambda: self.set_zoom(100), QKeySequence("Ctrl+0"), "zoom")
-        self._action(zoom_menu, "Fit Window", self.fit_output_window)
-        self._action(zoom_menu, "Specify…", self.specify_zoom)
-        for percent in (50,75,150,200):
-            self._action(zoom_menu,str(percent)+"%",lambda checked=False,p=percent:self.set_zoom(p))
-        view.addSeparator()
-        self._action(view,"Show ReportPad",lambda:self._workspace.show_pad())
-        self._action(view, "Next Output Tab", self.next_output_tab, QKeySequence("Ctrl+Tab"))
-        self._action(view, "Previous Output Tab", self.prev_output_tab, QKeySequence("Ctrl+Shift+Tab"))
-        self._action(view,"Reopen Closed Output Tab",lambda:self._workspace.reopen())
-        self._action(view,"Close Other Output Tabs",lambda:self._workspace.close_all(self._workspace.state['active']))
-        self._action(view,"Close All Output Tabs",lambda:self._workspace.close_all())
-        self._action(view, "Close Current Graph", self.close_current_graph)
-        self._action(view, "Close All Graphs", self.close_all_graphs)
-        view.addSeparator()
-        self._action(view, "Freeze Panes", self.freeze_panes)
-        self._action(view, "Unfreeze Rows/Cols", self.unfreeze_panes)
-        self._action(view, "Split View", self.split_output_view)
-        self._action(view, "Unsplit View", self.unsplit_output_view)
-        self._action(view, "Tile With Worksheet", self.tile_with_worksheet)
-        view.addAction(self.brushing_palette_action)
-        nav_order_menu = view.addMenu("Navigator Output Ordering")
+        self._action(zoom_menu, "Fit Window", self.fit_output_window, None, "zoom")
+        self._action(zoom_menu, "Specify…", self.specify_zoom, None, "zoom")
+        for percent in (50, 75, 150, 200):
+            self._action(zoom_menu, str(percent) + "%", lambda checked=False, p=percent: self.set_zoom(p), None, "zoom")
+
+        output_tabs_menu = view.addMenu("Output Tabs")
+        output_tabs_menu.setIcon(tool_icon("report"))
+        self._action(output_tabs_menu, "Show ReportPad", lambda: self._workspace.show_pad(), None, "report")
+        self._action(output_tabs_menu, "Next Output Tab", self.next_output_tab, QKeySequence("Ctrl+Tab"), "next_brushed")
+        self._action(output_tabs_menu, "Previous Output Tab", self.prev_output_tab, QKeySequence("Ctrl+Shift+Tab"), "prev_brushed")
+        self._action(output_tabs_menu, "Reopen Closed Output Tab", lambda: self._workspace.reopen(), None, "undo")
+        output_tabs_menu.addSeparator()
+        self._action(output_tabs_menu, "Close Other Output Tabs", lambda: self._workspace.close_all(self._workspace.state["active"]), None, "close")
+        self._action(output_tabs_menu, "Close All Output Tabs", lambda: self._workspace.close_all(), None, "delete_sheet")
+        self._action(output_tabs_menu, "Close Current Graph", self.close_current_graph, None, "close")
+        self._action(output_tabs_menu, "Close All Graphs", self.close_all_graphs, None, "delete_sheet")
+        output_tabs_menu.addSeparator()
+        self._action(output_tabs_menu, "Split View", self.split_output_view, None, "split")
+        self._action(output_tabs_menu, "Unsplit View", self.unsplit_output_view, None, "merge")
+        self._action(output_tabs_menu, "Tile With Worksheet", self.tile_with_worksheet, None, "layout_tool")
+        nav_order_menu = output_tabs_menu.addMenu("Navigator Output Ordering")
+        nav_order_menu.setIcon(tool_icon("sort"))
         nav_order_group = QActionGroup(self)
         self.navigator_order_actions = {}
         for mode_key, mode_label in (("chronological", "Chronological"), ("worksheet", "By Worksheet"), ("title", "By Title")):
-            ord_act = QAction(mode_label, self, checkable=True, checked=(getattr(self, "_navigator_order", "chronological") == mode_key))
+            ord_act = QAction(tool_icon("sort"), mode_label, self, checkable=True, checked=(getattr(self, "_navigator_order", "chronological") == mode_key))
             ord_act.triggered.connect(lambda checked=False, m=mode_key: self.set_navigator_order(m))
             nav_order_group.addAction(ord_act)
             nav_order_menu.addAction(ord_act)
             self.navigator_order_actions[mode_key] = ord_act
-        focus_menu = view.addMenu("Focus Window / Pane")
-        self._action(focus_menu, "Session Window", self.focus_session_window)
-        self._action(focus_menu, "History Window", self.focus_history_window)
-        self._action(focus_menu, "Project Manager / Navigator", self.focus_navigator_window)
-        self._action(focus_menu, "Data Window", self.focus_data_window)
-        self._action(view, "Toggle Entry Direction (Down / Right)", self.toggle_entry_direction, "Ctrl+D", "direction")
-        self._action(view, "Worksheet Fonts…", self.worksheet_fonts_dialog)
-        self._action(view, "Select Data Font…", self.select_data_font_dialog)
-        self._action(view, "Select Label Font…", self.select_label_font_dialog)
-        self._action(view, "Reset Window Layout", self.reset_window_layout)
-        self._action(view, "Refresh Worksheet", self.refresh)
+        focus_menu = output_tabs_menu.addMenu("Focus Window / Pane")
+        focus_menu.setIcon(tool_icon("navigator"))
+        self._action(focus_menu, "Session Window", self.focus_session_window, None, "report")
+        self._action(focus_menu, "History Window", self.focus_history_window, None, "workflow")
+        self._action(focus_menu, "Project Manager / Navigator", self.focus_navigator_window, None, "navigator")
+        self._action(focus_menu, "Data Window", self.focus_data_window, None, "worksheet")
+
+        ws_layout_menu = view.addMenu("Worksheet Layout")
+        ws_layout_menu.setIcon(tool_icon("worksheet"))
+        self._action(ws_layout_menu, "Freeze Panes", self.freeze_panes, None, "table")
+        self._action(ws_layout_menu, "Unfreeze Rows/Cols", self.unfreeze_panes, None, "table")
+        self.view_formula_bar_action = QAction(tool_icon("assign_formula"), "Formula Bar", self, checkable=True, checked=False)
+        self.view_formula_bar_action.triggered.connect(lambda checked: self.formula_bar.setVisible(bool(checked)))
+        ws_layout_menu.addAction(self.view_formula_bar_action)
+        ws_layout_menu.addSeparator()
+        self._action(ws_layout_menu, "Toggle Entry Direction (Down / Right)", self.toggle_entry_direction, "Ctrl+D", "direction")
+        self._action(ws_layout_menu, "Worksheet Fonts…", self.worksheet_fonts_dialog, None, "font")
+        self._action(ws_layout_menu, "Select Data Font…", self.select_data_font_dialog, None, "font")
+        self._action(ws_layout_menu, "Select Label Font…", self.select_label_font_dialog, None, "font")
+        ws_layout_menu.addAction(self.brushing_palette_action)
+        self._action(ws_layout_menu, "Refresh Worksheet", self.refresh, None, "refresh")
+
         view.addSeparator()
+        self._action(view, "Reset Window Layout", self.reset_window_layout, None, "reset")
         self._action(view, "Command Palette (Find Procedure)…", self.open_command_palette, QKeySequence("Ctrl+K"), "find")
 
         # 9. Assistant menu (`RT_MENU 8445` guided workflow shortcuts)
@@ -2036,34 +2139,34 @@ class ModernWindow(QMainWindow):
         self._action(assistant, "Guided Analysis &Assistant Wizard…", self.guided_assistant_dialog, None, "help", True)
         assistant.addSeparator()
         self._action(assistant, "Graphical Analysis (Graph Builder)…", lambda: self.graph("builder"), None, "graph_builder", True)
-        self._action(assistant, "Hypothesis Tests (1-Sample / 2-Sample t)…", lambda: self.inference_dialog("two_sample_t"), None, None, True)
+        self._action(assistant, "Hypothesis Tests (1-Sample / 2-Sample t)…", lambda: self.inference_dialog("two_sample_t"), None, "probability", True)
         self._action(assistant, "Regression…", self.multiple_regression, None, "regression", True)
-        self._action(assistant, "Capability Analysis…", self.capability, None, None, True)
+        self._action(assistant, "Capability Analysis…", self.capability, None, "capability", True)
         self._action(assistant, "DOE (Factorial Design)…", self.create_factorial, None, "doe", True)
-        self._action(assistant, "Control Charts (I-MR)…", self.imr_dialog, None, None, True)
+        self._action(assistant, "Control Charts (I-MR)…", self.imr_dialog, None, "control_chart", True)
         assistant.addSeparator()
-        self._action(assistant, "Pre-Flight &Data Doctor (Sanity Audit)…", self.run_data_doctor_dialog, None, None, True)
-        self._action(assistant, "&Compare Two Analyses (Model Diff)…", self.compare_runs_dialog, None, None, True)
+        self._action(assistant, "Pre-Flight &Data Doctor (Sanity Audit)…", self.run_data_doctor_dialog, None, "workflow", True)
+        self._action(assistant, "&Compare Two Analyses (Model Diff)…", self.compare_runs_dialog, None, "table", True)
         self._action(assistant, "&Monte Carlo Process Simulation…", self.monte_carlo_dialog, None, "chart", True)
 
         # 10. Tools & Help menus (Always final menu on desktop menubar)
         tools_menu = bar.addMenu("&Tools")
-        self._action(tools_menu, "&Options…", self.options_dialog)
-        self._action(tools_menu, "Manage &Profiles…", self.manage_profiles_dialog)
-        self._action(tools_menu, "&Export Dialog Settings…", self.export_dialog_settings_dialog)
-        self._action(tools_menu, "&Customize…", self.customize_dialog)
+        self._action(tools_menu, "&Options…", self.options_dialog, None, "settings")
+        self._action(tools_menu, "Manage &Profiles…", self.manage_profiles_dialog, None, "worksheet")
+        self._action(tools_menu, "&Export Dialog Settings…", self.export_dialog_settings_dialog, None, "export")
+        self._action(tools_menu, "&Customize…", self.customize_dialog, None, "edit_graph")
 
         help_menu = bar.addMenu("&Help")
         self.help_action = self._action(help_menu, "Help", self.context_help, QKeySequence.StandardKey.HelpContents, "help")
         self._action(help_menu, "&StatGuide (Interpret Output)…", self.statguide_dialog, None, "help")
         self._action(help_menu, "&Getting Started…", self.getting_started_dialog, None, "workflow")
         self._action(help_menu, "&How Do I?…", self.how_do_i_dialog, None, "help")
-        self._action(help_menu, "&Keyboard Map…", self.keyboard_map_dialog)
+        self._action(help_menu, "&Keyboard Map…", self.keyboard_map_dialog, None, "table")
         self._action(help_menu, "&Interactive Quick Tour…", self.open_guided_tour, None, "workflow")
         help_menu.addSeparator()
         self._action(help_menu, "Verify &Air-Gapped & Offline Integrity…", self.verify_airgap_dialog, None, "shield")
         self._action(help_menu, "Check for &Updates…", self.check_for_updates_dialog, None, "update", False)
-        self._action(help_menu, "About StatCraft", self.about)
+        self._action(help_menu, "About StatCraft", self.about, None, "info")
 
         # Toolbar: Exact 21-button StatCraft layout (`RT_TOOLBAR 8445` + `RT_TOOLBAR 9915`)
     def _create_actions(self):
@@ -2248,7 +2351,7 @@ class ModernWindow(QMainWindow):
             self.btn_theme_toggle.setStyleSheet(theme_style)
             self.btn_theme_toggle.setText("Light" if is_dark else "Dark")
 
-    def set_ui_mode(self, mode: str):
+    def set_ui_mode(self, mode: str, *, load_analysis=True):
         mode = mode.lower() if isinstance(mode, str) else "minitab"
         if mode not in ("minitab", "jmp", "r"):
             mode = "minitab"
@@ -2314,17 +2417,8 @@ class ModernWindow(QMainWindow):
                 self.r_workbench.set_dark_mode(is_dark)
                 self.r_workbench.sync_active_worksheet_to_r()
                 target_entry = self.selected_entry or (self.presenter.history[-1] if hasattr(self, "presenter") and getattr(self.presenter, "history", None) else None)
-                if target_entry:
-                    conn_dict = target_entry.get("connected_analysis")
-                    if not conn_dict:
-                        from .connect import create_connected_analysis_from_entry
-                        try:
-                            conn_obj = create_connected_analysis_from_entry(target_entry, self.presenter.worksheet)
-                            if conn_obj:
-                                conn_dict = conn_obj.to_dict()
-                                target_entry["connected_analysis"] = conn_dict
-                        except Exception:
-                            conn_dict = None
+                if target_entry and load_analysis:
+                    conn_dict, _ = self._resolve_entry_connected_analysis(target_entry)
                     if conn_dict and conn_dict.get("r_script"):
                         self.r_workbench.load_connected_analysis(conn_dict)
                         if hasattr(self, "statusBar") and self.statusBar():
@@ -2416,18 +2510,24 @@ class ModernWindow(QMainWindow):
     def _module_notice(self, title, message):
         QMessageBox.information(self, title, message)
 
-    def _call(self, callback, result=False):
+    def _call(self, callback, result=False, mutates_sheet=True):
         try:
             notices_before = len(getattr(self.presenter, "notices", []))
             sheet = getattr(self.presenter, "worksheet", None)
             value = callback()
-            if not result and sheet is not None and hasattr(self, "_sheet_versions"):
+            if not result and mutates_sheet and sheet is not None and hasattr(self, "_sheet_versions"):
                 self._sheet_versions.bump(sheet)
             if result and isinstance(value, dict) and sheet is not None and hasattr(self, "_sheet_versions"):
                 value.setdefault("_sheet_id", id(sheet))
                 value.setdefault("_sheet_version", self._sheet_versions.version(sheet))
-                if getattr(self, "_last_dialog_action", None) is not None:
-                    value.setdefault("_rerun_action", self._last_dialog_action)
+                key = value.get("entry_id")
+                if key and self._last_dialog_action is not None:
+                    live_ids = {entry.get("entry_id") for entry in self.presenter.history}
+                    self._result_dialog_actions = {
+                        entry_id: action for entry_id, action in self._result_dialog_actions.items()
+                        if entry_id in live_ids
+                    }
+                    self._result_dialog_actions.setdefault(key, self._last_dialog_action)
             self.refresh()
             if not result and getattr(self, "_auto_update_graphs", False) and not getattr(self, "_updating_graphs", False):
                 self._updating_graphs = True
@@ -2510,6 +2610,27 @@ class ModernWindow(QMainWindow):
         elif hasattr(self, "table"):
             self.table.setFocus()
 
+    def _on_work_splitter_moved(self, pos=None, index=None):
+        if getattr(self, "_view_mode", "both") != "both" or not hasattr(self, "work_splitter"):
+            return
+        sizes = self.work_splitter.sizes()
+        total = sum(sizes)
+        if len(sizes) == 2 and total > 0:
+            self._work_split_ratio = max(0.08, min(0.90, sizes[0] / float(total)))
+            self._save_ui_pref("ui/work_split_ratio", round(self._work_split_ratio, 4))
+            self._save_ui_pref("ui/work_splitter", self.work_splitter.saveState())
+
+    def _apply_work_split_ratio(self):
+        if not hasattr(self, "work_splitter"):
+            return
+        sizes = self.work_splitter.sizes()
+        total_h = sum(sizes) or max(self.work_splitter.height(), 670)
+        ratio = float(getattr(self, "_work_split_ratio", 0.58))
+        ratio = max(0.08, min(0.90, ratio))
+        top_h = max(40, int(round(total_h * ratio)))
+        bottom_h = max(140, total_h - top_h)
+        self.work_splitter.setSizes([top_h, bottom_h])
+
     def set_view_mode(self, mode):
         if mode not in ("both", "data", "output"):
             raise ValueError("Choose data, output or both panes.")
@@ -2517,7 +2638,7 @@ class ModernWindow(QMainWindow):
         self.output_splitter.setVisible(mode in ("both", "output"))
         self.worksheet_pane.setVisible(mode in ("both", "data"))
         if mode == "both":
-            self.work_splitter.setSizes([220, 450])
+            self._apply_work_split_ratio()
         for m, btn in getattr(self, "view_mode_buttons", {}).items():
             btn.setChecked(m == mode)
         for m, act in getattr(self, "view_mode_actions", {}).items():
@@ -2548,12 +2669,13 @@ class ModernWindow(QMainWindow):
         if not hasattr(self,'zoom_slider'):return
         from .output_zoom import OutputZoomView
         page=self.result_tabs.currentWidget()
+        frame = None
         if isinstance(page, OutputZoomView):
             from .graph_frame import GraphFrame
-            frame = page.findChild(GraphFrame)
-            if frame is not None:
-                self._active_graph_frame = frame
-                self._active_chart_widget = getattr(frame, 'chart', None)
+            frame = page.content.findChild(GraphFrame)
+        if frame is not None or (self.selected_entry or {}).get('result', {}).get('factor_terms'):
+            self._active_graph_frame = frame
+            self._active_chart_widget = getattr(frame, 'chart', None)
         percent=page.percent if isinstance(page,OutputZoomView) else self._output_zoom_levels.get(self._zoom_key(),100) if self.selected_entry else self._worksheet_zoom
         if page is getattr(self,'_report_pad_editor',None):percent=self._output_zoom_levels.get(('__report_pad__','ReportPad'),100)
         if isinstance(page,QPlainTextEdit) and (self.selected_entry is not None or page is getattr(self,'_report_pad_editor',None)):
@@ -2604,9 +2726,8 @@ class ModernWindow(QMainWindow):
             return
         if data.get("kind") == "sheet":
             key = ("sheet", data.get("sheet_name") or item.text(0))
-        elif "entry" in data and isinstance(data["entry"], dict):
-            e = data["entry"]
-            key = ("entry", e.get("entry_id") or id(e))
+        elif "entry_key" in data:
+            key = ("entry", data["entry_key"])
         else:
             return
         if expanded:
@@ -2703,7 +2824,7 @@ class ModernWindow(QMainWindow):
         for i, column in enumerate(sheet.columns):
             if column.kind == 'date' and i not in getattr(self, '_displayed_date_columns', set()):
                 self.table.setColumnWidth(i, max(165, self.table.columnWidth(i)))
-            elif self.table.columnWidth(i) <= 0:
+            elif self.table.columnWidth(i) <= 0 and not self.table.isColumnHidden(i):
                 self.table.setColumnWidth(i, default_w)
             address = "C" + str(i + 1) + ("-T" if column.kind == "text" else "-D" if column.kind == "date" else "")
             if getattr(self, "_ui_mode", "minitab") == "jmp":
@@ -2724,7 +2845,8 @@ class ModernWindow(QMainWindow):
                     item.setText(col_name_text)
                 if item.toolTip() != col_tip:
                     item.setToolTip(col_tip)
-            self.column_names.setColumnWidth(i, self.table.columnWidth(i))
+            if not self.table.isColumnHidden(i):
+                self.column_names.setColumnWidth(i, self.table.columnWidth(i))
         self.table.setHorizontalHeaderLabels(headers)
         self._displayed_date_columns = {i for i, c in enumerate(sheet.columns) if c.kind == 'date'}
         self.column_names.setHorizontalHeaderLabels(headers)
@@ -2870,12 +2992,15 @@ class ModernWindow(QMainWindow):
                             continue
                         if recipe.get('action') in ('predict_model','factorial_plots','model_contour_plot','model_surface_plot'):
                             recipe=recipe.get('parameters',{}).get('model_recipe')
-                        if recipe.get('action')=='optimize_responses':
-                            for r_item in recipe.get('parameters',{}).get('responses',[]):
+                        if recipe.get('action') in ('optimize_responses', 'operating_window_3d'):
+                            items_key = 'responses' if recipe.get('action') == 'optimize_responses' else 'response_specs'
+                            for r_item in recipe.get('parameters',{}).get(items_key,[]):
                                 norm_r=normalize_model_recipe(r_item.get('model_recipe')); act=norm_r['action']; canon='analyze_factorial' if act=='analyze_factorial_terms' else act
                                 optimizer_models.add(canon); available_models.add(canon)
                                 rp=norm_r['parameters']; n_c=len(rp['predictor_indices']) if act=='multiple_regression' else len(rp['covariate_indices']) if act=='general_linear_model' else len(rp['factor_indices']) if act=='analyze_response_surface' else len(rp['continuous_indices']) if act=='fit_binary_logistic' else sum(1 for c_i in rp['factor_indices'] if 0<=c_i<len(sheet.columns) and sheet.columns[c_i].kind=='number')
                                 if n_c>=2:two_cont_models.add(canon)
+                            continue
+                        if recipe.get('action') == 'evaluate_confirmation_runs':
                             continue
                         act=normalize_model_recipe(recipe)['action']
                         optimizer_models.add('analyze_factorial' if act=='analyze_factorial_terms' else act)
@@ -2892,6 +3017,7 @@ class ModernWindow(QMainWindow):
         for name,action in self.factorial_plot_actions.items():action.setEnabled(name in optimizer_models)
         for name,action in self.contour_plot_actions.items():action.setEnabled(name in two_cont_models)
         for name,action in self.surface_plot_actions.items():action.setEnabled(name in two_cont_models)
+        for name,action in self.operating_window_actions.items():action.setEnabled(bool(two_cont_models))
         self.undo_action.setEnabled(self.presenter.can_undo); self.redo_action.setEnabled(self.presenter.can_redo)
         brushed_entry=getattr(self,'_brushed_entry',None)
         brushed_valid=bool(getattr(self,'_brushed_rows',[])) and brushed_entry is not None and any(item is brushed_entry for item in self.presenter.history) and self.presenter.result_stale(brushed_entry) is False
@@ -2938,7 +3064,7 @@ class ModernWindow(QMainWindow):
                 node = QTreeWidgetItem(parent_node, [title])
                 node.setFont(0, normal_font)
                 node.setToolTip(0, entry.get("time", "") + "\nRight-click to copy R script")
-                node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "result", "entry": entry})
+                node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "result", "entry_key": self._workspace.key(entry)})
                 if entry is self.selected_entry and getattr(self, '_selected_graph_index', None) is None and getattr(self, '_selected_nav_kind', None) is None:
                     selected_tree_item = node
                 graphs_raw = entry.get("result", {}).get("graphs", [])
@@ -2952,7 +3078,7 @@ class ModernWindow(QMainWindow):
                     if has_text:
                         r_node = QTreeWidgetItem(node, ["Report"])
                         r_node.setFont(0, normal_font)
-                        r_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "report", "entry": entry})
+                        r_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "report", "entry_key": self._workspace.key(entry)})
                         if entry is self.selected_entry and getattr(self, '_selected_nav_kind', None) == "report":
                             selected_tree_item = r_node
                     if len(tables) > 1:
@@ -2960,17 +3086,17 @@ class ModernWindow(QMainWindow):
                             t_title = tbl.get("title") or (tbl["headers"][0] if tbl.get("headers") and tbl["headers"][0] else f"Table {t_idx + 1}")
                             t_node = QTreeWidgetItem(node, [t_title])
                             t_node.setFont(0, normal_font)
-                            t_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "table", "entry": entry, "table_index": t_idx, "table_title": t_title})
+                            t_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "table", "entry_key": self._workspace.key(entry), "table_index": t_idx, "table_title": t_title})
                             if entry is self.selected_entry and getattr(self, '_selected_nav_kind', None) == "table" and (getattr(self, '_selected_table_index', None) == t_idx or getattr(self, '_selected_table_title', None) == t_title):
                                 selected_tree_item = t_node
                     for g_idx, g in enumerate(graphs):
                         g_title = g.get("title") or f"Graph {g_idx + 1}"
                         g_node = QTreeWidgetItem(node, [g_title])
                         g_node.setFont(0, normal_font)
-                        g_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "graph", "entry": entry, "graph_index": g_idx})
+                        g_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "graph", "entry_key": self._workspace.key(entry), "graph_index": g_idx})
                         if entry is self.selected_entry and getattr(self, '_selected_graph_index', None) == g_idx:
                             selected_tree_item = g_node
-                    entry_key = ("entry", entry.get("entry_id") or id(entry))
+                    entry_key = ("entry", self._workspace.key(entry))
                     node.setExpanded(entry_key not in getattr(self, "_collapsed_nav_keys", set()))
         else:
             for entry in entries:
@@ -2979,7 +3105,7 @@ class ModernWindow(QMainWindow):
                 node = QTreeWidgetItem(self.navigator, [title])
                 node.setFont(0, normal_font)
                 node.setToolTip(0, (entry.get("worksheet_name") or sheet.name) + " · " + entry.get("time", "") + "\nRight-click to copy R script")
-                node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "result", "entry": entry})
+                node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "result", "entry_key": self._workspace.key(entry)})
                 if entry is self.selected_entry and getattr(self, '_selected_graph_index', None) is None and getattr(self, '_selected_nav_kind', None) is None:
                     selected_tree_item = node
                 graphs_raw = entry.get("result", {}).get("graphs", [])
@@ -2993,7 +3119,7 @@ class ModernWindow(QMainWindow):
                     if has_text:
                         r_node = QTreeWidgetItem(node, ["Report"])
                         r_node.setFont(0, normal_font)
-                        r_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "report", "entry": entry})
+                        r_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "report", "entry_key": self._workspace.key(entry)})
                         if entry is self.selected_entry and getattr(self, '_selected_nav_kind', None) == "report":
                             selected_tree_item = r_node
                     if len(tables) > 1:
@@ -3001,17 +3127,17 @@ class ModernWindow(QMainWindow):
                             t_title = tbl.get("title") or (tbl["headers"][0] if tbl.get("headers") and tbl["headers"][0] else f"Table {t_idx + 1}")
                             t_node = QTreeWidgetItem(node, [t_title])
                             t_node.setFont(0, normal_font)
-                            t_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "table", "entry": entry, "table_index": t_idx, "table_title": t_title})
+                            t_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "table", "entry_key": self._workspace.key(entry), "table_index": t_idx, "table_title": t_title})
                             if entry is self.selected_entry and getattr(self, '_selected_nav_kind', None) == "table" and (getattr(self, '_selected_table_index', None) == t_idx or getattr(self, '_selected_table_title', None) == t_title):
                                 selected_tree_item = t_node
                     for g_idx, g in enumerate(graphs):
                         g_title = g.get("title") or f"Graph {g_idx + 1}"
                         g_node = QTreeWidgetItem(node, [g_title])
                         g_node.setFont(0, normal_font)
-                        g_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "graph", "entry": entry, "graph_index": g_idx})
+                        g_node.setData(0, Qt.ItemDataRole.UserRole, {"kind": "graph", "entry_key": self._workspace.key(entry), "graph_index": g_idx})
                         if entry is self.selected_entry and getattr(self, '_selected_graph_index', None) == g_idx:
                             selected_tree_item = g_node
-                    entry_key = ("entry", entry.get("entry_id") or id(entry))
+                    entry_key = ("entry", self._workspace.key(entry))
                     node.setExpanded(entry_key not in getattr(self, "_collapsed_nav_keys", set()))
         if selected_tree_item is not None:
             self.navigator.setCurrentItem(selected_tree_item)
@@ -3127,7 +3253,7 @@ class ModernWindow(QMainWindow):
                 return
             if delegate is not None and hasattr(delegate, 'closeEditor'):
                 try:
-                    if editor.parent() in (self.column_names, self.column_names.viewport()):
+                    if self.column_names.isAncestorOf(editor):
                         delegate.closeEditor.emit(editor, delegate.EndEditHint.NoHint)
                 except Exception:
                     pass
@@ -3210,7 +3336,7 @@ class ModernWindow(QMainWindow):
                 return
             if delegate is not None and hasattr(delegate, 'closeEditor'):
                 try:
-                    if editor.parent() in (self.table, self.table.viewport()):
+                    if self.table.isAncestorOf(editor):
                         delegate.closeEditor.emit(editor, delegate.EndEditHint.NoHint)
                 except Exception:
                     pass
@@ -3293,7 +3419,7 @@ class ModernWindow(QMainWindow):
     def _select_sheet(self, index):
         if self._refreshing or index < 0: return
         self._commit_editor(); self.page = 0
-        self._call(lambda: self.presenter.select_worksheet(index))
+        self._call(lambda: self.presenter.select_worksheet(index), mutates_sheet=False)
 
     def new_worksheet(self):
         self._commit_editor(); self.page = 0
@@ -3380,24 +3506,28 @@ class ModernWindow(QMainWindow):
         if not isinstance(data, dict): return
         if data["kind"] == "sheet":
             self._select_sheet(data["index"])
-        elif data["kind"] == "table":
+            return
+        entry = self._workspace.entries().get(data.get("entry_key"))
+        if entry is None:
+            return
+        if data["kind"] == "table":
             self._selected_table_index = data.get("table_index", 0)
             self._selected_table_title = data.get("table_title", "")
             self._selected_graph_index = None
             self._selected_nav_kind = "table"
-            self.show_result(data["entry"], target_tab=data.get("table_title"))
+            self.show_result(entry, target_tab=data.get("table_title"))
         elif data["kind"] == "graph":
             self._selected_graph_index = data.get("graph_index", 0)
             self._selected_nav_kind = "graph"
-            self.show_result(data["entry"], target_graph_index=self._selected_graph_index)
+            self.show_result(entry, target_graph_index=self._selected_graph_index)
         elif data["kind"] == "report":
             self._selected_graph_index = None
             self._selected_nav_kind = "report"
-            self.show_result(data["entry"], target_tab="Report")
+            self.show_result(entry, target_tab="Report")
         else:
             self._selected_graph_index = None
             self._selected_nav_kind = None
-            self.show_result(data["entry"])
+            self.show_result(entry)
 
     def _page(self, delta):
         self._commit_editor(); self.page = max(0, self.page + delta); self.refresh()
@@ -3503,7 +3633,7 @@ class ModernWindow(QMainWindow):
                 full_text = header_line + raw_block
             QApplication.clipboard().setText(full_text)
             self.statusBar().showMessage("Copied data with column names to clipboard", 4000)
-        self._call(copy)
+        self._call(copy, mutates_sheet=False)
 
     @staticmethod
     def _extract_generic_table_selection(table_widget: QTableWidget):
@@ -3563,7 +3693,7 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         selected_text = self._copy_selected_columns_text(include_headers=False)
         if selected_text is not None:
-            self._call(lambda: QApplication.clipboard().setText(selected_text))
+            self._call(lambda: QApplication.clipboard().setText(selected_text), mutates_sheet=False)
             return
         ranges = self.table.selectedRanges()
         if len(ranges) > 1:
@@ -3589,9 +3719,9 @@ class ModernWindow(QMainWindow):
                             row_vals.append("")
                     lines.append("\t".join(row_vals))
                 QApplication.clipboard().setText("\n".join(lines) + ("\n" if lines else ""))
-            self._call(_copy_multi)
+            self._call(_copy_multi, mutates_sheet=False)
             return
-        self._call(lambda: QApplication.clipboard().setText(self.presenter.copy_block(*self._range())))
+        self._call(lambda: QApplication.clipboard().setText(self.presenter.copy_block(*self._range())), mutates_sheet=False)
 
     def paste_cells(self):
         focused = QApplication.focusWidget()
@@ -3681,13 +3811,27 @@ class ModernWindow(QMainWindow):
         self._call(lambda: self.presenter.insert_rows(first, count))
 
     def insert_columns_action_handler(self):
-        targets=self._column_targets()
+        targets = self._column_targets()
         self._commit_editor()
-        left=min(targets);count=len(targets)
-        if self._call(lambda: self._mutate_columns(lambda:self.presenter.insert_columns(left,count))):
-            self.select_worksheet_column(left)
-            for index in range(left+1,left+count):self.select_worksheet_column(index,extend=True)
-            self.table.scrollToItem(self.table.item(0,left))
+        cols = self.presenter.worksheet.columns
+        last_occupied = max(
+            (
+                i for i, col in enumerate(cols)
+                if any(v is not None and v != "" for v in col.values)
+                or (col.name and col.name != f"C{i + 1}")
+                or bool(set(col.metadata) - {"auto_type"})
+            ),
+            default=-1,
+        )
+        left = min(targets)
+        right = max(targets)
+        count = len(targets)
+        insert_at = (right + 1) if (last_occupied >= 0 and right >= last_occupied) else left
+        if self._call(lambda: self._mutate_columns(lambda: self.presenter.insert_columns(insert_at, count))):
+            self.select_worksheet_column(insert_at)
+            for index in range(insert_at + 1, insert_at + count):
+                self.select_worksheet_column(index, extend=True)
+            self.table.scrollToItem(self.table.item(0, insert_at))
 
     def _column_targets(self):
         """Column operations use header/name selections independently of cell ranges."""
@@ -4162,13 +4306,21 @@ class ModernWindow(QMainWindow):
             geom = s.value("ui/geometry")
             if geom is not None:
                 self.restoreGeometry(geom)
+            ratio_val = s.value("ui/work_split_ratio")
+            if ratio_val is not None:
+                try:
+                    self._work_split_ratio = max(0.08, min(0.90, float(ratio_val)))
+                except (TypeError, ValueError):
+                    pass
             split_state = s.value("ui/work_splitter")
             if split_state is not None and hasattr(self, "work_splitter"):
                 self.work_splitter.restoreState(split_state)
                 sizes = self.work_splitter.sizes()
                 total_h = sum(sizes)
-                if len(sizes) == 2 and total_h > 0 and sizes[1] < total_h * 0.45 and not self.presenter.history:
-                    self.work_splitter.setSizes([int(total_h * 0.35), int(total_h * 0.65)])
+                if len(sizes) == 2 and total_h > 0:
+                    self._work_split_ratio = max(0.08, min(0.90, sizes[0] / float(total_h)))
+            elif hasattr(self, "work_splitter") and ratio_val is not None:
+                self._apply_work_split_ratio()
             pinned = s.value("ui/pinned_procedures", [])
             if isinstance(pinned, list):
                 for item in reversed(pinned):
@@ -4188,6 +4340,32 @@ class ModernWindow(QMainWindow):
         except Exception:
             pass
 
+    def _clamp_to_available_screen(self):
+        if self.isMaximized():
+            return
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        avail = screen.availableGeometry()
+        frame = self.frameGeometry()
+        geom = self.geometry()
+        frame_h = frame.height() - geom.height() if frame.height() > geom.height() else 38
+        frame_w = frame.width() - geom.width() if frame.width() > geom.width() else 16
+        max_w = max(320, int(avail.width()) - max(0, frame_w))
+        max_h = max(240, int(avail.height()) - max(0, frame_h))
+        if self.minimumWidth() > max_w or self.minimumHeight() > max_h:
+            self.setMinimumSize(min(self.minimumWidth(), max_w), min(self.minimumHeight(), max_h))
+        new_w = min(self.width(), max_w)
+        new_h = min(self.height(), max_h)
+        if new_w != self.width() or new_h != self.height():
+            self.resize(new_w, new_h)
+        outer_w = new_w + max(0, frame_w)
+        outer_h = new_h + max(0, frame_h)
+        nx = max(avail.left(), min(self.x(), avail.right() - outer_w + 1))
+        ny = max(avail.top(), min(self.y(), avail.bottom() - outer_h + 1))
+        if nx != self.x() or ny != self.y():
+            self.move(nx, ny)
+
     def _save_ui_pref(self, key, value):
         try:
             from .settings_scope import settings_for_process
@@ -4203,6 +4381,7 @@ class ModernWindow(QMainWindow):
             s.setValue("ui/geometry", self.saveGeometry())
             if hasattr(self, "work_splitter"):
                 s.setValue("ui/work_splitter", self.work_splitter.saveState())
+                s.setValue("ui/work_split_ratio", round(float(getattr(self, "_work_split_ratio", 0.58)), 4))
             if hasattr(self, "table"):
                 df = getattr(self, "_data_font", self.table.font())
                 s.setValue("ui/cell_font_family", df.family())
@@ -4254,9 +4433,35 @@ class ModernWindow(QMainWindow):
             event.accept()
         else: event.ignore()
 
+    def _reset_worksheet_view_state(self):
+        """Clear transient selection, scroll offsets, hidden columns, and paste toast on doc switch."""
+        self.page = 0
+        if hasattr(self, "_navigation_row"):
+            self._navigation_row = -1
+        if hasattr(self, "_selected_columns"):
+            self._selected_columns.clear()
+        if hasattr(self, "_selected_rows"):
+            self._selected_rows.clear()
+        if hasattr(self, "_hidden_columns"):
+            self._hidden_columns.clear()
+        self._clear_name_row_selection()
+        if hasattr(self, "table"):
+            blocker = QSignalBlocker(self.table)
+            self.table.clearSelection()
+            if self.table.rowCount() > 0 and self.table.columnCount() > 0:
+                self.table.setCurrentCell(0, 0)
+            self.table.verticalScrollBar().setValue(0)
+            self.table.horizontalScrollBar().setValue(0)
+            del blocker
+        if hasattr(self, "column_names"):
+            self.column_names.horizontalScrollBar().setValue(0)
+        if hasattr(self, "paste_toast"):
+            self.paste_toast.hide()
+
     def new_document(self):
         if self._confirm_leave():
-            self.presenter.new(); self._prepare_blank(); self.page = 0; self.selected_entry = None
+            self.presenter.new(); self._prepare_blank(); self.selected_entry = None
+            self._reset_worksheet_view_state()
             self.refresh(); self._show_welcome()
 
     def open_document(self, typed=False):
@@ -4268,8 +4473,21 @@ class ModernWindow(QMainWindow):
             "Projects and worksheets (*.xlsx *.mpx *.statcraft *.csv *.tsv *.tab *.mwx *.jmp *.jsl);;Excel Workbooks (*.xlsx);;JMP Tables (*.jmp *.jsl);;All files (*)",
         )
         if not path: return
+        suffix = Path(path).suffix.lower()
+        if suffix == ".xlsx" and not typed:
+            from .xlsx_import import inspect_xlsx
+            from .xlsx_import_dialog import ExcelImportPreviewDialog
+            workbook_info = self._call(lambda: inspect_xlsx(path), mutates_sheet=False)
+            if workbook_info is None:
+                return
+            dialog = ExcelImportPreviewDialog(workbook_info, self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            sheets = list(dialog.imported_worksheets)
+            self._call(lambda: self.load_imported_worksheets(sheets, source_path=path), mutates_sheet=False)
+            return
         column_types = None
-        if typed and Path(path).suffix.lower() in (".csv", ".tsv", ".tab", ".xlsx"):
+        if typed and suffix in (".csv", ".tsv", ".tab", ".xlsx"):
             text, accepted = QInputDialog.getText(self, "Column types", "Types in column order: number, text or date. Blank uses inference.")
             if not accepted: return
             if text.strip(): column_types = [value.strip().lower() for value in text.split(",")]
@@ -4328,16 +4546,18 @@ class ModernWindow(QMainWindow):
         settings.remove("recent_projects")
         self._update_recent_menu()
 
-    def load_path(self, path, column_types=None):
-        if not self.graph_options_pane.flush():raise ValueError('Correct the Graph Options values before opening another project.')
-        notices = self.presenter.load(path, column_types)
-        self._add_recent_file(path)
+    def _finish_document_load(self, notices, path=None, title_override=None):
+        if path:
+            self._add_recent_file(path)
         self.graph_options_pane.load_entry(None);self.graph_options_pane.hide()
         self._active_graph_frame=None;self._active_chart_widget=None
-        self.page = 0; self.selected_entry = None; self.refresh()
+        self.selected_entry = None
+        self._reset_worksheet_view_state()
+        self.refresh()
         self.output_header_bar.setVisible(False)
         self.result_tabs.tabBar().setVisible(True)
-        self.result_title.setText("Project opened" if self.presenter.native_project else "Worksheet opened")
+        default_title = "Project opened" if self.presenter.native_project else "Worksheet opened"
+        self.result_title.setText(title_override or default_title)
         self._clear_result_tabs()
         notes = QPlainTextEdit(); notes.setReadOnly(True); notes.setPlainText("\n\n".join(notices) if notices else "Ready for analysis.")
         self.result_tabs.addTab(notes, "Import notes"); self.result_state.setText("Import details and retained-format limitations")
@@ -4350,6 +4570,18 @@ class ModernWindow(QMainWindow):
             initial_output=initial_native_output(outputs)
             if initial_output is not None:self.show_result(initial_output)
         return notices
+
+    def load_path(self, path, column_types=None):
+        if not self.graph_options_pane.flush():raise ValueError('Correct the Graph Options values before opening another project.')
+        notices = self.presenter.load(path, column_types)
+        return self._finish_document_load(notices, path=path)
+
+    def load_imported_worksheets(self, sheets, source_path=None, notices=None):
+        if not self.graph_options_pane.flush():raise ValueError('Correct the Graph Options values before opening another project.')
+        loaded_notices = self.presenter.load_worksheets(sheets, source_path=source_path, notices=notices)
+        suffix = Path(source_path).suffix.lower() if source_path else ""
+        title = "Excel workbook imported" if suffix in (".xlsx", ".xls", ".xlsm") else None
+        return self._finish_document_load(loaded_notices, path=None, title_override=title)
 
     def save_path(self, path):
         if not self.graph_options_pane.flush():raise ValueError('Correct the Graph Options values before saving.')
@@ -4377,14 +4609,14 @@ class ModernWindow(QMainWindow):
         if native and not owned and self.presenter.dirty:
             choice = QMessageBox.question(self, "Save native copy", "Original native output is retained without recalculation. StatCraft session results are saved separately from native commands. Save the supported changes to this copy?", QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel)
             if choice != QMessageBox.StandardButton.Save: return False
-        return bool(self._call(lambda: self.save_path(path)))
+        return bool(self._call(lambda: self.save_path(path), mutates_sheet=False))
 
     def export_excel(self,all_worksheets=True):
         self._commit_editor()
         path,_=QFileDialog.getSaveFileName(self,'Export Project to Excel' if all_worksheets else 'Export Worksheet to Excel','StatCraft.xlsx','Excel Workbook (*.xlsx)')
         if not path:return
         if not path.lower().endswith('.xlsx'):path+='.xlsx'
-        result=self._call(lambda:self.presenter.export_excel(path,all_worksheets))
+        result=self._call(lambda:self.presenter.export_excel(path,all_worksheets), mutates_sheet=False)
         if result:self.statusBar().showMessage(f"Exported {result['worksheets']} worksheet(s) to {path}",10000)
 
     def convert_mpx_excel(self):
@@ -4394,7 +4626,7 @@ class ModernWindow(QMainWindow):
         if not path:return
         if not path.lower().endswith('.xlsx'):path+='.xlsx'
         from .xlsx_export import convert_mpx
-        result=self._call(lambda:convert_mpx(source,path))
+        result=self._call(lambda:convert_mpx(source,path), mutates_sheet=False)
         if result:self.statusBar().showMessage(f"Converted {result['worksheets']} worksheet(s) to {path}",10000)
 
     def doe_planner(self,kind=None):
@@ -4413,12 +4645,12 @@ class ModernWindow(QMainWindow):
         path, selected = QFileDialog.getSaveFileName(self, "Export worksheet table", "", "CSV (*.csv);;Tab-separated (*.tsv)")
         if path:
             if not Path(path).suffix: path += ".tsv" if "tsv" in selected else ".csv"
-            self._call(lambda: self.presenter.export(path))
+            self._call(lambda: self.presenter.export(path), mutates_sheet=False)
 
     def export_report(self):
         if self.selected_entry is None: QMessageBox.information(self, "Export report", "Select a result first."); return
         path, _ = QFileDialog.getSaveFileName(self, "Export report", "", "Text report (*.txt)")
-        if path: self._call(lambda: Path(path).write_text(format_entry(self.selected_entry), encoding="utf-8"))
+        if path: self._call(lambda: Path(path).write_text(format_entry(self.selected_entry), encoding="utf-8"), mutates_sheet=False)
 
     def _current_column(self):
         index = self._column_targets()[0]
@@ -4536,7 +4768,51 @@ class ModernWindow(QMainWindow):
         act = (entry.get("recipe") or {}).get("action", "") if isinstance(entry, dict) else ""
         return bool(supported(entry) or act == "graph_builder" or (isinstance(res, dict) and res.get("graph") == "graph_builder"))
 
+    def export_all_graphs_to_dir(self, folder):
+        if not self.graph_options_pane.flush():
+            self.statusBar().showMessage("Resolve or close the graph options before exporting.", 6000)
+            return []
+        graphs = [e for e in self.presenter.history if self._is_chart_entry(e)]
+        if not graphs:
+            return []
+        from pathlib import Path
+        from .graph_frame import GraphFrame
+        from .output_zoom import OutputZoomView
+        import re
+        saved_paths = []
+        dest_dir = Path(folder)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        prev_selected = getattr(self, "selected_entry", None)
+        for i, entry in enumerate(graphs):
+            title = entry.get("title", f"Graph_{i+1}")
+            clean_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', title).strip(' .')[:60]
+            self.show_result(entry)
+            QApplication.processEvents()
+            if self.selected_entry is not entry:
+                continue
+            frames = []
+            for index in range(self.result_tabs.count()):
+                page = self.result_tabs.widget(index)
+                if isinstance(page, OutputZoomView):
+                    frame = page.content.findChild(GraphFrame)
+                    if frame is not None:
+                        frames.append((self.result_tabs.tabText(index), frame))
+            for number, (name, frame) in enumerate(frames, 1):
+                clean_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name).strip(' .')[:60]
+                stem = f"{i+1:02d}_{clean_title}" if len(frames) == 1 else f"{i+1:02d}_{clean_title}_{number:02d}_{clean_name}"
+                out_file = dest_dir / f"{stem}.png"
+                pix = frame.capture()
+                if not pix.isNull() and pix.save(str(out_file), "PNG"):
+                    saved_paths.append(out_file)
+        if prev_selected is not None:
+            self.show_result(prev_selected)
+            QApplication.processEvents()
+        return saved_paths
+
     def export_all_graphs_dialog(self):
+        if not self.graph_options_pane.flush():
+            self.statusBar().showMessage("Resolve or close the graph options before exporting.", 6000)
+            return
         graphs = [e for e in self.presenter.history if self._is_chart_entry(e)]
         if not graphs:
             QMessageBox.information(self, "Export All Graphs", "No graphs have been generated in this session yet.")
@@ -4544,27 +4820,8 @@ class ModernWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "Select Directory to Export Graphs")
         if not folder:
             return
-        from pathlib import Path
-        import re
-        saved_count = 0
-        dest_dir = Path(folder)
-        prev_selected = getattr(self, "selected_entry", None)
-        for i, entry in enumerate(graphs):
-            title = entry.get("title", f"Graph_{i+1}")
-            clean_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', title).strip(' .')[:60]
-            filename = dest_dir / f"{i+1:02d}_{clean_title}.png"
-            self.show_result(entry)
-            QApplication.processEvents()
-            frame = getattr(self, "_active_graph_frame", None)
-            if frame is not None:
-                pix = frame.capture()
-                if not pix.isNull():
-                    pix.save(str(filename), "PNG")
-                    saved_count += 1
-        if prev_selected is not None:
-            self.show_result(prev_selected)
-            QApplication.processEvents()
-        self.statusBar().showMessage(f"Successfully exported {saved_count} graph(s) to {folder}", 6000)
+        saved_paths = self.export_all_graphs_to_dir(folder)
+        self.statusBar().showMessage(f"Successfully exported {len(saved_paths)} graph(s) to {folder}", 6000)
 
     def _find_in_text_dialog(self, text_edit):
         dialog = QDialog(self); dialog.setWindowTitle("Find in Output"); dialog.setMinimumWidth(380)
@@ -5035,18 +5292,30 @@ class ModernWindow(QMainWindow):
         self._last_dialog_action = self.create_factorial
         from .doe_dialogs import CreateFactorialDialog
         dialog = CreateFactorialDialog(self)
-        if dialog.exec() != QDialog.DialogCode.Accepted: return
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
         catalog = dialog.catalog_kind()
         split_plot = dialog.is_split_plot()
-        if not catalog and not self._confirm_leave(): return
         if split_plot:
             create = self.presenter.create_split_plot_design
         else:
             create = self.presenter.create_doe_plan if catalog else self.presenter.create_factorial
-        entry = self._call(lambda: create(**dialog.parameters), result=True)
-        self.page = 0; self.refresh()
-        if entry is not None and not dialog.summary and not catalog:
-            self.presenter.history = []; self._show_welcome(); self.refresh()
+        entry = self._call(lambda: create(**dialog.parameters), result=False)
+        self.page = 0
+        self.refresh()
+        if entry is not None:
+            self.show_result(entry)
+
+    def define_custom_factorial(self):
+        self._commit_editor()
+        self._last_dialog_action = self.define_custom_factorial
+        from .doe_custom_dialog import DefineCustomFactorialDialog
+        dialog = DefineCustomFactorialDialog(self, self.presenter.worksheet)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        entry = self._call(lambda: self.presenter.define_custom_factorial(**dialog.parameters), result=True)
+        self.refresh()
+        return entry
 
     def analyze_factorial(self):
         self._commit_editor()
@@ -7117,6 +7386,68 @@ class ModernWindow(QMainWindow):
         self._last_dialog_action = lambda f=family: self.model_surface_plot(f)
         ModelSurfacePlotDialog(self,family).exec()
 
+    def operating_window_3d_dialog(self, family=None):
+        from .operating_window_dialogs import OperatingWindowDialog
+        self._commit_editor()
+        self._last_dialog_action = lambda f=family: self.operating_window_3d_dialog(f)
+        OperatingWindowDialog(self, family).exec()
+
+    def operating_window_sensitivity_dialog(self, entry):
+        from .operating_window_dialogs import OperatingWindowSensitivityDialog
+        self._commit_editor()
+        OperatingWindowSensitivityDialog(self, entry).exec()
+
+    def imr_sensitivity_dialog(self, entry):
+        from .quality_sensitivity import IMRSensitivityDialog
+        self._commit_editor()
+        if self.presenter.result_stale(entry) is not False:
+            QMessageBox.information(self, 'I-MR Sensitivity Analysis', 'Rerun the baseline I-MR chart on its source worksheet first.')
+            return
+        IMRSensitivityDialog(self, entry).exec()
+
+    def subgroup_sensitivity_dialog(self, entry):
+        from .quality_sensitivity import SubgroupSensitivityDialog
+        self._commit_editor()
+        if self.presenter.result_stale(entry) is not False:
+            QMessageBox.information(self, 'Subgroup Sensitivity Analysis', 'Rerun the baseline subgroup chart on its source worksheet first.')
+            return
+        SubgroupSensitivityDialog(self, entry).exec()
+
+    def capability_sensitivity_dialog(self, entry):
+        from .quality_sensitivity import CapabilitySensitivityDialog
+        self._commit_editor()
+        if self.presenter.result_stale(entry) is not False:
+            QMessageBox.information(self, 'Capability Sensitivity Analysis', 'Rerun the baseline Normal Capability analysis on its source worksheet first.')
+            return
+        CapabilitySensitivityDialog(self, entry).exec()
+
+    def attribute_sensitivity_dialog(self, entry):
+        from .quality_sensitivity import AttributeSensitivityDialog
+        self._commit_editor()
+        if self.presenter.result_stale(entry) is not False:
+            QMessageBox.information(self, 'Attribute Sensitivity Analysis', 'Rerun the baseline attribute chart on its source worksheet first.')
+            return
+        AttributeSensitivityDialog(self, entry).exec()
+
+    def create_confirmation_plan_dialog(self, entry=None):
+        from .operating_window_dialogs import ConfirmationPlanDialog
+        self._commit_editor()
+        self._last_dialog_action = lambda e=entry: self.create_confirmation_plan_dialog(e)
+        ConfirmationPlanDialog(self, entry).exec()
+
+    def evaluate_confirmation_runs_dialog(self, entry=None):
+        from .operating_window_dialogs import ConfirmationEvaluateDialog
+        self._commit_editor()
+        self._last_dialog_action = lambda e=entry: self.evaluate_confirmation_runs_dialog(e)
+        ConfirmationEvaluateDialog(self, entry).exec()
+
+    def load_chemical_operating_window_demo(self):
+        self._commit_editor()
+        pair = self._call(self.presenter.load_chemical_operating_window_demo, result=False)
+        if pair:
+            self.show_result(pair[-1])
+        return pair
+
     def gage_rr(self):
         from .gage_rr_dialogs import GageRRDialog
         self._commit_editor()
@@ -7274,7 +7605,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.capability_sixpack_between_within
         dlg = CapabilitySixpackDialog(self.presenter.worksheet, self, analysis_mode="between_within")
+        self._restore_custom_dialog_state("sixpack_between_within", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("sixpack_between_within", dlg)
             p = dlg.selected_params
             if p:
                 entry = self._call(lambda: self.presenter.between_within_sixpack(settings=p), result=True)
@@ -7300,7 +7633,9 @@ class ModernWindow(QMainWindow):
         self._commit_editor()
         self._last_dialog_action = self.capability_sixpack
         dlg = CapabilitySixpackDialog(self.presenter.worksheet, self)
+        self._restore_custom_dialog_state("sixpack_normal", dlg)
         if dlg.exec():
+            self._save_custom_dialog_state("sixpack_normal", dlg)
             p = dlg.selected_params
             if p:
                 entry = self._call(lambda: self.presenter.normal_sixpack(settings=p), result=True)
@@ -8097,34 +8432,43 @@ class ModernWindow(QMainWindow):
             and entry.get("_sheet_id") == id(cur_sheet)
             and entry.get("_sheet_version") is not None
             and entry.get("_sheet_version") != self._sheet_versions.version(cur_sheet)
+            and self.presenter.result_stale(entry) is not False
         ):
             from .micro_innovations import StaleOutputBanner
             stale_banner = StaleOutputBanner(content)
-            rerun_cb = entry.get("_rerun_action") or self._last_dialog_action
+            rerun_cb = self._result_dialog_actions.get(entry.get("entry_id"), self._last_dialog_action)
             stale_banner.rerunRequested.connect(lambda cb=rerun_cb: cb() if callable(cb) else self.edit_last_dialog())
             layout.addWidget(stale_banner)
         layout.addWidget(label(entry.get("title", "Result"), "pageHeading"))
 
         # --- Clean StatCraft Connect Header Action ---
-        conn_dict = entry.get("connected_analysis")
-        if not conn_dict:
-            from .connect import create_connected_analysis_from_entry
-            try:
-                conn_obj = create_connected_analysis_from_entry(entry, self.presenter.worksheet)
-                if conn_obj:
-                    conn_dict = conn_obj.to_dict()
-                    entry["connected_analysis"] = conn_dict
-            except Exception:
-                conn_dict = None
+        analysis_type = result.get('analysis')
+        is_investigation = analysis_type in ('imr_investigation', 'subgroup_investigation', 'attribute_investigation')
+        self.tab_copy_r_btn.setVisible(not is_investigation)
+        if is_investigation:
+            edit_signal = (
+                self.investigate_subgroup_signal
+                if analysis_type == 'subgroup_investigation'
+                else (self.investigate_attribute_signal if analysis_type == 'attribute_investigation' else self.investigate_imr_signal)
+            )
+            edit_investigation = QToolButton()
+            edit_investigation.setText('Edit Investigation…')
+            edit_investigation.clicked.connect(lambda: edit_signal(None, entry))
+            badge_row.insertWidget(1, edit_investigation)
 
-        if conn_dict:
+        conn_dict = None
+        entry_ws = self.presenter.resolve_entry_worksheet(entry)
+        if not is_investigation:
+            conn_dict, entry_ws = self._resolve_entry_connected_analysis(entry)
+
+        if conn_dict and not is_investigation:
             from .connect_hub import ConnectBridgeWidget
             bridge = ConnectBridgeWidget(self, entry, conn_dict)
             layout.addWidget(bridge)
 
         # Automated Plain English Executive Summary
         from .executive_summary import generate_executive_summary
-        brief_bullets = generate_executive_summary(entry, self.presenter.worksheet)
+        brief_bullets = [] if is_investigation else generate_executive_summary(entry, entry_ws)
         is_dark = bool(getattr(self, "_dark_mode", False))
         if brief_bullets:
             brief_card = QFrame()
@@ -8162,6 +8506,41 @@ class ModernWindow(QMainWindow):
                 b_lbl.setStyleSheet(f"color: {txt_c}; font-size: 12px; line-height: 1.4;")
                 b_layout.addWidget(b_lbl)
             layout.addWidget(brief_card)
+        if result.get('workflow_comparison'):
+            if result.get('analysis') == 'subgroup_control':
+                from .subgroup_workflows import comparison_text
+            elif result.get('analysis') == 'attribute_control':
+                from .attribute_workflows import comparison_text
+            elif result.get('analysis') == 'capability':
+                from .capability_workflows import comparison_text
+            else:
+                from .imr_replay import comparison_text
+            comparison = QLabel(comparison_text(result))
+            comparison.setTextFormat(Qt.TextFormat.PlainText)
+            comparison.setWordWrap(True)
+            layout.addWidget(comparison)
+        if isinstance(result.get('sensitivity'), dict) and result['sensitivity'].get('kind'):
+            sens = result['sensitivity']
+            layout.addWidget(label('Sensitivity Analysis Comparison', 'sectionHeading'))
+            layout.addWidget(label(f"Baseline: {sens.get('baseline_title', '')}  ·  Scenario: {sens.get('scenario_description', '')}", 'secondary'))
+            layout.addWidget(self._result_table(
+                ['Criterion', 'Baseline', 'Scenario', 'Conclusion'],
+                [[c['criterion'], c['baseline'], c['scenario'], c['status']] for c in sens.get('conclusions', [])],
+            ))
+            if sens.get('candidate_fits'):
+                layout.addWidget(label('Candidate Distribution Fits (Anderson-Darling)', 'sectionHeading'))
+                layout.addWidget(self._result_table(
+                    ['Distribution', 'AD Statistic', 'Ppk', 'Expected PPM'],
+                    [
+                        [
+                            item['distribution'],
+                            round(float(item['ad_stat']), 4) if item.get('ad_stat') is not None else '*',
+                            round(float(item['ppk']), 4) if item.get('ppk') is not None else '*',
+                            round(float(item['exp_total_ppm']), 2),
+                        ]
+                        for item in sens['candidate_fits']
+                    ],
+                ))
         rendered = set()
         if result.get("analysis") == "cross_correlation":
             layout.addWidget(label("Cross Correlations", "sectionHeading"))
@@ -8232,7 +8611,7 @@ class ModernWindow(QMainWindow):
                 session.setPlainText(format_entry(entry)); session.setMinimumHeight(420)
                 layout.addWidget(session)
                 rendered.update(result)
-        elif result.get('analysis') in ('optimal_design', 'design_evaluation', 'cart_tree', 'evaluating_measurement_process', 'fit_y_by_x', 'jmp_distribution', 'control_chart_builder', 'process_screening', 'definitive_screening_analysis', 'accelerated_life_testing', 'mixture_process_model','mixture_process_prediction','mixture_multi_optimization','mixture_multi_evaluation','mixture_contour','mixture_optimization','mixture_prediction','mixture_model','taguchi_analysis','dynamic_taguchi_analysis','doe_plan', 'multiple_capability', 'capability_nonnormal', 'capability_nonparametric', 'capability_automated', 'reliability_distribution', 'nested_gage_rr', 'gage_linearity_and_bias', 'attribute_agreement_analysis'):
+        elif result.get('analysis') in ('imr_investigation', 'subgroup_investigation', 'attribute_investigation', 'optimal_design', 'design_evaluation', 'cart_tree', 'evaluating_measurement_process', 'fit_y_by_x', 'jmp_distribution', 'control_chart_builder', 'process_screening', 'definitive_screening_analysis', 'accelerated_life_testing', 'mixture_process_model','mixture_process_prediction','mixture_multi_optimization','mixture_multi_evaluation','mixture_contour','mixture_optimization','mixture_prediction','mixture_model','taguchi_analysis','dynamic_taguchi_analysis','doe_plan', 'multiple_capability', 'capability_nonnormal', 'capability_nonparametric', 'capability_automated', 'reliability_distribution', 'nested_gage_rr', 'gage_linearity_and_bias', 'attribute_agreement_analysis'):
             session = QPlainTextEdit(); session.setReadOnly(True); session.setFont(QFont('Consolas', 9.5))
             session.setPlainText(result.get('session_text', format_entry(entry))); session.setMinimumHeight(320)
             layout.addWidget(session)
@@ -8357,9 +8736,11 @@ class ModernWindow(QMainWindow):
                 table.setMaximumWidth(min(1800, sum(table.columnWidth(i) for i in range(table.columnCount())) + 28))
                 layout.addWidget(table)
             rendered.update(result); tables = []
-        elif result.get('analysis') in ('factorial_plots','model_contour_plot','model_surface_plot','response_optimizer','binary_logistic','logistic_prediction','model_prediction','gage_rr','general_linear_model','response_surface','response_surface_design'):
+        elif result.get('analysis') in ('factorial_plots','model_contour_plot','model_surface_plot','response_optimizer','binary_logistic','logistic_prediction','model_prediction','gage_rr','general_linear_model','response_surface','response_surface_design','operating_window_3d','confirmation_plan','confirmation_evaluation'):
             if result['analysis'] in ('factorial_plots','model_contour_plot','model_surface_plot'):
                 from .model_plots_report import sections
+            elif result['analysis'] in ('operating_window_3d', 'confirmation_plan', 'confirmation_evaluation'):
+                from .operating_window_report import sections
             elif result['analysis']=='response_optimizer':
                 from .optimizer_report import sections
             elif result['analysis']=='binary_logistic':
@@ -8482,7 +8863,33 @@ class ModernWindow(QMainWindow):
         chosen_tab = 0
         native_tables = result.get('tables', []) if result.get('analysis') == 'native_saved_output' else []
         from .modern_charts import ChartWidget, supported
-        if supported(entry):
+        if result.get('factor_terms') and result.get('effects'):
+            from .doe import factorial_pareto
+
+            views = {}
+            if result.get('plot_residuals', True):
+                views['Graph'] = self._add_graph_tab(ChartWidget(entry), entry, 'Graph', conn_dict, set_active=False)
+                if result.get('status') != 'exact_fit':
+                    from .regression_residual_chart import RegressionResidualChartWidget
+
+                    diagnostics = RegressionResidualChartWidget(entry)
+                    diagnostics.setMinimumHeight(620)
+                    views['Residual Plots'] = self._add_graph_tab(
+                        diagnostics, entry, 'Residual Plots', conn_dict, set_active=False
+                    )
+            pareto = factorial_pareto(result)
+            if pareto:
+                from .dsd_chart import DSDParetoEffectsWidget
+
+                chart = DSDParetoEffectsWidget(dict(entry, result=pareto))
+                views['Effects Pareto'] = self._add_graph_tab(chart, entry, 'Effects Pareto', conn_dict, set_active=False)
+            chosen_tab = 0 if target_tab == 'Report' else views.get(target_tab, next(iter(views.values()), 0))
+            self.result_tabs.setCurrentIndex(chosen_tab)
+            self._sync_output_zoom()
+            if not views:
+                self.graph_options_pane.load_entry(None)
+                self.graph_options_pane.hide()
+        elif supported(entry):
             if result.get('analysis') == 'native_saved_output':
                 from .native_output_chart import NativeOutputChart
                 from .graph_frame import GraphFrame
@@ -8787,7 +9194,33 @@ class ModernWindow(QMainWindow):
                     resid_tab_idx = self._add_graph_tab(resid_chart, entry, "Residual Plots", conn_dict=conn_dict, set_active=False)
                     if target_tab == "Residual Plots":
                         graph_index = resid_tab_idx
-                chosen_tab = 0 if target_tab == "Report" else graph_index
+                chosen_tab = graph_index
+                action = entry.get("recipe", {}).get("action")
+                is_report_first = bool(
+                    result.get("two_sample_t")
+                    or result.get("one_sample_t")
+                    or result.get("paired_t")
+                    or result.get("analysis") in (
+                        "oneway_anova",
+                        "multiple_regression",
+                        "general_linear_model",
+                        "describe",
+                        "descriptive_stats",
+                    )
+                    or action in (
+                        "two_sample_t",
+                        "one_sample_t",
+                        "paired_t",
+                        "correlation",
+                        "oneway_anova",
+                        "oneway_anova_unstacked",
+                        "multiple_regression",
+                        "general_linear_model",
+                        "describe_columns",
+                    )
+                )
+                if target_tab == "Report" or (target_tab is None and is_report_first):
+                    chosen_tab = 0
                 self.result_tabs.setCurrentIndex(chosen_tab)
                 self._sync_output_zoom()
         else:
@@ -8801,10 +9234,39 @@ class ModernWindow(QMainWindow):
                 except Exception:
                     pass
                 self.result_tabs.setCurrentIndex(0)
+        action = entry.get("recipe", {}).get("action")
         is_pure_graph = (
             supported(entry)
             and not result.get("tables")
             and result.get("analysis") != "native_saved_output"
+            and not result.get("two_sample_t")
+            and not result.get("one_sample_t")
+            and not result.get("paired_t")
+            and action != "normality"
+            and result.get("graph") not in (
+                "two_sample_t",
+                "one_sample_t",
+                "paired_t",
+                "capability",
+                "capability_sixpack",
+                "capability_nonnormal",
+                "imr_chart",
+            )
+            and result.get("analysis") not in (
+                "capability",
+                "capability_nonnormal",
+                "capability_sixpack_normal",
+                "capability_sixpack_between_within",
+                "capability_sixpack_nonnormal",
+                "imr_control",
+                "subgroup_control",
+                "attribute_control",
+                "multiple_regression",
+                "general_linear_model",
+                "fitted_line_plot",
+                "oneway_anova",
+                "gage_rr",
+            )
             and (
                 bool(result.get("graph"))
                 or result.get("analysis") in (
@@ -8864,10 +9326,11 @@ class ModernWindow(QMainWindow):
             and entry.get("_sheet_id") == id(cur_sheet)
             and entry.get("_sheet_version") is not None
             and entry.get("_sheet_version") != self._sheet_versions.version(cur_sheet)
+            and self.presenter.result_stale(entry) is not False
         ):
             from .micro_innovations import StaleOutputBanner
             g_stale = StaleOutputBanner(graph_card)
-            rerun_cb = entry.get("_rerun_action") or self._last_dialog_action
+            rerun_cb = self._result_dialog_actions.get(entry.get("entry_id"), self._last_dialog_action)
             g_stale.rerunRequested.connect(lambda cb=rerun_cb: cb() if callable(cb) else self.edit_last_dialog())
             graph_card_layout.addWidget(g_stale)
         if result.get("analysis") == "native_saved_output":
@@ -8875,8 +9338,10 @@ class ModernWindow(QMainWindow):
             ro_badge.setStyleSheet("color: #64748b; font-size: 8pt; padding: 1px 6px;")
             graph_frame.header.addWidget(ro_badge)
             graph_frame.export_hidden.append(ro_badge)
-        chart.objectSelected.connect(lambda target: self._graph_object_selected(target))
-        chart.objectActivated.connect(lambda target, e=entry: self._activate_graph_object(e, target))
+        if hasattr(chart, 'objectSelected'):
+            chart.objectSelected.connect(lambda target: self._graph_object_selected(target))
+        if hasattr(chart, 'objectActivated'):
+            chart.objectActivated.connect(lambda target, e=entry: self._activate_graph_object(e, target))
         if hasattr(chart, 'brushRowsSelected'):
             chart.brushRowsSelected.connect(lambda rows, e=entry: self._receive_brushed_rows(e, rows))
         graph_frame.annotationActivated.connect(lambda name, e=entry: self.edit_graph_annotation(e, name))
@@ -8893,6 +9358,17 @@ class ModernWindow(QMainWindow):
             reoptimize.setToolTip('Search again using this mixture as a starting point, with the same goals and bounds.')
             reoptimize.clicked.connect(lambda checked=False, e=entry: self._reoptimize_mixture_multi(e))
             graph_frame.header.addWidget(reoptimize); graph_frame.export_hidden.append(reoptimize)
+        if result.get('analysis') == 'operating_window_3d':
+            create_conf = QToolButton(); create_conf.setText('Create Confirmation Runs…'); create_conf.setObjectName('operatingWindowCreateConfirmation')
+            create_conf.setToolTip('Generate a randomized confirmation run sheet with predeclared acceptance criteria from this Operating Window.')
+            create_conf.clicked.connect(lambda checked=False, e=entry: self.create_confirmation_plan_dialog(e))
+            graph_frame.header.addWidget(create_conf); graph_frame.export_hidden.append(create_conf)
+            sensitivity = QToolButton()
+            sensitivity.setText('Sensitivity…')
+            sensitivity.setObjectName('operatingWindowSensitivity')
+            sensitivity.clicked.connect(lambda checked=False, e=entry: self.operating_window_sensitivity_dialog(e))
+            graph_frame.header.addWidget(sensitivity)
+            graph_frame.export_hidden.append(sensitivity)
         graph_frame.header.addWidget(drop_btn)
         graph_frame.export_hidden.append(drop_btn)
         if conn_dict:
@@ -9106,6 +9582,7 @@ class ModernWindow(QMainWindow):
         self.row_header_view.viewport().update()
         self.column_names.viewport().update()
         self.table.viewport().update()
+        self.worksheet_freeze.update_highlights()
         self._update_selection_summary()
         if hasattr(self, "formula_bar") and 0 <= cur_c < len(sheet.columns) and cur_r >= 0:
             g_r = start + cur_r
@@ -9116,25 +9593,28 @@ class ModernWindow(QMainWindow):
 
     # --- Worksheet Right-Click Context Menu (`RT_MENU 9839`) ---
 
-    def _on_column_header_context_menu(self, pos):
-        col = self.col_header_view.logicalIndexAt(pos)
+    def _on_column_header_context_menu(self, pos, header=None):
+        header = header or self.col_header_view
+        col = header.logicalIndexAt(pos)
         if col >= 0 and col not in self._selected_columns:
             self.select_worksheet_column(col)
-        self._show_worksheet_context_menu(self.col_header_view.viewport().mapToGlobal(pos))
+        self._show_worksheet_context_menu(header.viewport().mapToGlobal(pos))
 
-    def _on_row_header_context_menu(self, pos):
-        row = self.row_header_view.logicalIndexAt(pos)
+    def _on_row_header_context_menu(self, pos, header=None):
+        header = header or self.row_header_view
+        row = header.logicalIndexAt(pos)
         if row >= 0 and row not in self._selected_rows:
             self.select_worksheet_row(row)
-        self._show_worksheet_context_menu(self.row_header_view.viewport().mapToGlobal(pos))
+        self._show_worksheet_context_menu(header.viewport().mapToGlobal(pos))
 
-    def _on_table_context_menu(self, pos):
-        idx = self.table.indexAt(pos)
+    def _on_table_context_menu(self, pos, view=None):
+        view = view or self.table
+        idx = view.indexAt(pos)
         if idx.isValid():
             r, c = idx.row(), idx.column()
             if c not in self._selected_columns and r not in self._selected_rows and not self.table.item(r, c).isSelected():
                 self.table.setCurrentCell(r, c)
-        self._show_worksheet_context_menu(self.table.viewport().mapToGlobal(pos))
+        self._show_worksheet_context_menu(view.viewport().mapToGlobal(pos))
 
     def build_worksheet_context_menu(self):
         menu = QMenu(self)
@@ -9315,6 +9795,206 @@ class ModernWindow(QMainWindow):
 
     # --- Output / Graph Right-Click & Dropdown Menu (`RT_MENU 19209` / `RT_MENU 23702`, excluding StatCraft apps) ---
 
+    def approve_imr_replay(self, entry):
+        from .imr_replay import approve
+        self._commit_editor()
+        maximum, accepted = QInputDialog.getInt(self, 'Approve I-MR Baseline',
+            'Maximum combined Individuals and Moving Range signals for a new batch', 0, 0, 1000000)
+        if accepted:
+            try:
+                approve(self.presenter, entry, maximum)
+            except ValueError as exc:
+                QMessageBox.warning(self, 'Approve I-MR Baseline', str(exc))
+                return
+            self.refresh()
+
+    def replay_imr_batch(self, entry):
+        from .imr_replay import preview, replay
+        self._commit_editor()
+        template = entry['result']['workflow_replay']
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Replay I-MR on Current Worksheet')
+        form = QFormLayout(dialog)
+        columns = QComboBox(dialog)
+        description = QLabel(dialog)
+        description.setTextFormat(Qt.TextFormat.PlainText)
+        description.setWordWrap(True)
+        for index, column in enumerate(self.presenter.worksheet.columns):
+            if column.kind == 'number':
+                columns.addItem(f'C{index + 1} {column.name}', index)
+                if column.name == template['column']:
+                    columns.setCurrentIndex(columns.count() - 1)
+        form.addRow('Batch measurement', columns)
+        form.addRow(description)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        form.addRow(buttons)
+        buttons.rejected.connect(dialog.reject)
+
+        def update_preview():
+            try:
+                description.setText(preview(self.presenter, template, columns.currentData()))
+            except ValueError as exc:
+                description.setText(str(exc))
+                buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
+            else:
+                buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
+
+        columns.currentIndexChanged.connect(update_preview)
+        buttons.accepted.connect(dialog.accept)
+        update_preview()
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            try:
+                result = replay(self.presenter, template, columns.currentData())
+            except ValueError as exc:
+                QMessageBox.warning(self, 'Replay I-MR', str(exc))
+                return
+            self.refresh()
+            self.show_result(result, target_tab='Report')
+
+    def trace_imr_result(self, entry):
+        from .imr_trace import IMRTraceDialog
+        self._commit_editor()
+        IMRTraceDialog(self, entry, self.presenter.result_stale(entry)).exec()
+
+    def investigate_imr_signal(self, entry, investigation=None):
+        from .imr_investigation import IMRInvestigationDialog
+        self._commit_editor()
+        dialog = IMRInvestigationDialog(self, entry, investigation)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.refresh()
+            self.show_result(dialog.saved_entry, target_tab='Report')
+
+    def trace_subgroup_result(self, entry):
+        from .subgroup_workflows import SubgroupTraceDialog
+        self._commit_editor()
+        SubgroupTraceDialog(self, entry, self.presenter.result_stale(entry)).exec()
+
+    def investigate_subgroup_signal(self, entry, investigation=None):
+        from .subgroup_workflows import SubgroupInvestigationDialog
+        self._commit_editor()
+        dialog = SubgroupInvestigationDialog(self, entry, investigation)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.refresh()
+            self.show_result(dialog.saved_entry, target_tab='Report')
+
+    def approve_subgroup_replay(self, entry):
+        from .subgroup_workflows import approve
+        self._commit_editor()
+        maximum, accepted = QInputDialog.getInt(
+            self,
+            'Approve Subgroup Baseline',
+            'Maximum combined Xbar and Dispersion signals for a new batch',
+            0,
+            0,
+            1000000,
+        )
+        if accepted:
+            try:
+                approve(self.presenter, entry, maximum)
+            except ValueError as exc:
+                QMessageBox.warning(self, 'Approve Subgroup Baseline', str(exc))
+                return
+            self.refresh()
+
+    def replay_subgroup_batch(self, entry):
+        from .subgroup_workflows import SubgroupReplayDialog
+        self._commit_editor()
+        dialog = SubgroupReplayDialog(self, entry)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.saved_entry is not None:
+            self.refresh()
+            self.show_result(dialog.saved_entry, target_tab='Report')
+
+    def trace_capability_result(self, entry):
+        from .capability_workflows import CapabilityTraceDialog
+        self._commit_editor()
+        CapabilityTraceDialog(self, entry, self.presenter.result_stale(entry)).exec()
+
+    def approve_capability_replay(self, entry):
+        from .capability_workflows import ApproveCapabilityReplayDialog, approve
+        self._commit_editor()
+        dialog = ApproveCapabilityReplayDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            min_ppk, min_cpk, max_ppm = dialog.thresholds()
+            try:
+                approve(self.presenter, entry, min_ppk=min_ppk, min_cpk=min_cpk, max_ppm_total=max_ppm)
+            except ValueError as exc:
+                QMessageBox.warning(self, 'Approve Capability Baseline', str(exc))
+                return
+            self.refresh()
+
+    def replay_capability_batch(self, entry):
+        from .capability_workflows import CapabilityReplayDialog
+        self._commit_editor()
+        dialog = CapabilityReplayDialog(self, entry)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.saved_entry is not None:
+            self.refresh()
+            self.show_result(dialog.saved_entry, target_tab='Report')
+
+    def trace_attribute_result(self, entry):
+        from .attribute_workflows import AttributeTraceDialog
+        self._commit_editor()
+        AttributeTraceDialog(self, entry, self.presenter.result_stale(entry)).exec()
+
+    def investigate_attribute_signal(self, entry, investigation=None):
+        from .attribute_workflows import AttributeInvestigationDialog
+        self._commit_editor()
+        dialog = AttributeInvestigationDialog(self, entry, investigation)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.refresh()
+            self.show_result(dialog.saved_entry, target_tab='Report')
+
+    def approve_attribute_replay(self, entry):
+        from .attribute_workflows import ApproveAttributeReplayDialog, approve
+        self._commit_editor()
+        res = entry.get('result', {})
+        dialog = ApproveAttributeReplayDialog(
+            self,
+            default_center=float(res.get('center', 0.0) or 0.0),
+            chart_type=str(res.get('chart_type', res.get('chart', 'P'))),
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            max_signals, max_center = dialog.thresholds()
+            try:
+                approve(self.presenter, entry, max_signals=max_signals, max_center=max_center)
+            except ValueError as exc:
+                QMessageBox.warning(self, 'Approve Attribute Baseline', str(exc))
+                return
+            self.refresh()
+
+    def replay_attribute_batch(self, entry):
+        from .attribute_workflows import AttributeReplayDialog
+        self._commit_editor()
+        dialog = AttributeReplayDialog(self, entry)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.saved_entry is not None:
+            self.refresh()
+            self.show_result(dialog.saved_entry, target_tab='Report')
+
+    def open_r_verification(self, entry):
+        from .r_verification import build_script, tab_name
+        self._commit_editor()
+        try:
+            script = build_script(self.presenter, entry)
+        except ValueError as exc:
+            QMessageBox.information(self, 'R Verification', str(exc))
+            return
+        self.set_ui_mode('r', load_analysis=False)
+        self.r_workbench.open_script_tab(tab_name(entry), script)
+        self.statusBar().showMessage('Run All to verify the saved model. Save Script exports the inputs with the code.', 7000)
+
+    def export_excel_verification(self, entry):
+        from .xlsx_verification import write_verification
+
+        self._commit_editor()
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Export Excel Verification', 'StatCraft_Verification.xlsx', 'Excel Workbook (*.xlsx)')
+        if not path:
+            return
+        if not path.lower().endswith('.xlsx'):
+            path += '.xlsx'
+        exported = self._call(lambda: write_verification(path, self.presenter, entry), mutates_sheet=False)
+        if exported:
+            self.statusBar().showMessage(f'Exported Excel verification to {exported}', 10000)
+
     def build_output_context_menu(self, entry=None):
         target_entry = entry or self.selected_entry
         menu = QMenu(self)
@@ -9322,85 +10002,167 @@ class ModernWindow(QMainWindow):
             return menu
         from .modern_charts import supported
         is_graph = supported(target_entry)
+        result_dict = target_entry.get('result', {}) if isinstance(target_entry, dict) else {}
+        analysis_kind = result_dict.get('analysis')
 
-        menu.addAction("Send to Microsoft® Word", lambda: self.send_output_to_word(target_entry))
-        menu.addAction("Send to Microsoft® PowerPoint", lambda: self.send_output_to_powerpoint(target_entry))
-        menu.addAction(tool_icon("send_report"), "Send to Report", lambda: self.send_output_to_report(target_entry))
-        if is_graph:
-            menu.addAction(tool_icon("copy_graph"), "Copy Graph", lambda: self.copy_output_graph(target_entry))
-            menu.addAction("📋 Copy Chart as SVG (Lossless Vector)\tCtrl+Alt+S", lambda: self.copy_active_chart_svg(target_entry))
-            from .similar_graph_dialog import supports_similar
-            menu.addAction(tool_icon("make_similar_graph"), "Make Similar Graph...", lambda: self.make_similar_graph(target_entry)).setEnabled(supports_similar(target_entry))
+        has_primary = False
+        from .r_verification import SUPPORTED
+        if target_entry.get('recipe', {}).get('action') in SUPPORTED:
+            menu.addAction(tool_icon("code_view"), 'Verify in R Workbench…', lambda: self.open_r_verification(target_entry))
+            has_primary = True
+
+        from .xlsx_verification import supports as supports_excel_verification
+        if supports_excel_verification(target_entry):
+            menu.addAction(tool_icon("excel"), 'Export Excel Verification…', lambda: self.export_excel_verification(target_entry))
+            has_primary = True
+
+        if analysis_kind == 'imr_control':
+            menu.addAction(tool_icon("find"), 'Trace I-MR Result…', lambda: self.trace_imr_result(target_entry))
+            menu.addAction(tool_icon("chart"), 'Sensitivity Analysis…', lambda: self.imr_sensitivity_dialog(target_entry))
+            menu.addAction(tool_icon("workflow"), 'Approve as I-MR Replay Baseline…', lambda: self.approve_imr_replay(target_entry))
+            if result_dict.get('workflow_replay'):
+                menu.addAction(tool_icon("rerun"), 'Replay I-MR on Current Worksheet…', lambda: self.replay_imr_batch(target_entry))
+            from .imr_investigation import signals
+            menu.addAction(tool_icon("report"), 'Investigate Signal…', lambda: self.investigate_imr_signal(target_entry)).setEnabled(
+                bool(signals(result_dict))
+            )
+            has_primary = True
+        elif analysis_kind == 'imr_investigation':
+            menu.addAction(tool_icon("report"), 'Edit Investigation…', lambda: self.investigate_imr_signal(None, target_entry))
+            has_primary = True
+        elif analysis_kind == 'subgroup_control':
+            menu.addAction(tool_icon("find"), 'Trace Subgroup Result…', lambda: self.trace_subgroup_result(target_entry))
+            menu.addAction(tool_icon("chart"), 'Sensitivity Analysis…', lambda: self.subgroup_sensitivity_dialog(target_entry))
+            menu.addAction(tool_icon("workflow"), 'Approve as Subgroup Replay Baseline…', lambda: self.approve_subgroup_replay(target_entry))
+            if result_dict.get('workflow_replay'):
+                menu.addAction(tool_icon("rerun"), 'Replay Subgroup Chart on Current Worksheet…', lambda: self.replay_subgroup_batch(target_entry))
+            from .subgroup_workflows import signals as subgroup_signals
+            menu.addAction(tool_icon("report"), 'Investigate Signal…', lambda: self.investigate_subgroup_signal(target_entry)).setEnabled(
+                bool(subgroup_signals(result_dict))
+            )
+            has_primary = True
+        elif analysis_kind == 'subgroup_investigation':
+            menu.addAction(tool_icon("report"), 'Edit Investigation…', lambda: self.investigate_subgroup_signal(None, target_entry))
+            has_primary = True
+        elif (
+            analysis_kind == 'capability'
+            and result_dict.get('analysis_mode', 'normal') == 'normal'
+            and target_entry.get('recipe', {}).get('action') == 'normal_capability'
+        ):
+            menu.addAction(tool_icon("find"), 'Trace Capability Result…', lambda: self.trace_capability_result(target_entry))
+            menu.addAction(tool_icon("chart"), 'Sensitivity Analysis…', lambda: self.capability_sensitivity_dialog(target_entry))
+            menu.addAction(tool_icon("workflow"), 'Approve as Capability Replay Baseline…', lambda: self.approve_capability_replay(target_entry))
+            if result_dict.get('workflow_replay'):
+                menu.addAction(tool_icon("rerun"), 'Replay Capability on Current Worksheet…', lambda: self.replay_capability_batch(target_entry))
+            has_primary = True
+        elif analysis_kind == 'attribute_control':
+            menu.addAction(tool_icon("find"), 'Trace Attribute Result…', lambda: self.trace_attribute_result(target_entry))
+            menu.addAction(tool_icon("chart"), 'Sensitivity Analysis…', lambda: self.attribute_sensitivity_dialog(target_entry))
+            menu.addAction(tool_icon("workflow"), 'Approve as Attribute Replay Baseline…', lambda: self.approve_attribute_replay(target_entry))
+            if result_dict.get('workflow_replay'):
+                menu.addAction(tool_icon("rerun"), 'Replay Attribute Chart on Current Worksheet…', lambda: self.replay_attribute_batch(target_entry))
+            from .attribute_workflows import signals as attribute_signals
+            menu.addAction(tool_icon("report"), 'Investigate Signal…', lambda: self.investigate_attribute_signal(target_entry)).setEnabled(
+                bool(attribute_signals(result_dict))
+            )
+            has_primary = True
+        elif analysis_kind == 'attribute_investigation':
+            menu.addAction(tool_icon("report"), 'Edit Investigation…', lambda: self.investigate_attribute_signal(None, target_entry))
+            has_primary = True
+
+        if has_primary:
             menu.addSeparator()
-            native_snapshot = target_entry.get('result',{}).get('analysis')=='native_saved_output'
+
+        if is_graph:
+            menu.addAction(tool_icon("rename_sheet"), "Rename Graph…", lambda: self.rename_output_dialog(target_entry))
+            menu.addAction(tool_icon("find"), "Set ID Column for Hover…", lambda: self.set_graph_id_column_dialog(target_entry))
+
+            edit_menu = menu.addMenu(tool_icon("edit_graph"), "Graph Editing")
+            native_snapshot = analysis_kind == 'native_saved_output'
             can_edit_graph = (target_entry.get('origin') == 'statcraft' and 'recipe' in target_entry and target_entry.get('recipe', {}).get('action') in ('graph', 'scatter_plot', 'expanded_graph')) or native_snapshot
-            edit_action = menu.addAction(tool_icon("edit_graph"), "Edit Graph...", lambda: self.edit_graph_dialog(target_entry))
+            edit_action = edit_menu.addAction(tool_icon("edit_graph"), "Edit Graph...", lambda: self.edit_graph_dialog(target_entry))
             edit_action.setEnabled(can_edit_graph)
             if native_snapshot:
-                appearance=menu.addAction('Graph Appearance…',lambda:self.native_graph_appearance(target_entry))
+                appearance = edit_menu.addAction(tool_icon("edit_graph"), 'Graph Appearance…', lambda: self.native_graph_appearance(target_entry))
                 appearance.setToolTip('Edit this saved graph’s color palette and 3D view in the StatCraft project copy.')
-            result=target_entry.get('result',{})
-            composition=result.get('graph') in ('panel_graph','graph_layout')
-            object_capable=not composition and (result.get('graph')!='expanded' or any(p.get('kind') in ('xy','bars','binbars','intervals','xyz') for p in result.get('panels',[])))
-            object_action=menu.addAction('Edit Selected Object...',lambda:self.edit_graph_object(target_entry))
-            active_native=getattr(self,'_active_chart_widget',None) if target_entry is self.selected_entry else None
+            result = result_dict
+            composition = result.get('graph') in ('panel_graph', 'graph_layout')
+            object_capable = not composition and (result.get('graph') != 'expanded' or any(p.get('kind') in ('xy', 'bars', 'binbars', 'intervals', 'xyz') for p in result.get('panels', [])))
+            object_action = edit_menu.addAction(tool_icon("edit_graph"), 'Edit Selected Object...', lambda: self.edit_graph_object(target_entry))
+            active_native = getattr(self, '_active_chart_widget', None) if target_entry is self.selected_entry else None
             object_action.setEnabled(can_edit_graph and object_capable and (not native_snapshot or active_native is not None and bool(active_native.editable_objects())))
-            scale_action=menu.addAction('Edit Scales...',lambda:self.edit_graph_scales(target_entry));scale_action.setEnabled(can_edit_graph and not composition and result.get('analysis')!='mixture_joint_optimization')
+            scale_action = edit_menu.addAction(tool_icon("table"), 'Edit Scales...', lambda: self.edit_graph_scales(target_entry))
+            scale_action.setEnabled(can_edit_graph and not composition and result.get('analysis') != 'mixture_joint_optimization')
             if native_snapshot:
                 from .native_graph_view import cartesian
                 scale_action.setEnabled(cartesian(target_entry))
-            if result.get('graph')=='histogram':menu.addAction('Histogram Scales and Fits...',lambda:self.histogram_options_dialog(target_entry))
-            panel_action=menu.addAction(tool_icon("panel_graph"), "Panel...", lambda: self.panel_graph_dialog(target_entry))
-            panel_action.setEnabled(target_entry.get('recipe',{}).get('action') in ('graph','scatter_plot','expanded_graph'))
+            if result.get('graph') == 'histogram':
+                edit_menu.addAction(tool_icon("histogram"), 'Histogram Scales and Fits...', lambda: self.histogram_options_dialog(target_entry))
+            from .similar_graph_dialog import supports_similar
+            edit_menu.addAction(tool_icon("make_similar_graph"), "Make Similar Graph...", lambda: self.make_similar_graph(target_entry)).setEnabled(supports_similar(target_entry))
+            panel_action = edit_menu.addAction(tool_icon("panel_graph"), "Panel...", lambda: self.panel_graph_dialog(target_entry))
+            panel_action.setEnabled(target_entry.get('recipe', {}).get('action') in ('graph', 'scatter_plot', 'expanded_graph'))
             from .brushing import brushable_rows
-            brush_action=menu.addAction(tool_icon("brush_points"), "Brush Points...", lambda: self.brush_points_dialog(target_entry))
+            brush_action = edit_menu.addAction(tool_icon("brush_points"), "Brush Points...", lambda: self.brush_points_dialog(target_entry))
             brush_action.setEnabled(bool(brushable_rows(target_entry)))
             brush_action.setCheckable(True)
-            brush_action.setChecked(target_entry is self.selected_entry and getattr(getattr(self,'_active_chart_widget',None),'is_brushing',False))
-            menu.addAction(tool_icon("layout_tool"), "Layout Tool...", lambda: self.layout_tool_dialog(target_entry))
-            menu.addAction("Set ID Column for Hover…", lambda: self.set_graph_id_column_dialog(target_entry))
-            menu.addAction("Rename Graph…", lambda: self.rename_output_dialog(target_entry))
-            menu.addAction("Duplicate Graph", lambda: self.duplicate_graph(target_entry))
-            menu.addAction("Copy Command Language", lambda: self.copy_command_language(target_entry))
-            menu.addAction("Go to Session / Report", lambda: self.show_result(target_entry, target_tab="Report"))
-            menu.addAction("Reset to Default Size", self.reset_graph_size)
-            menu.addSeparator()
-            menu.addAction("Close All Graphs", self.close_all_graphs)
-            menu.addAction(tool_icon("print"), "Print Graph…", self.print_current)
-            menu.addAction(tool_icon("save"), "Save Graph As...", lambda: self.save_graph_as(target_entry))
+            brush_action.setChecked(target_entry is self.selected_entry and getattr(getattr(self, '_active_chart_widget', None), 'is_brushing', False))
+            edit_menu.addAction(tool_icon("layout_tool"), "Layout Tool...", lambda: self.layout_tool_dialog(target_entry))
+            edit_menu.addSeparator()
+            edit_menu.addAction(tool_icon("copy"), "Duplicate Graph", lambda: self.duplicate_graph(target_entry))
+            edit_menu.addAction(tool_icon("reset"), "Reset to Default Size", self.reset_graph_size)
+            edit_menu.addAction(tool_icon("report"), "Go to Session / Report", lambda: self.show_result(target_entry, target_tab="Report"))
+            edit_menu.addAction(tool_icon("delete_sheet"), "Close All Graphs", self.close_all_graphs)
+
+            if getattr(self, "_brushed_rows", None):
+                menu.addAction(tool_icon("format_column"), "Create Indicator Variable from Selection…", lambda: self.create_indicator_from_brushed_dialog())
+                brush_menu = menu.addMenu(tool_icon("brush_points"), "Brushed Selection")
+                brush_menu.addAction(tool_icon("select_all"), "Highlight in Worksheet", lambda: self.highlight_brushed_selection())
+                brush_menu.addAction(tool_icon("save"), "Save Selection…", lambda: self.save_brushed_selection())
+                brush_menu.addAction(tool_icon("chart"), "Analyze Selection…", lambda: self.analyze_brushed_selection())
+                brush_menu.addAction(tool_icon("code_view"), "Open Selection in R Workbench…", lambda: self.open_brushed_selection_in_r())
+                brush_menu.addAction(tool_icon("erase"), "Clear Selection", lambda: self.clear_brushed_selection())
         else:
-            menu.addAction(tool_icon("copy"), "Copy\tCtrl+C", lambda: QApplication.clipboard().setText(format_entry(target_entry)))
-            menu.addAction(tool_icon("copy"), "Copy Table (TSV for Excel)\tCtrl+Shift+C", lambda: self.copy_output_table_tsv(target_entry))
-            menu.addAction(tool_icon("copy_graph"), "Copy as Picture", lambda: self.copy_output_graph(target_entry))
-            menu.addSeparator()
-            menu.addAction("Rename...", lambda: self.rename_output_dialog(target_entry))
-            menu.addAction(tool_icon("delete_red_x"), "Delete Output\tDel", lambda: self.delete_output_entry(target_entry))
-            menu.addSeparator()
-        # R Script Export Actions
+            menu.addAction(tool_icon("rename_sheet"), "Rename...", lambda: self.rename_output_dialog(target_entry))
+
+        export_menu = menu.addMenu(tool_icon("export"), "Send && Export")
+        if is_graph:
+            export_menu.addAction(tool_icon("copy_graph"), "Copy Graph", lambda: self.copy_output_graph(target_entry))
+            export_menu.addAction(tool_icon("copy_graph"), "Copy Chart as SVG (Lossless Vector)\tCtrl+Alt+S", lambda: self.copy_active_chart_svg(target_entry))
+            export_menu.addAction(tool_icon("copy"), "Copy Command Language", lambda: self.copy_command_language(target_entry))
+            export_menu.addSeparator()
+            export_menu.addAction(tool_icon("save"), "Save Graph As...", lambda: self.save_graph_as(target_entry))
+            export_menu.addAction(tool_icon("print"), "Print Graph…", self.print_current)
+        else:
+            export_menu.addAction(tool_icon("copy"), "Copy\tCtrl+C", lambda: QApplication.clipboard().setText(format_entry(target_entry)))
+            export_menu.addAction(tool_icon("copy"), "Copy Table (TSV for Excel)\tCtrl+Shift+C", lambda: self.copy_output_table_tsv(target_entry))
+            export_menu.addAction(tool_icon("copy_graph"), "Copy as Picture", lambda: self.copy_output_graph(target_entry))
+        export_menu.addSeparator()
+        export_menu.addAction(tool_icon("send_report"), "Send to Report", lambda: self.send_output_to_report(target_entry))
+        export_menu.addAction(tool_icon("word"), "Send to Microsoft® Word", lambda: self.send_output_to_word(target_entry))
+        export_menu.addAction(tool_icon("powerpoint"), "Send to Microsoft® PowerPoint", lambda: self.send_output_to_powerpoint(target_entry))
+        if analysis_kind not in ('imr_investigation', 'subgroup_investigation', 'attribute_investigation'):
+            export_menu.addAction(tool_icon("send_report"), "Append to ReportPad", lambda: self.append_connected_report_to_report_pad(target_entry))
+        export_menu.addSeparator()
+        export_menu.addAction(tool_icon("save"), "Save Output As...", self.export_report)
+        export_menu.addAction(tool_icon("print"), "Print...\tCtrl+P", lambda checked=False: self.print_current(target_entry))
+
+        if analysis_kind not in ('imr_investigation', 'subgroup_investigation', 'attribute_investigation'):
+            r_menu = menu.addMenu(tool_icon("code_view"), "R Code")
+            r_menu.addAction(tool_icon("copy"), "Copy R Script\tCtrl+Alt+R", lambda: self.copy_entry_r_script(target_entry))
+            r_menu.addAction(tool_icon("code_view"), "View R Code...", lambda: self.view_entry_r_code(target_entry))
+            r_menu.addAction(tool_icon("save"), "Export to R Script (.R)...", lambda: self.export_entry_r_file(target_entry))
+
         menu.addSeparator()
-        menu.addAction("📋 Copy R Script\tCtrl+Alt+R", lambda: self.copy_entry_r_script(target_entry))
-        menu.addAction("👁️ View R Code...", lambda: self.view_entry_r_code(target_entry))
-        menu.addAction("💾 Export to R Script (.R)...", lambda: self.export_entry_r_file(target_entry))
-        menu.addAction("📑 Append to ReportPad", lambda: self.append_connected_report_to_report_pad(target_entry))
-
-        if is_graph and getattr(self, "_brushed_rows", None):
-            menu.addSeparator()
-            menu.addAction("Highlight in Worksheet", lambda: self.highlight_brushed_selection())
-            menu.addAction("Save Selection…", lambda: self.save_brushed_selection())
-            menu.addAction("Analyze Selection…", lambda: self.analyze_brushed_selection())
-            menu.addAction("Create Indicator Variable from Selection…", lambda: self.create_indicator_from_brushed_dialog())
-            menu.addAction("Open Selection in R Workbench…", lambda: self.open_brushed_selection_in_r())
-            menu.addAction("Clear Selection", lambda: self.clear_brushed_selection())
-
-        menu.addAction(tool_icon("save"), "Save Output As...", self.export_report)
-        menu.addAction(tool_icon("print"), "Print...\tCtrl+P", lambda checked=False: self.print_current(target_entry))
-        menu.addAction("Close Output Tab",lambda:self._workspace.close_index(self._workspace.state["open_ids"].index(self._workspace.key(target_entry))) if self._workspace.key(target_entry) in self._workspace.state["open_ids"] else None)
-        menu.addAction(tool_icon("delete_red_x"), "Delete", lambda: self.delete_selected_output(target_entry))
-        if target_entry.get('native_model',{}).get('supported'):
-            menu.addSeparator();menu.addAction('Refit Model in StatCraft…',lambda:self.refit_native_model(target_entry))
-        if target_entry.get('origin')=='statcraft' and 'recipe' in target_entry:
-            menu.addSeparator()
-            menu.addAction('Rerun with Current Data',lambda:self._call(lambda:self.presenter.rerun_result(target_entry),result=True))
+        if not is_graph:
+            menu.addAction(tool_icon("delete_red_x"), "Delete Output\tDel", lambda: self.delete_output_entry(target_entry))
+        else:
+            menu.addAction(tool_icon("delete_red_x"), "Delete", lambda: self.delete_selected_output(target_entry))
+        menu.addAction(tool_icon("close"), "Close Output Tab", lambda: self._workspace.close_index(self._workspace.state["open_ids"].index(self._workspace.key(target_entry))) if self._workspace.key(target_entry) in self._workspace.state["open_ids"] else None)
+        if target_entry.get('native_model', {}).get('supported'):
+            menu.addAction(tool_icon("regression"), 'Refit Model in StatCraft…', lambda: self.refit_native_model(target_entry))
+        if target_entry.get('origin') == 'statcraft' and 'recipe' in target_entry:
+            menu.addAction(tool_icon("rerun"), 'Rerun with Current Data', lambda: self._call(lambda: self.presenter.rerun_result(target_entry), result=True))
         return menu
 
     def _run_on_selected_entry(self, handler):
@@ -9921,17 +10683,32 @@ class ModernWindow(QMainWindow):
         family = "response_surface" if action == "analyze_response_surface" else "regression"
         self.model_surface_plot(family)
 
-    def connect_open_r_bootstrap(self, entry):
+    def _resolve_entry_connected_analysis(self, entry, *, allow_build=True):
+        if not isinstance(entry, dict):
+            return None, getattr(self.presenter, "worksheet", None)
+        entry_ws = self.presenter.resolve_entry_worksheet(entry)
         conn_dict = entry.get("connected_analysis")
-        if not conn_dict:
+        if (
+            isinstance(conn_dict, dict)
+            and entry_ws is not None
+            and conn_dict.get("worksheet_name")
+            and conn_dict.get("worksheet_name") != entry_ws.name
+        ):
+            entry.pop("connected_analysis", None)
+            conn_dict = None
+        if not conn_dict and allow_build and entry_ws is not None:
             from .connect import create_connected_analysis_from_entry
             try:
-                conn_obj = create_connected_analysis_from_entry(entry, self.presenter.worksheet)
+                conn_obj = create_connected_analysis_from_entry(entry, entry_ws)
                 if conn_obj:
                     conn_dict = conn_obj.to_dict()
                     entry["connected_analysis"] = conn_dict
             except Exception:
                 conn_dict = None
+        return conn_dict, entry_ws
+
+    def connect_open_r_bootstrap(self, entry):
+        conn_dict, entry_ws = self._resolve_entry_connected_analysis(entry)
 
         if not conn_dict:
             QMessageBox.information(self, "R Bootstrap", "A connected model (Response Surface, Factorial, or Regression) is required.")
@@ -9940,13 +10717,14 @@ class ModernWindow(QMainWindow):
         from .connect import ConnectedAnalysis
         from .connect_r import generate_response_surface_bootstrap_script
         conn = ConnectedAnalysis.from_dict(conn_dict)
+        target_ws = entry_ws or self.presenter.worksheet
 
-        cand_pts = self.presenter.worksheet.metadata.get("candidate_points", []) if hasattr(self.presenter.worksheet, "metadata") else []
+        cand_pts = target_ws.metadata.get("candidate_points", []) if hasattr(target_ws, "metadata") else []
         cand_point = cand_pts[-1].get("factors", {}) if cand_pts else None
 
         boot_script = generate_response_surface_bootstrap_script(
             conn,
-            self.presenter.worksheet,
+            target_ws,
             replications=2000,
             confidence=conn.confidence,
             candidate_point=cand_point,
@@ -9962,16 +10740,7 @@ class ModernWindow(QMainWindow):
             self.statusBar().showMessage("StatCraft Connect: Loaded R Bootstrap Uncertainty Script", 6000)
 
     def connect_open_in_r(self, entry):
-        conn_dict = entry.get("connected_analysis")
-        if not conn_dict:
-            from .connect import create_connected_analysis_from_entry
-            try:
-                conn_obj = create_connected_analysis_from_entry(entry, self.presenter.worksheet)
-                if conn_obj:
-                    conn_dict = conn_obj.to_dict()
-                    entry["connected_analysis"] = conn_dict
-            except Exception:
-                conn_dict = None
+        conn_dict, _ = self._resolve_entry_connected_analysis(entry)
 
         if conn_dict and self.r_workbench:
             self.set_ui_mode("r")
@@ -9983,15 +10752,16 @@ class ModernWindow(QMainWindow):
             self.statusBar().showMessage("StatCraft Connect: Active worksheet synchronized into R as 'df'", 5000)
 
     def connect_apply_predictions(self, entry):
-        conn_dict = entry.get("connected_analysis")
+        conn_dict, entry_ws = self._resolve_entry_connected_analysis(entry, allow_build=False)
+        target_ws = entry_ws or self.presenter.worksheet
         recipe = entry.get("recipe", {})
         action = recipe.get("action")
         p = recipe.get("parameters", {})
-        if not conn_dict:
+        if not conn_dict and target_ws is not None:
             if action == "multiple_regression" and "response_index" in p:
                 from .connect import create_connected_regression
                 conn_dict = create_connected_regression(
-                    self.presenter.worksheet, p["response_index"], p["predictor_indices"],
+                    target_ws, p["response_index"], p["predictor_indices"],
                     entry.get("result", {}), p.get("confidence", 0.95)
                 ).to_dict()
                 entry["connected_analysis"] = conn_dict
@@ -9999,7 +10769,7 @@ class ModernWindow(QMainWindow):
                 from .connect import create_connected_response_surface
                 conf = p.get("options", {}).get("confidence", 0.95) if isinstance(p.get("options"), dict) else 0.95
                 conn_dict = create_connected_response_surface(
-                    self.presenter.worksheet, p["response_index"], p["factor_indices"],
+                    target_ws, p["response_index"], p["factor_indices"],
                     entry.get("result", {}), conf, coding=p.get("coding"), terms=p.get("terms"), options=p.get("options")
                 ).to_dict()
                 entry["connected_analysis"] = conn_dict
@@ -10016,7 +10786,7 @@ class ModernWindow(QMainWindow):
             Column("Fitted", "number", list(conn.fitted_values)),
             Column("Residuals", "number", list(conn.residuals)),
         ]
-        res = import_r_predictions_to_worksheet(self.presenter.worksheet, {"Regression_Diagnostics": diag_cols}, conn)
+        res = import_r_predictions_to_worksheet(target_ws, {"Regression_Diagnostics": diag_cols}, conn)
         self.refresh()
         self.statusBar().showMessage(
             f"StatCraft Connect: Created/updated {res.get('fitted_col')} and {res.get('residuals_col')} ({res.get('rows_updated')} rows aligned by observation ID)",
@@ -10210,16 +10980,7 @@ class ModernWindow(QMainWindow):
         self.statusBar().showMessage(f"Hover ID set to: {chosen}", 4000)
 
     def connect_compare_implementations(self, entry):
-        conn_dict = entry.get("connected_analysis")
-        if not conn_dict:
-            from .connect import create_connected_analysis_from_entry
-            try:
-                conn_obj = create_connected_analysis_from_entry(entry, self.presenter.worksheet)
-                if conn_obj:
-                    conn_dict = conn_obj.to_dict()
-                    entry["connected_analysis"] = conn_dict
-            except Exception:
-                conn_dict = None
+        conn_dict, entry_ws = self._resolve_entry_connected_analysis(entry)
 
         if not conn_dict:
             QMessageBox.information(self, "Compare Implementations", "This result does not have a connected analysis model.")
@@ -10234,7 +10995,7 @@ class ModernWindow(QMainWindow):
 
         conn = ConnectedAnalysis.from_dict(conn_dict)
         self.statusBar().showMessage("Running cross-engine execution comparison...", 4000)
-        res = run_cross_engine_comparison(conn, self.presenter.worksheet)
+        res = run_cross_engine_comparison(conn, entry_ws or self.presenter.worksheet)
         if not res.get("success"):
             QMessageBox.warning(self, "Compare Implementations", f"Execution comparison failed:\n{res.get('error')}")
             return
@@ -10248,16 +11009,7 @@ class ModernWindow(QMainWindow):
             QMessageBox.information(self, "Append to ReportPad", "Please select a model result first.")
             return
 
-        conn_dict = target_entry.get("connected_analysis")
-        if not conn_dict:
-            from .connect import create_connected_analysis_from_entry
-            try:
-                conn_obj = create_connected_analysis_from_entry(target_entry, self.presenter.worksheet)
-                if conn_obj:
-                    conn_dict = conn_obj.to_dict()
-                    target_entry["connected_analysis"] = conn_dict
-            except Exception:
-                conn_dict = None
+        conn_dict, entry_ws = self._resolve_entry_connected_analysis(target_entry)
 
         if not conn_dict:
             QMessageBox.information(self, "Append to ReportPad", "This result does not have a connected analysis model.")
@@ -10266,7 +11018,7 @@ class ModernWindow(QMainWindow):
         from .connect import ConnectedAnalysis
         from .connect_report import generate_connected_report
         conn = ConnectedAnalysis.from_dict(conn_dict)
-        report_text = generate_connected_report(conn, self.presenter.worksheet)
+        report_text = generate_connected_report(conn, entry_ws or self.presenter.worksheet)
 
         self.append_to_report_pad(report_text)
         self.statusBar().showMessage(f"StatCraft Connect: Appended '{conn.title}' report to ReportPad", 6000)
@@ -10542,7 +11294,7 @@ class ModernWindow(QMainWindow):
             menu.addAction(self.delete_sheet_action)
             menu.exec(self.navigator.viewport().mapToGlobal(pos))
             return
-        entry = data.get("entry")
+        entry = self._workspace.entries().get(data.get("entry_key"))
         if entry is not None:
             self.show_result(entry)
             self._show_output_context_menu(self.navigator.viewport().mapToGlobal(pos), entry=entry)
@@ -11631,7 +12383,8 @@ class ModernWindow(QMainWindow):
             self._call(lambda:self.presenter.update_native_graph_view(entry,chart.graph_index,dialog.settings))
 
     def close_graph_options(self):
-        self.graph_options_pane.flush();self.graph_options_pane.hide()
+        self.graph_options_pane.load_entry(None)
+        self.graph_options_pane.hide()
 
     def _graph_object_selected(self,target):
         chart=getattr(self,'_active_chart_widget',None)
@@ -11891,7 +12644,8 @@ class ModernWindow(QMainWindow):
         entry = self.selected_entry
         if entry is None:
             item = self.navigator.currentItem(); data = item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None
-            if isinstance(data, dict) and data.get("kind") == "result": entry = data["entry"]
+            if isinstance(data, dict) and data.get("kind") == "result":
+                entry = self._workspace.entries().get(data.get("entry_key"))
         if entry is None: QMessageBox.information(self, "Rerun", "Select a supported result first."); return None
         return self._call(lambda: self.presenter.rerun_result(entry), result=True)
 
@@ -11972,30 +12726,44 @@ class ModernWindow(QMainWindow):
 
 
 
+    def _resolve_entry_r_script(self, entry=None, dialect: str = "base") -> tuple[str, str]:
+        target = entry
+        ws = None
+        if target is not None and hasattr(self, "presenter") and self.presenter is not None:
+            ws = self.presenter.resolve_entry_worksheet(target)
+        if target is not None and ws is None and isinstance(target, dict):
+            conn_dict = target.get("connected_analysis")
+            if isinstance(conn_dict, dict):
+                script = (
+                    (conn_dict.get("metadata") or {}).get("tidyverse_script")
+                    if str(dialect).lower().startswith("tidy")
+                    else conn_dict.get("r_script")
+                ) or conn_dict.get("r_script") or ""
+                if script:
+                    return script, str(target.get("title") or conn_dict.get("title") or "Analysis")
+        if ws is None and hasattr(self, "presenter") and self.presenter is not None:
+            ws = self.presenter.worksheet
+        if target is not None:
+            from .r_universal_translator import translate_entry_to_r
+            base_script, tidy_script, title = translate_entry_to_r(target, ws)
+            return (tidy_script if str(dialect).lower().startswith("tidy") else base_script), title
+        if str(dialect).lower().startswith("tidy"):
+            from .connect_r import generate_vroom_data_import_code
+            return generate_vroom_data_import_code(ws), f"Worksheet: {ws.name}"
+        from .connect_r import generate_dataframe_init_code
+        return generate_dataframe_init_code(ws), f"Worksheet: {ws.name}"
+
     def _get_entry_r_script(self, entry=None) -> tuple[str, str]:
         target = entry or self.selected_entry
         if target is None and self.presenter.history:
             target = self.presenter.history[-1]
-        ws = self.presenter.worksheet
-        if target is not None:
-            from .r_universal_translator import translate_entry_to_r
-            base_script, _, title = translate_entry_to_r(target, ws)
-            return base_script, title
-        from .connect_r import generate_dataframe_init_code
-        code = generate_dataframe_init_code(ws)
-        return code, f"Worksheet: {ws.name}"
+        return self._resolve_entry_r_script(target, dialect="base")
 
     def _get_entry_tidyverse_script(self, entry=None) -> tuple[str, str]:
         target = entry or self.selected_entry
         if target is None and self.presenter.history:
             target = self.presenter.history[-1]
-        ws = self.presenter.worksheet
-        if target is not None:
-            from .r_universal_translator import translate_entry_to_r
-            _, tidy_script, title = translate_entry_to_r(target, ws)
-            return tidy_script, title
-        from .connect_r import generate_vroom_data_import_code
-        return generate_vroom_data_import_code(ws), f"Worksheet: {ws.name}"
+        return self._resolve_entry_r_script(target, dialect="tidyverse")
 
     def _get_entry_vroom_script(self) -> str:
         from .connect_r import generate_vroom_data_import_code
@@ -12091,9 +12859,7 @@ class ModernWindow(QMainWindow):
     def copy_connected_r_script(self, entry=None):
         if entry is None and hasattr(self, "_active_entry"):
             entry = self._active_entry
-        from .r_universal_translator import translate_analysis_to_r
-        ws = self.presenter.worksheet if hasattr(self, "presenter") else None
-        script = translate_analysis_to_r(entry, ws, dialect="tidyverse")
+        script, _ = self._resolve_entry_r_script(entry, dialect="tidyverse")
         cb = QApplication.clipboard()
         if cb is not None:
             cb.setText(script)
@@ -12103,9 +12869,7 @@ class ModernWindow(QMainWindow):
     def copy_entry_r_script(self, entry=None):
         if entry is None and hasattr(self, "_active_entry"):
             entry = self._active_entry
-        from .r_universal_translator import translate_analysis_to_r
-        ws = self.presenter.worksheet if hasattr(self, "presenter") else None
-        script = translate_analysis_to_r(entry, ws, dialect="base")
+        script, _ = self._resolve_entry_r_script(entry, dialect="base")
         cb = QApplication.clipboard()
         if cb is not None:
             cb.setText(script)
@@ -12113,31 +12877,31 @@ class ModernWindow(QMainWindow):
             self.statusBar().showMessage("\u2713 Copied Base R script to clipboard!", 5000)
 
     def view_entry_r_code(self, entry):
-        from .r_universal_translator import translate_analysis_to_r
-        ws = self.presenter.worksheet if hasattr(self, "presenter") else None
-        r_code = translate_analysis_to_r(entry, ws, dialect="tidyverse")
+        r_code, _ = self._resolve_entry_r_script(entry, dialect="tidyverse")
         title = entry.get("title", "Analysis") if isinstance(entry, dict) else (getattr(entry, "title", None) or "Analysis")
         dlg = QDialog(self)
         dlg.setWindowTitle(f"R Code — {title}")
-        dlg.resize(740, 520)
+        dlg.setSizeGripEnabled(True)
+        dlg.resize(780, 540)
         layout = QVBoxLayout(dlg)
-        editor = QPlainTextEdit()
-        editor.setReadOnly(True)
-        editor.setFont(QFont("Consolas", 10))
+        from .r_workbench_widget import RCodeEditor
+        dark = bool(getattr(self, "_dark_mode", False))
+        editor = RCodeEditor(parent=dlg, is_dark=dark, read_only=True, with_highlighter=True)
         editor.setPlainText(r_code)
+        dlg.code_view = editor
         layout.addWidget(editor, 1)
         btns = QDialogButtonBox()
         copy_btn = btns.addButton("Copy R Script", QDialogButtonBox.ButtonRole.ActionRole)
+        save_btn = btns.addButton("Save .R File…", QDialogButtonBox.ButtonRole.ActionRole)
         close_btn = btns.addButton(QDialogButtonBox.StandardButton.Close)
-        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(r_code))
+        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(editor.toPlainText()))
+        save_btn.clicked.connect(lambda: self.export_entry_r_file(entry))
         close_btn.clicked.connect(dlg.accept)
         layout.addWidget(btns)
         dlg.exec()
 
     def export_entry_r_file(self, entry):
-        from .r_universal_translator import translate_analysis_to_r
-        ws = self.presenter.worksheet if hasattr(self, "presenter") else None
-        script = translate_analysis_to_r(entry, ws, dialect="tidyverse")
+        script, _ = self._resolve_entry_r_script(entry, dialect="tidyverse")
         title = entry.get("title", "Analysis") if isinstance(entry, dict) else (getattr(entry, "title", None) or "Analysis")
         clean = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in title).strip("_")
         path, _ = QFileDialog.getSaveFileName(self, "Export Modern Tidyverse R Script", f"{clean}_tidyverse.R", "R Scripts (*.R *.r)")
@@ -12322,7 +13086,7 @@ class ModernWindow(QMainWindow):
             if not has_graph:
                 continue
             if self.presenter.result_stale(entry) is True:
-                rerun = entry.get("_rerun_action")
+                rerun = self._result_dialog_actions.get(entry.get("entry_id"))
                 if callable(rerun):
                     rerun()
                     updated += 1
@@ -12489,6 +13253,7 @@ class ModernWindow(QMainWindow):
         self._call(lambda: self.presenter.clear_conditional_formatting(cols))
 
     def reset_window_layout(self):
+        self._work_split_ratio = 0.58
         self.set_view_mode("both")
         if hasattr(self, "view_nav_action") and not self.view_nav_action.isChecked():
             self.view_nav_action.setChecked(True)
@@ -12674,6 +13439,7 @@ class ModernWindow(QMainWindow):
         if hasattr(self, "table"):
             self.table.setProperty("frozen_rows", rows)
             self.table.setProperty("frozen_cols", cols)
+            self.worksheet_freeze.set_frozen_counts(rows, cols)
         if hasattr(self, "status_freeze_label"):
             if rows > 0 or cols > 0:
                 self.status_freeze_label.setText(f"Frozen: {rows}R × {cols}C")
@@ -12711,12 +13477,25 @@ class ModernWindow(QMainWindow):
         from . import session_io
         return session_io.autosave_snapshot(self.presenter.worksheet, self.presenter.history, self._autosave_path())
 
-    def recover_autosave_if_present(self, path=None) -> bool:
+    def _autosave_if_dirty(self):
+        if self.presenter.dirty:
+            self.autosave_now()
+
+    def recover_autosave_if_present(self, path=None, *, ask=False) -> bool:
         from . import session_io
         target = Path(path) if path is not None else self._autosave_path()
         snap = session_io.load_autosave_snapshot(target)
         if snap is None:
             return False
+        if ask:
+            answer = QMessageBox.question(
+                self, "Recover unsaved worksheet",
+                "Restore the worksheet and history from the last recovery snapshot?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return False
         if snap.get("worksheet") is not None:
             if self.presenter.native_project is not None and getattr(self.presenter.native_project, "worksheets", None):
                 idx = self.presenter.native_project.active_index
@@ -13086,9 +13865,9 @@ class ModernWindow(QMainWindow):
             target = target.with_suffix(".xlsx")
         if target.suffix.lower() == ".mpx":
             from .mpx import save_mpx
-            result = self._call(lambda: save_mpx(self.presenter._owned_project(), str(target)))
+            result = self._call(lambda: save_mpx(self.presenter._owned_project(), str(target)), mutates_sheet=False)
         else:
-            result = self._call(lambda: self.presenter.export_excel(str(target), all_worksheets=True))
+            result = self._call(lambda: self.presenter.export_excel(str(target), all_worksheets=True), mutates_sheet=False)
         if result:
             self.statusBar().showMessage(f"Saved all worksheets to {target}", 6000)
             return target
@@ -13366,9 +14145,13 @@ class ModernWindow(QMainWindow):
         chart = getattr(frame, "chart", None) if frame is not None else None
         entry = self._active_graph_entry()
         reset_done = False
-        if chart is not None and hasattr(chart, "reset_cad_view"):
-            chart.reset_cad_view()
-            reset_done = True
+        if chart is not None:
+            if hasattr(chart, "reset_cad_view"):
+                chart.reset_cad_view()
+                reset_done = True
+            elif hasattr(chart, "reset_view"):
+                chart.reset_view()
+                reset_done = True
         if isinstance(entry, dict) and isinstance(entry.get("result"), dict):
             from .spatial_view import DEFAULT_VIEW
 

@@ -3,7 +3,7 @@
   "fixture": "reference-wsave-numeric.mwx",
   "sha256": "0e3398ab9f1febbb309af043de11496b5fb51dc8d2e7189c45ed4ea71c6374e9",
   "bytes": 2169,
-  "origin": "work/runtime-samples/1791911809607/reference.mwx",
+  "origin": "Synthetic worksheet exported through the reference application's worksheet save command.",
   "acquisition": "Synthetic numeric worksheet saved through the reference application's normal UI WSAVE command, then independently imported without running target code.",
   "expected_numeric_columns": [
     [1, 2, 3, 4, 5],

@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
-    QLineEdit, QPushButton, QComboBox, QCheckBox, QListWidget,
-    QStackedWidget, QWidget, QMessageBox, QGroupBox
+    QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
+    QLineEdit, QPushButton, QComboBox, QCheckBox, QListWidget, QListWidgetItem,
+    QStackedWidget, QWidget, QGroupBox
 )
-from .dialog_theme import is_dark_active, subtle_label_style
+from .dialog_theme import AutoErrorLabel, dialog_stylesheet, is_dark_active, subtle_label_style
 from .model import Worksheet
 from .two_sample_t_engine import two_sample_t_settings
 
@@ -19,9 +19,10 @@ class TwoSampleTOptionsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Two-Sample t: Options")
         self.setModal(True)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.options = dict(options)
-        self.setMinimumSize(380, 260)
-        self.resize(380, 260)
+        self.setMinimumSize(460, 270)
+        self.resize(500, 280)
         self.setSizeGripEnabled(True)
 
         layout = QVBoxLayout(self)
@@ -44,11 +45,15 @@ class TwoSampleTOptionsDialog(QDialog):
 
         grid.addWidget(QLabel("Alternative hypothesis:"), 2, 0)
         self.alt_combo = QComboBox()
-        self.alt_combo.addItems([
+        self.alt_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        alt_items = [
             "Difference < hypothesized difference",
             "Difference ≠ hypothesized difference",
             "Difference > hypothesized difference",
-        ])
+        ]
+        self.alt_combo.addItems(alt_items)
+        needed_w = max(self.alt_combo.fontMetrics().horizontalAdvance(t) for t in alt_items) + 34
+        self.alt_combo.setMinimumWidth(max(280, needed_w))
         alt_val = self.options.get("alternative", "not_equal")
         if alt_val == "less_than":
             self.alt_combo.setCurrentIndex(0)
@@ -66,31 +71,37 @@ class TwoSampleTOptionsDialog(QDialog):
 
         layout.addStretch()
 
-        btn_box = QHBoxLayout()
-        btn_box.addStretch()
-        self.ok_btn = QPushButton("&OK")
-        self.ok_btn.clicked.connect(self._accept)
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.clicked.connect(self.reject)
-        btn_box.addWidget(self.ok_btn)
-        btn_box.addWidget(self.cancel_btn)
-        layout.addLayout(btn_box)
+        self.error = AutoErrorLabel()
+        layout.addWidget(self.error)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        self.ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
+        self.cancel_btn = btn_box.button(QDialogButtonBox.StandardButton.Cancel)
+        btn_box.accepted.connect(self._accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
 
     def _accept(self):
+        self.error.hide()
         try:
             c = float(self.conf_edit.text().strip())
             if not (0.0 < c < 100.0):
                 raise ValueError
             self.options["confidence_level"] = c
         except ValueError:
-            QMessageBox.critical(self, "Validation Error", "Confidence level must be a number between 0 and 100.")
+            self.error.setText("Confidence level must be a number between 0 and 100.")
+            self.error.show()
             return
 
         try:
             h = float(self.hyp_edit.text().strip())
             self.options["hypothesized_difference"] = h
         except ValueError:
-            QMessageBox.critical(self, "Validation Error", "Hypothesized difference must be a valid number.")
+            self.error.setText("Hypothesized difference must be a valid number.")
+            self.error.show()
             return
 
         idx = self.alt_combo.currentIndex()
@@ -112,6 +123,7 @@ class TwoSampleTGraphsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Two-Sample t: Graphs")
         self.setModal(True)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.graphs = dict(graphs)
         self.setMinimumSize(380, 260)
         self.resize(380, 260)
@@ -129,15 +141,15 @@ class TwoSampleTGraphsDialog(QDialog):
 
         layout.addStretch()
 
-        btn_box = QHBoxLayout()
-        btn_box.addStretch()
-        self.ok_btn = QPushButton("&OK")
-        self.ok_btn.clicked.connect(self._accept)
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.clicked.connect(self.reject)
-        btn_box.addWidget(self.ok_btn)
-        btn_box.addWidget(self.cancel_btn)
-        layout.addLayout(btn_box)
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        self.ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
+        self.cancel_btn = btn_box.button(QDialogButtonBox.StandardButton.Cancel)
+        btn_box.accepted.connect(self._accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
 
     def _accept(self):
         self.graphs["individual_value_plot"] = self.ivp_cb.isChecked()
@@ -153,14 +165,16 @@ class TwoSampleTDialog(QDialog):
         self.worksheet = worksheet
         self.setWindowTitle("Two-Sample t for the Mean")
         self.setModal(True)
-        self.setMinimumSize(560, 420)
-        self.resize(560, 420)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
+        self.setMinimumSize(560, 440)
+        self.resize(580, 460)
         self.setSizeGripEnabled(True)
 
         self.settings = two_sample_t_settings()
         from .variable_dialogs import default_confidence_percent
         self.settings["confidence_level"] = default_confidence_percent()
         self.result_payload: Optional[Dict[str, Any]] = None
+        self._last_filter_kinds: Optional[tuple[str, ...]] = ("number",)
 
         main_layout = QHBoxLayout(self)
 
@@ -168,9 +182,12 @@ class TwoSampleTDialog(QDialog):
         left_box = QVBoxLayout()
         left_label = QLabel("Columns:")
         left_box.addWidget(left_label)
+        self.var_filter = QLineEdit()
+        self.var_filter.setPlaceholderText("Filter variables…")
+        self.var_filter.setClearButtonEnabled(True)
+        self.var_filter.textChanged.connect(lambda _txt: self._populate_var_list(self._last_filter_kinds))
+        left_box.addWidget(self.var_filter)
         self.var_list = QListWidget()
-        for i, col in enumerate(worksheet.columns):
-            self.var_list.addItem(f"C{i + 1} {col.name}")
         self.var_list.itemDoubleClicked.connect(self._on_select_clicked)
         left_box.addWidget(self.var_list)
 
@@ -252,6 +269,11 @@ class TwoSampleTDialog(QDialog):
         self.sample1_edit.installEventFilter(self)
         self.sample2_edit.installEventFilter(self)
 
+        self.diff_cue = QLabel("Difference = (Sample 1 mean) − (Sample 2 mean)")
+        self.diff_cue.setStyleSheet(subtle_label_style(is_dark_active(parent or self), bold=True, font_size="9pt"))
+        self.diff_cue.setWordWrap(True)
+        right_box.addWidget(self.diff_cue)
+
         # Buttons (Options, Graphs, OK, Cancel)
         sub_btn_box = QHBoxLayout()
         sub_btn_box.addStretch()
@@ -263,26 +285,51 @@ class TwoSampleTDialog(QDialog):
         sub_btn_box.addWidget(self.graphs_btn)
         right_box.addLayout(sub_btn_box)
 
-        action_box = QHBoxLayout()
-        action_box.addStretch()
-        self.ok_btn = QPushButton("&OK")
-        self.ok_btn.clicked.connect(self._on_ok)
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.clicked.connect(self.reject)
-        action_box.addWidget(self.ok_btn)
-        action_box.addWidget(self.cancel_btn)
-        right_box.addLayout(action_box)
+        self.error = AutoErrorLabel()
+        right_box.addWidget(self.error)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        self.ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
+        self.cancel_btn = btn_box.button(QDialogButtonBox.StandardButton.Cancel)
+        btn_box.accepted.connect(self._on_ok)
+        btn_box.rejected.connect(self.reject)
+        right_box.addWidget(btn_box)
 
         main_layout.addLayout(right_box, 2)
 
         # Default to unstacked (Index 1)
         self.combo_data.setCurrentIndex(1)
-        self.stack.setCurrentIndex(1)
+        self._on_data_format_changed(1)
+
+    def _eligible_kinds_for(self, edit: Optional[QLineEdit]) -> Optional[tuple[str, ...]]:
+        if edit is self.ids_edit:
+            return ("number", "text")
+        if edit in (self.samples_edit, self.sample1_edit, self.sample2_edit):
+            return ("number",)
+        return None
+
+    def _populate_var_list(self, kinds: Optional[tuple[str, ...]] = None):
+        self._last_filter_kinds = kinds
+        self.var_list.clear()
+        needle = self.var_filter.text().strip().lower() if hasattr(self, "var_filter") else ""
+        for i, col in enumerate(self.worksheet.columns):
+            if kinds is not None and col.kind not in kinds:
+                continue
+            if needle and needle not in col.name.lower() and needle not in f"c{i + 1}":
+                continue
+            item = QListWidgetItem(f"C{i + 1}   {col.name}")
+            item.setToolTip(f"C{i + 1}: {col.name} ({col.kind})")
+            item.setData(Qt.ItemDataRole.UserRole, i)
+            self.var_list.addItem(item)
 
     def eventFilter(self, watched, event):
         if event.type() == event.Type.FocusIn:
             if isinstance(watched, QLineEdit):
                 self._last_active_edit = watched
+                self._populate_var_list(self._eligible_kinds_for(watched))
         return super().eventFilter(watched, event)
 
     def _on_data_format_changed(self, idx: int):
@@ -291,26 +338,46 @@ class TwoSampleTDialog(QDialog):
         is_summ = (idx == 2)
         self.graphs_btn.setEnabled(not is_summ)
         self.var_list.setEnabled(not is_summ)
+        if hasattr(self, "var_filter"):
+            self.var_filter.setEnabled(not is_summ)
         self.select_btn.setEnabled(not is_summ)
 
         if idx == 0:
             self._last_active_edit = self.samples_edit
+            if hasattr(self, "diff_cue"):
+                self.diff_cue.setText("Difference = (first group mean) − (second group mean)")
         elif idx == 1:
             self._last_active_edit = self.sample1_edit
+            if hasattr(self, "diff_cue"):
+                self.diff_cue.setText("Difference = (Sample 1 mean) − (Sample 2 mean)")
         else:
             self._last_active_edit = self.size1_edit
+            if hasattr(self, "diff_cue"):
+                self.diff_cue.setText("Difference = (Sample 1 mean) − (Sample 2 mean)")
+        self._populate_var_list(self._eligible_kinds_for(self._last_active_edit))
 
     def _on_select_clicked(self):
         item = self.var_list.currentItem()
         if not item or not self._last_active_edit:
             return
-        col_ref = item.text().split()[0]  # e.g., 'C1'
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        col_ref = f"C{idx + 1}" if isinstance(idx, int) else item.text().split()[0]
         self._last_active_edit.setText(col_ref)
 
     def _resolve_col(self, text: str) -> Optional[int]:
         s = text.strip()
         if not s:
             return None
+        for i, c in enumerate(self.worksheet.columns):
+            if s.lower() == f"C{i + 1}   {c.name}".lower():
+                return i
+        from .variable_dialogs import resolve_variables
+        try:
+            tokens = resolve_variables(s, self.worksheet, kinds=("number", "text", "date"))
+            if tokens:
+                return tokens[0]
+        except Exception:
+            pass
         if s.upper().startswith("C"):
             try:
                 num = int(s[1:]) - 1
@@ -322,6 +389,22 @@ class TwoSampleTDialog(QDialog):
             if c.name.lower() == s.lower():
                 return i
         return None
+
+    def _resolve_field(self, text: str, field_label: str, kinds: tuple[str, ...]) -> int:
+        if not text.strip():
+            raise ValueError(f"Please specify a column for {field_label}.")
+        idx = self._resolve_col(text)
+        if idx is None or not (0 <= idx < len(self.worksheet.columns)):
+            raise ValueError(f"Column '{text.strip()}' not found for {field_label}.")
+        col = self.worksheet.columns[idx]
+        if col.kind not in kinds:
+            expected = "numeric" if kinds == ("number",) else "numeric or text"
+            raise ValueError(f"{field_label} must be a {expected} column ('{col.name}' is {col.kind}).")
+        return idx
+
+    def _show_error(self, message: str):
+        self.error.setText(message)
+        self.error.show()
 
     def _open_options(self):
         dlg = TwoSampleTOptionsDialog(self.settings, self)
@@ -337,28 +420,32 @@ class TwoSampleTDialog(QDialog):
             self.settings["graphs"] = dlg.graphs
 
     def _on_ok(self):
+        self.error.hide()
+        self.error.clear()
         fmt = self.combo_data.currentIndex()
         self.settings["data_format"] = fmt
 
         if fmt == 0:  # Stacked
-            samp = self._resolve_col(self.samples_edit.text())
-            ids = self._resolve_col(self.ids_edit.text())
-            if samp is None or ids is None:
-                QMessageBox.critical(self, "Invalid Selection", "Please specify valid columns for Samples and Sample IDs.")
+            try:
+                samp = self._resolve_field(self.samples_edit.text(), "Samples", ("number",))
+                ids = self._resolve_field(self.ids_edit.text(), "Sample IDs", ("number", "text"))
+            except ValueError as exc:
+                self._show_error(str(exc))
                 return
             if samp == ids:
-                QMessageBox.critical(self, "Invalid Selection", "Samples and Sample IDs must be distinct columns.")
+                self._show_error("Samples and Sample IDs must be distinct columns.")
                 return
             self.settings["samples_col"] = samp
             self.settings["sample_ids_col"] = ids
         elif fmt == 1:  # Unstacked
-            s1 = self._resolve_col(self.sample1_edit.text())
-            s2 = self._resolve_col(self.sample2_edit.text())
-            if s1 is None or s2 is None:
-                QMessageBox.critical(self, "Invalid Selection", "Please specify valid columns for Sample 1 and Sample 2.")
+            try:
+                s1 = self._resolve_field(self.sample1_edit.text(), "Sample 1", ("number",))
+                s2 = self._resolve_field(self.sample2_edit.text(), "Sample 2", ("number",))
+            except ValueError as exc:
+                self._show_error(str(exc))
                 return
             if s1 == s2:
-                QMessageBox.critical(self, "Invalid Selection", "Sample 1 and Sample 2 must be distinct columns.")
+                self._show_error("Sample 1 and Sample 2 must be distinct columns.")
                 return
             self.settings["sample1_col"] = s1
             self.settings["sample2_col"] = s2
@@ -379,7 +466,7 @@ class TwoSampleTDialog(QDialog):
                     "n2": n2, "mean2": m2, "sd2": sd2,
                 }
             except ValueError as e:
-                QMessageBox.critical(self, "Validation Error", str(e) or "Please enter valid numbers for summarized data.")
+                self._show_error(str(e) or "Please enter valid numbers for summarized data.")
                 return
 
         self.result_payload = dict(self.settings)

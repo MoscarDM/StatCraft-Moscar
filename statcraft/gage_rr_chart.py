@@ -44,7 +44,13 @@ def prepare(chart,result):
         if any(v is not None for v in values):component_series.append(_series(label,range(1,len(values)+1),values))
     undefined_components=not component_series
     if undefined_components:component_series=[_series('Undefined',range(1,len(selected)+1),[None]*len(selected))]
-    charts=[_panel('Components of Variation',[a['source'].replace(' ','\n') for a in selected],'','Percent',component_series,bars=True,undefined=undefined_components)]
+    component_labels = {
+        'Total Gage R&R': 'Total\nGage R&R',
+        'Repeatability': 'Repeat.',
+        'Reproducibility': 'Reprod.',
+        'Part-To-Part': 'Part-to-\npart',
+    }
+    charts=[_panel('Components of Variation',[component_labels.get(a['source'], a['source']) for a in selected],'','Percent',component_series,bars=True,undefined=undefined_components)]
     by_part=[];by_operator=[];interaction=[]
     for index,operator in enumerate(operators):
         observations=raw_by_operator[operator]
@@ -72,7 +78,7 @@ def prepare(chart,result):
     charts.append(_panel('R Chart by Operator',labels,str(operator_name)+' / '+str(part_name),'Sample Range',control_series(ranges),limits=range_lines,zero=True,operator_groups=operator_groups))
     charts.append(_panel('Measurements by Operator',operators,operator_name,measurement,by_operator,legend=str(operator_name)))
     charts.append(_panel('Xbar Chart by Operator',labels,str(operator_name)+' / '+str(part_name),'Sample Mean',control_series(means),limits=mean_lines,operator_groups=operator_groups))
-    charts.append(_panel('Part × Operator Interaction',parts,part_name,'Mean '+str(measurement),interaction,legend=str(operator_name)))
+    charts.append(_panel('Part × Operator Interaction',parts,part_name,'Mean',interaction,legend=str(operator_name)))
     # Validate plotting ranges during preparation so unsupported extremes display
     # the ordinary chart error, rather than raising from a Qt paint callback.
     for panel in charts:

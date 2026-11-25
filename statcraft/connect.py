@@ -979,16 +979,31 @@ def create_connected_two_sample_t(
     active_indices = [i for i in [resp_idx, pred_idx] if i is not None and 0 <= i < len(worksheet.columns)]
     fingerprint = compute_data_fingerprint(worksheet, active_indices)
 
-    complete_indices = []
-    for i in range(worksheet.row_count):
-        valid = True
-        for ci in active_indices:
-            v = worksheet.columns[ci].values[i] if i < len(worksheet.columns[ci].values) else None
-            if v is None or (isinstance(v, float) and math.isnan(v)):
-                valid = False
-                break
-        if valid:
-            complete_indices.append(i)
+    def _valid_rows_for_col(ci: Optional[int]) -> List[int]:
+        if ci is None or not (0 <= ci < len(worksheet.columns)):
+            return []
+        vals = worksheet.columns[ci].values
+        return [i for i, v in enumerate(vals) if v is not None and not (isinstance(v, float) and math.isnan(v))]
+
+    if fmt == 2:
+        complete_indices = []
+        for i in range(worksheet.row_count):
+            valid = True
+            for ci in active_indices:
+                v = worksheet.columns[ci].values[i] if i < len(worksheet.columns[ci].values) else None
+                if v is None or (isinstance(v, float) and math.isnan(v)):
+                    valid = False
+                    break
+            if valid:
+                complete_indices.append(i)
+        s1_n = result.get("sample1", {}).get("n")
+        s2_n = result.get("sample2", {}).get("n")
+    else:
+        sample1_rows = _valid_rows_for_col(resp_idx)
+        sample2_rows = _valid_rows_for_col(pred_idx)
+        complete_indices = sorted(set(sample1_rows) | set(sample2_rows))
+        s1_n = len(sample1_rows)
+        s2_n = len(sample2_rows)
 
     fitted_row_ids = [all_row_ids[i] for i in complete_indices if i < len(all_row_ids)]
     omitted_row_ids = [rid for i, rid in enumerate(all_row_ids) if i not in complete_indices]
@@ -1034,6 +1049,8 @@ def create_connected_two_sample_t(
             "data_format": fmt,
             "sample1": result.get("sample1", {}),
             "sample2": result.get("sample2", {}),
+            "sample1_n": s1_n,
+            "sample2_n": s2_n,
         }
     )
     from .connect_r import generate_r_two_sample_t_script

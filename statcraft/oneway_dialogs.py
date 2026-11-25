@@ -20,17 +20,21 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QRadioButton,
     QVBoxLayout,
+    QWidget,
 )
 
+from .dialog_theme import AutoErrorLabel, clamp_dialog_to_screen, dialog_stylesheet, is_dark_active
 from .oneway import oneway_settings
 from .variable_dialogs import format_variable_reference, resolve_variables
 
@@ -65,8 +69,7 @@ class OneWayComparisonsDialog(QDialog):
     def __init__(self, parent: QDialog, options: dict[str, Any], factor_levels: list[str]):
         super().__init__(parent)
         self.setWindowTitle('One-Way Analysis of Variance: Comparisons')
-        self.setMinimumSize(400, 380)
-        self.resize(400, 440)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.options = copy.deepcopy(options)
         comp = self.options.get('comparisons', {})
@@ -83,41 +86,51 @@ class OneWayComparisonsDialog(QDialog):
 
         # Equal variances group
         eq_group = QGroupBox('Comparison procedures assuming equal variances')
-        eq_layout = QVBoxLayout(eq_group)
+        eq_layout = QGridLayout(eq_group)
+        eq_layout.setVerticalSpacing(8)
+        eq_layout.setHorizontalSpacing(10)
+
         self.chk_tukey = QCheckBox('Tukey')
         self.chk_tukey.setChecked(comp.get('tukey', False))
-        eq_layout.addWidget(self.chk_tukey)
+        eq_layout.addWidget(self.chk_tukey, 0, 0, 1, 3)
 
         self.chk_fisher = QCheckBox('Fisher')
         self.chk_fisher.setChecked(comp.get('fisher', False))
-        eq_layout.addWidget(self.chk_fisher)
+        eq_layout.addWidget(self.chk_fisher, 1, 0, 1, 3)
 
-        dunnett_h = QHBoxLayout()
         self.chk_dunnett = QCheckBox('Dunnett')
         self.chk_dunnett.setChecked(comp.get('dunnett', False))
-        dunnett_h.addWidget(self.chk_dunnett)
-        dunnett_h.addWidget(QLabel('Control:'))
+        eq_layout.addWidget(self.chk_dunnett, 2, 0)
+        eq_layout.addWidget(QLabel('Control:'), 2, 1)
         self.cbo_control = QComboBox()
+        self.cbo_control.setMinimumWidth(140)
         for lv in self.factor_levels:
             self.cbo_control.addItem(str(lv), lv)
         if comp.get('control_group') in self.factor_levels:
             self.cbo_control.setCurrentText(str(comp['control_group']))
-        dunnett_h.addWidget(self.cbo_control)
-        eq_layout.addLayout(dunnett_h)
+        eq_layout.addWidget(self.cbo_control, 2, 2)
 
-        hsu_h = QHBoxLayout()
         self.chk_hsu = QCheckBox('Hsu MCB')
         self.chk_hsu.setChecked(comp.get('hsu_mcb', False))
-        hsu_h.addWidget(self.chk_hsu)
-        hsu_h.addWidget(QLabel('Best:'))
+        eq_layout.addWidget(self.chk_hsu, 3, 0)
+        eq_layout.addWidget(QLabel('Best:'), 3, 1)
         self.cbo_best = QComboBox()
+        self.cbo_best.setMinimumWidth(140)
         self.cbo_best.addItem('Largest is best', 'largest')
         self.cbo_best.addItem('Smallest is best', 'smallest')
         if comp.get('hsu_best') == 'smallest':
             self.cbo_best.setCurrentIndex(1)
-        hsu_h.addWidget(self.cbo_best)
-        eq_layout.addLayout(hsu_h)
+        eq_layout.addWidget(self.cbo_best, 3, 2)
+        eq_layout.setColumnStretch(2, 1)
         layout.addWidget(eq_group)
+
+        def _sync_comparison_combos():
+            self.cbo_control.setEnabled(self.chk_dunnett.isChecked())
+            self.cbo_best.setEnabled(self.chk_hsu.isChecked())
+
+        self.chk_dunnett.toggled.connect(_sync_comparison_combos)
+        self.chk_hsu.toggled.connect(_sync_comparison_combos)
+        _sync_comparison_combos()
 
         # Unequal variances group
         uneq_group = QGroupBox('Comparison procedure not assuming equal variances')
@@ -143,13 +156,14 @@ class OneWayComparisonsDialog(QDialog):
         res_layout.addWidget(self.chk_tests)
         layout.addWidget(res_group)
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
 
         _footer(self, layout, self.validate)
+        clamp_dialog_to_screen(self, 480, max(500, self.sizeHint().height()), min_w=420, min_h=460)
 
     def validate(self) -> None:
+        self.error.clear()
         try:
             val = float(self.rate_edit.text().strip())
             rate = val / 100.0 if val > 1.0 else val
@@ -179,8 +193,7 @@ class OneWayGraphsDialog(QDialog):
     def __init__(self, parent: QDialog, options: dict[str, Any]):
         super().__init__(parent)
         self.setWindowTitle('One-Way Analysis of Variance: Graphs')
-        self.setMinimumSize(380, 320)
-        self.resize(380, 360)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.options = copy.deepcopy(options)
         gr = self.options.get('graphs', {})
@@ -247,6 +260,7 @@ class OneWayGraphsDialog(QDialog):
         self._sync_mode()
 
         _footer(self, layout, self.validate)
+        clamp_dialog_to_screen(self, 380, 360, min_w=360, min_h=300)
 
     def _sync_mode(self) -> None:
         indiv = self.rad_indiv.isChecked()
@@ -281,8 +295,7 @@ class OneWayOptionsDialog(QDialog):
     def __init__(self, parent: QDialog, options: dict[str, Any]):
         super().__init__(parent)
         self.setWindowTitle('One-Way Analysis of Variance: Options')
-        self.setMinimumSize(380, 260)
-        self.resize(380, 260)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.options = copy.deepcopy(options)
 
@@ -307,13 +320,14 @@ class OneWayOptionsDialog(QDialog):
         self.chk_equal_var.setChecked(self.options.get('assume_equal_variances', True))
         layout.addWidget(self.chk_equal_var)
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
 
         _footer(self, layout, self.validate)
+        clamp_dialog_to_screen(self, 380, 260, min_w=360, min_h=240)
 
     def validate(self) -> None:
+        self.error.clear()
         try:
             val = float(self.conf_edit.text().strip())
             conf = val / 100.0 if val > 1.0 else val
@@ -335,8 +349,7 @@ class OneWayResultsDialog(QDialog):
     def __init__(self, parent: QDialog, options: dict[str, Any]):
         super().__init__(parent)
         self.setWindowTitle('One-Way Analysis of Variance: Results')
-        self.setMinimumSize(360, 300)
-        self.resize(360, 300)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.options = copy.deepcopy(options)
         res = self.options.get('results', {})
@@ -373,6 +386,7 @@ class OneWayResultsDialog(QDialog):
         layout.addWidget(self.chk_means)
 
         _footer(self, layout, self.validate)
+        clamp_dialog_to_screen(self, 360, 300, min_w=340, min_h=260)
 
     def validate(self) -> None:
         r = self.options['results']
@@ -391,8 +405,7 @@ class OneWayStorageDialog(QDialog):
     def __init__(self, parent: QDialog, options: dict[str, Any]):
         super().__init__(parent)
         self.setWindowTitle('One-Way Analysis of Variance: Storage')
-        self.setMinimumSize(340, 220)
-        self.resize(340, 220)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.options = copy.deepcopy(options)
         st = self.options.get('storage', {})
@@ -407,6 +420,7 @@ class OneWayStorageDialog(QDialog):
         layout.addWidget(self.chk_res)
 
         _footer(self, layout, self.validate)
+        clamp_dialog_to_screen(self, 340, 220, min_w=320, min_h=200)
 
     def validate(self) -> None:
         self.options['storage']['fits'] = self.chk_fits.isChecked()
@@ -426,10 +440,10 @@ class OneWayAnovaDialog(QDialog):
         from .variable_dialogs import default_confidence_percent
         self.options['confidence'] = default_confidence_percent() / 100.0
         self.active_edit: QLineEdit | None = None
+        self._last_filter_kinds: tuple[str, ...] | None = ('number',)
 
         self.setWindowTitle('One-Way Analysis of Variance')
-        self.setMinimumSize(560, 420)
-        self.resize(580, 440)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(window or self)))
         self.setSizeGripEnabled(True)
 
         main_layout = QHBoxLayout(self)
@@ -437,12 +451,12 @@ class OneWayAnovaDialog(QDialog):
         # Left: Available variables list
         left_box = QVBoxLayout()
         left_box.addWidget(QLabel('Available:'))
+        self.var_filter = QLineEdit()
+        self.var_filter.setPlaceholderText('Filter variables…')
+        self.var_filter.setClearButtonEnabled(True)
+        self.var_filter.textChanged.connect(lambda _txt: self._populate_available(self._last_filter_kinds))
+        left_box.addWidget(self.var_filter)
         self.available_list = QListWidget()
-        for idx, col in enumerate(self.worksheet.columns):
-            label = format_variable_reference(idx, self.worksheet)
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, idx)
-            self.available_list.addItem(item)
         self.available_list.itemDoubleClicked.connect(self._insert_selected)
         left_box.addWidget(self.available_list)
 
@@ -457,11 +471,10 @@ class OneWayAnovaDialog(QDialog):
         self.mode_combo = QComboBox()
         self.mode_combo.addItem('Response data are in one column for all factor levels', 'stacked')
         self.mode_combo.addItem('Response data are in a separate column for each factor level', 'unstacked')
-        self.mode_combo.currentIndexChanged.connect(self._toggle_mode)
         right_box.addWidget(self.mode_combo)
 
         # Stacked fields
-        self.stacked_widget = QDialog()
+        self.stacked_widget = QWidget()
         stacked_layout = QFormLayout(self.stacked_widget)
         stacked_layout.setContentsMargins(0, 4, 0, 4)
         self.response_edit = QLineEdit()
@@ -476,7 +489,7 @@ class OneWayAnovaDialog(QDialog):
         right_box.addWidget(self.stacked_widget)
 
         # Unstacked fields
-        self.unstacked_widget = QDialog()
+        self.unstacked_widget = QWidget()
         unstacked_layout = QFormLayout(self.unstacked_widget)
         unstacked_layout.setContentsMargins(0, 4, 0, 4)
         self.responses_edit = QLineEdit()
@@ -510,21 +523,41 @@ class OneWayAnovaDialog(QDialog):
 
         right_box.addStretch(1)
 
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         right_box.addWidget(self.error)
 
         _footer(self, right_box, self.validate)
         main_layout.addLayout(right_box, 2)
 
         self.active_edit = self.response_edit
+        self.mode_combo.currentIndexChanged.connect(self._toggle_mode)
         self._toggle_mode()
         self.restore_previous()
+        clamp_dialog_to_screen(self, 580, 440, min_w=540, min_h=380)
+
+    def _eligible_kinds_for(self, obj: QLineEdit | None) -> tuple[str, ...]:
+        if obj is self.factor_edit:
+            return ('number', 'text', 'date')
+        return ('number',)
+
+    def _populate_available(self, kinds: tuple[str, ...] | None = None) -> None:
+        self._last_filter_kinds = kinds
+        self.available_list.clear()
+        needle = self.var_filter.text().strip().lower() if hasattr(self, 'var_filter') else ''
+        for idx, col in enumerate(self.worksheet.columns):
+            if kinds is not None and col.kind not in kinds:
+                continue
+            if needle and needle not in col.name.lower() and needle not in f'c{idx + 1}':
+                continue
+            label = format_variable_reference(idx, self.worksheet)
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, idx)
+            self.available_list.addItem(item)
 
     def eventFilter(self, obj, event):
         if event.type() == event.Type.FocusIn and isinstance(obj, QLineEdit):
             self.active_edit = obj
+            self._populate_available(self._eligible_kinds_for(obj))
         return super().eventFilter(obj, event)
 
     def _toggle_mode(self) -> None:
@@ -532,6 +565,7 @@ class OneWayAnovaDialog(QDialog):
         self.stacked_widget.setVisible(stacked)
         self.unstacked_widget.setVisible(not stacked)
         self.active_edit = self.response_edit if stacked else self.responses_edit
+        self._populate_available(self._eligible_kinds_for(self.active_edit))
 
     def _insert_selected(self) -> None:
         item = self.available_list.currentItem()
@@ -614,6 +648,8 @@ class OneWayAnovaDialog(QDialog):
                 break
 
     def validate(self) -> None:
+        self.error.hide()
+        self.error.clear()
         stacked = self.mode_combo.currentData() == 'stacked'
         try:
             if stacked:
@@ -641,6 +677,7 @@ class OneWayAnovaDialog(QDialog):
                 )
         except Exception as exc:
             self.error.setText(str(exc))
+            self.error.show()
             return
 
         self.accept()

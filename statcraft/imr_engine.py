@@ -153,11 +153,14 @@ def run_imr_chart(
             hist_sigma = None
 
     omit_subgroups = parse_subgroup_omission(opts.get("omit_subgroups", set()))
+    exclude_rows = parse_subgroup_omission(opts.get("exclude_rows", set()))
 
     # Normalize observations
     observations: List[Optional[float]] = []
-    for v in values:
-        if v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))):
+    for row_idx, v in enumerate(values, 1):
+        if row_idx in exclude_rows:
+            observations.append(None)
+        elif v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))):
             observations.append(None)
         else:
             try:
@@ -189,7 +192,9 @@ def run_imr_chart(
         i_center = float(np.mean([observations[i] for i in est_obs_indices]))
 
     # Sigma estimation
+    sigma_method = est_method
     if hist_sigma is not None:
+        sigma_method = "historical sigma"
         sigma_within = hist_sigma
         mr_center = d2(span) * hist_sigma
     else:
@@ -205,6 +210,7 @@ def run_imr_chart(
 
         if not est_mr_vals and est_method in ("amr", "mmr"):
             # Fallback to available clean observations sample stdev if no MR pairs remain
+            sigma_method = "sample standard deviation fallback"
             est_vals = [observations[i] for i in est_obs_indices]  # type: ignore
             sigma_within = float(np.std(est_vals, ddof=1)) if len(est_vals) > 1 else 0.0
             mr_center = d2(span) * sigma_within
@@ -224,6 +230,7 @@ def run_imr_chart(
             if sq_diffs:
                 sigma_within = math.sqrt(sum(sq_diffs) / (2.0 * len(sq_diffs)))
             else:
+                sigma_method = "sample standard deviation fallback"
                 est_vals = [observations[i] for i in est_obs_indices]  # type: ignore
                 sigma_within = float(np.std(est_vals, ddof=1)) if len(est_vals) > 1 else 0.0
             mr_center = d2(span) * sigma_within
@@ -242,9 +249,9 @@ def run_imr_chart(
     # Moving Range Chart Limits
     d2_val = d2(span)
     d3_val = d3(span)
-    # Standard formula: D3 = max(0, 1 - 3*d3/d2), D4 = 1 + 3*d3/d2
-    d3_factor = max(0.0, 1.0 - 3.0 * (d3_val / d2_val)) if d2_val > 0 else 0.0
-    d4_factor = (1.0 + 3.0 * (d3_val / d2_val)) if d2_val > 0 else 1.0
+    # Standard formula: D3 = max(0, 1 - k*d3/d2), D4 = 1 + k*d3/d2
+    d3_factor = max(0.0, 1.0 - k_sigma * (d3_val / d2_val)) if d2_val > 0 else 0.0
+    d4_factor = (1.0 + k_sigma * (d3_val / d2_val)) if d2_val > 0 else 1.0
 
     mr_lcl = max(0.0, d3_factor * mr_center) if display_lower else None
     mr_ucl = (d4_factor * mr_center) if display_upper else None
@@ -301,6 +308,8 @@ def run_imr_chart(
         warnings.append("Zero estimated within-subgroup variation: control limits coincide.")
     if omit_subgroups:
         warnings.append(f"Observations omitted from estimation: {sorted(omit_subgroups)}")
+    if exclude_rows:
+        warnings.append(f"Observations excluded from analysis: {sorted(exclude_rows)}")
 
     return {
         "analysis": "imr_control",
@@ -332,9 +341,21 @@ def run_imr_chart(
         "display_zones": display_zones,
         "span": span,
         "estimation_method": est_method,
+        "estimation_trace": {
+            "center_method": "historical mean" if hist_mean is not None else "mean of eligible observations",
+            "sigma_method": sigma_method,
+            "span": span,
+            "k_sigma": k_sigma,
+            "historical_mean": hist_mean,
+            "historical_sigma": hist_sigma,
+            "unbiasing": unbiasing,
+            "use_nelson": use_nelson,
+            "tests": nelson_rules,
+        },
         "unbiasing": unbiasing,
         "use_nelson": use_nelson,
         "omit_subgroups": sorted(omit_subgroups),
+        "excluded_rows": sorted(exclude_rows),
         "test_failures": i_test_failures,
         "i_signals": i_signals,
         "mr_signals": mr_signals,

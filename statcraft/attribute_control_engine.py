@@ -101,6 +101,7 @@ def run_attribute_control(
     display_upper = bool(opts.get("display_upper", True))
     display_lower = bool(opts.get("display_lower", True))
     omit_set = parse_subgroup_omission(opts.get("omit_subgroups"))
+    exclude_set = parse_subgroup_omission(opts.get("exclude_rows"))
 
     n_rows = len(counts)
     if n_rows == 0:
@@ -108,17 +109,21 @@ def run_attribute_control(
 
     # Parse counts
     clean_counts: List[Optional[float]] = []
-    for c in counts:
+    for row_idx, c in enumerate(counts, 1):
+        if row_idx in exclude_set:
+            clean_counts.append(None)
+            continue
         if c is None or (isinstance(c, float) and (math.isnan(c) or math.isinf(c))):
             clean_counts.append(None)
         else:
             try:
                 val = float(c)
-                if val < 0:
-                    raise ValueError(f"Count values for {chart_upper} Chart cannot be negative: {val}")
-                clean_counts.append(val)
             except (ValueError, TypeError):
                 clean_counts.append(None)
+                continue
+            if val < 0:
+                raise ValueError(f"Count values for {chart_upper} Chart cannot be negative: {val}")
+            clean_counts.append(val)
 
     # Parse sample sizes
     clean_sizes: List[Optional[float]] = []
@@ -127,7 +132,7 @@ def run_attribute_control(
 
     if chart_upper == "C":
         # C chart always has constant size 1.0
-        clean_sizes = [1.0] * n_rows
+        clean_sizes = [None if (i + 1) in exclude_set else 1.0 for i in range(n_rows)]
         is_constant_size = True
         constant_size_val = 1.0
     else:
@@ -140,22 +145,26 @@ def run_attribute_control(
             constant_size_val = float(sample_sizes)
             if constant_size_val <= 0:
                 raise ValueError("Subgroup size must be positive.")
-            clean_sizes = [constant_size_val] * n_rows
+            clean_sizes = [None if (i + 1) in exclude_set else constant_size_val for i in range(n_rows)]
             is_constant_size = True
         elif isinstance(sample_sizes, Sequence):
             if len(sample_sizes) != n_rows:
                 raise ValueError("Counts and subgroup size column must have the same length.")
-            for s in sample_sizes:
+            for row_idx, s in enumerate(sample_sizes, 1):
+                if row_idx in exclude_set:
+                    clean_sizes.append(None)
+                    continue
                 if s is None or (isinstance(s, float) and (math.isnan(s) or math.isinf(s))):
                     clean_sizes.append(None)
                 else:
                     try:
                         val = float(s)
-                        if val <= 0:
-                            raise ValueError(f"Subgroup sizes must be positive: {val}")
-                        clean_sizes.append(val)
                     except (ValueError, TypeError):
                         clean_sizes.append(None)
+                        continue
+                    if val <= 0:
+                        raise ValueError(f"Subgroup sizes must be positive: {val}")
+                    clean_sizes.append(val)
             # Check if all valid sizes are identical
             valid_sizes = [s for s in clean_sizes if s is not None]
             if valid_sizes and all(abs(s - valid_sizes[0]) < 1e-12 for s in valid_sizes):
@@ -164,10 +173,10 @@ def run_attribute_control(
         else:
             raise ValueError("Subgroup sizes must be a positive number or a column.")
 
-    # Validation: For P chart, defective count cannot exceed sample size
+    # Validation: For P / P' / NP chart, defective count cannot exceed sample size
     for i, (c, s) in enumerate(zip(clean_counts, clean_sizes)):
         if c is not None and s is not None:
-            if chart_upper in ("P", "P'") and c > s:
+            if chart_upper in ("P", "P'", "NP") and c > s:
                 raise ValueError(f"Row {i + 1}: Defective count ({c}) cannot exceed subgroup size ({s}).")
 
     # Complete subgroups indices (1-based)
@@ -322,7 +331,8 @@ def run_attribute_control(
     raw_test_failures = evaluate_nelson_tests(std_means, 0.0, std_sigmas, tests_cfg)
 
     # Format result structure
-    avg_size = float(np.mean([s for s in clean_sizes if s is not None])) if clean_sizes else 0.0
+    valid_sizes_all = [s for s in clean_sizes if s is not None]
+    avg_size = float(np.mean(valid_sizes_all)) if valid_sizes_all else 0.0
 
     result: Dict[str, Any] = {
         "analysis": "attribute_control",
@@ -350,7 +360,24 @@ def run_attribute_control(
         "display_lower": display_lower,
         "is_historical": is_historical,
         "omitted_subgroups": sorted(list(omit_set)),
+        "excluded_rows": sorted(list(exclude_set)),
         "estimation_subgroups_count": len(estimation_subgroups),
+        "estimation_trace": {
+            "chart_type": chart_upper,
+            "variable_name": variable_name,
+            "subgroup_size_name": subgroup_size_name,
+            "is_constant_size": is_constant_size,
+            "constant_size": constant_size_val,
+            "is_historical": is_historical,
+            "historical_p": historical_p,
+            "historical_mean": historical_mean,
+            "k_sigma": k_sigma,
+            "sigma_z": sigma_z,
+            "omit_subgroups": sorted(list(omit_set)),
+            "exclude_rows": sorted(list(exclude_set)),
+            "complete_subgroups_count": len(complete_subgroups),
+            "estimation_subgroups_count": len(estimation_subgroups),
+        },
         "test_failures": raw_test_failures,
         "tests_cfg": tests_cfg,
         "options": dict(opts),

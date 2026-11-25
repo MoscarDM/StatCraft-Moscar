@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
     QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QPushButton, QVBoxLayout)
 
+from .dialog_theme import AutoErrorLabel, clamp_dialog_to_screen, dialog_stylesheet, is_dark_active
 from .variable_dialogs import resolve_variables
 
 
@@ -18,6 +19,7 @@ class FactorialTermsDialog(QDialog):
                  selected_terms=None, include_blocks=None):
         super().__init__(parent)
         self.setSizeGripEnabled(True)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setWindowTitle('Analyze Factorial Design: Terms')
         self.setMinimumSize(680, 460)
         self.worksheet = worksheet
@@ -43,6 +45,9 @@ class FactorialTermsDialog(QDialog):
         note.setObjectName('secondary')
         note.setWordWrap(True)
         layout.addWidget(note)
+        doe_meta = worksheet.metadata.get('doe', {}) if isinstance(worksheet.metadata, dict) else {}
+        self._min_factors = 1 if doe_meta.get('design_type') == 'general_full' else 2
+        self._max_factors = 15
 
         order_row = QHBoxLayout()
         order_row.addWidget(QLabel('Include terms in the model up through order:'))
@@ -94,10 +99,15 @@ class FactorialTermsDialog(QDialog):
         self.available.itemDoubleClicked.connect(lambda item: self.add_terms())
         self.selected.itemDoubleClicked.connect(lambda item: self.remove_terms())
 
-        b_col = next((c for c in worksheet.columns if c.name.casefold() == 'blocks'), None)
+        from .doe import _resolve_factorial_block_column
+        b_col = _resolve_factorial_block_column(worksheet, doe_meta)
         has_blocks = False
         if b_col is not None:
-            levels = set(v for v in b_col.values if v is not None)
+            levels = {
+                (v.strip() if isinstance(v, str) else v)
+                for v in b_col.values
+                if v is not None and (not isinstance(v, str) or v.strip() != '')
+            }
             has_blocks = len(levels) > 1
         self.include_blocks = QCheckBox('Include blocks in the model')
         self.include_blocks.setEnabled(has_blocks)
@@ -113,15 +123,14 @@ class FactorialTermsDialog(QDialog):
         self.include_center_points.setEnabled(False)
         self.include_center_points.setToolTip('This model term is not implemented in the current factorial analysis.')
         layout.addWidget(self.include_center_points)
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         footer = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
                                  QDialogButtonBox.StandardButton.Cancel)
         footer.accepted.connect(self.validate)
         footer.rejected.connect(self.reject)
         layout.addWidget(footer)
+        clamp_dialog_to_screen(self, 680, 460, min_w=600, min_h=380)
         self.order_combo.currentIndexChanged.connect(self._order_changed)
 
         if self.apply_factors():
@@ -174,11 +183,11 @@ class FactorialTermsDialog(QDialog):
         self.selected_terms = [list(term) for term in sorted(self._chosen, key=lambda value: (len(value), value))]
 
     def apply_factors(self):
-        """Apply numeric column context; a changed context resets the model."""
+        """Apply factor column context; a changed context resets the model."""
         try:
-            indices = resolve_variables(self.factor_entry.text(), self.worksheet)
-            if not 2 <= len(indices) <= 8:
-                raise ValueError('Choose 2 to 8 distinct numeric factor columns.')
+            indices = resolve_variables(self.factor_entry.text(), self.worksheet, kinds=('number', 'text'))
+            if not self._min_factors <= len(indices) <= self._max_factors:
+                raise ValueError(f'Choose {self._min_factors} to {self._max_factors} distinct factor columns.')
         except ValueError as exc:
             self.error.setText(str(exc))
             return False
@@ -221,11 +230,11 @@ class FactorialTermsDialog(QDialog):
     def validate(self):
         """Validate without modal errors, accept on success, and return bool."""
         try:
-            indices = resolve_variables(self.factor_entry.text(), self.worksheet)
+            indices = resolve_variables(self.factor_entry.text(), self.worksheet, kinds=('number', 'text'))
             if indices != self.factor_indices:
                 raise ValueError('Click Apply to update the factor columns before accepting the model.')
-            if not 2 <= len(indices) <= 8:
-                raise ValueError('Choose 2 to 8 distinct numeric factor columns.')
+            if not self._min_factors <= len(indices) <= self._max_factors:
+                raise ValueError(f'Choose {self._min_factors} to {self._max_factors} distinct factor columns.')
             if not self._chosen:
                 raise ValueError('Select at least one model term.')
             self._checked_terms(self.selected_terms)

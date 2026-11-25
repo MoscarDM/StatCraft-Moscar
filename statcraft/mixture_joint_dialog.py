@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QCheckBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QDialogButtonBox, QScrollArea, QWidget
 )
+from .dialog_theme import AutoErrorLabel
 from .variable_dialogs import format_variable_reference
 from .mixture_exploration_dialogs import _finite
 from .mixture_condition import _validated,_values
@@ -29,7 +30,7 @@ class MixtureJointOptimizerDialog(QDialog):
         self.outer.addWidget(QLabel('Hold covariates and block:'));self.hold_table=QTableWidget(0,2);self.hold_table.setHorizontalHeaderLabels(['Variable','Held value']);self.hold_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch);self.hold_table.setMaximumHeight(140);self.outer.addWidget(self.hold_table)
         self.use_start_values=QCheckBox('Use starting values from the tables');self.outer.addWidget(self.use_start_values)
         options=QFormLayout();self.starts=QSpinBox();self.starts.setRange(1,64);self.starts.setValue(20);self.max_iterations=QSpinBox();self.max_iterations.setRange(10,2000);self.max_iterations.setValue(300);self.confidence=QDoubleSpinBox();self.confidence.setRange(1.,99.99);self.confidence.setValue(95.);self.title=QLineEdit();options.addRow('Search starts:',self.starts);options.addRow('Maximum iterations:',self.max_iterations);options.addRow('Confidence level (%):',self.confidence);options.addRow('Title:',self.title);self.outer.addLayout(options)
-        self.error=QLabel();self.error.setWordWrap(True);self.error.setObjectName('error');self.outer.addWidget(self.error)
+        self.error=AutoErrorLabel();self.outer.addWidget(self.error)
         root_layout.addWidget(scroll)
         self.buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);self.buttons.accepted.connect(self.validate);self.buttons.rejected.connect(self.reject);root_layout.addWidget(self.buttons)
         self.model.currentIndexChanged.connect(self._model_changed);self._model_changed()

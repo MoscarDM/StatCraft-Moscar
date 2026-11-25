@@ -1,10 +1,7 @@
-"""REA-informed binary logistic role selection and effective model settings.
-
-Form evidence: BINARYLOGISTICREGRESSION, OPTIONS and RESULTS resources.
-Only independently implemented controls are exposed.
-"""
+"""Select response and predictor roles and configure binary logistic models."""
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QComboBox, QCheckBox, QDoubleSpinBox, QPushButton, QDialogButtonBox)
+from .dialog_theme import AutoErrorLabel
 from .variable_dialogs import (ProcedureDialog, resolve_variables,
     format_variable_reference, format_variable_list)
 from .glm_dialogs import ModelTermsDialog
@@ -46,7 +43,7 @@ class LogisticSettingsDialog(QDialog):
                 [('Do not display','none'),('Only for unusual observations','unusual'),('For all observations','all')])
         else:
             raise ValueError('Unsupported binary logistic settings section.')
-        self.error=QLabel(); self.error.setObjectName('error'); self.error.setWordWrap(True); layout.addWidget(self.error)
+        self.error=AutoErrorLabel(); layout.addWidget(self.error)
         self.buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.validate); self.buttons.rejected.connect(self.reject); layout.addWidget(self.buttons)
 

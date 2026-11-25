@@ -9,6 +9,7 @@ import math
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QFormLayout,QComboBox,QLineEdit,
     QCheckBox,QTableWidget,QTableWidgetItem,QHeaderView,QLabel,QDialogButtonBox,QSpinBox)
+from .dialog_theme import AutoErrorLabel
 from .variable_dialogs import ProcedureDialog,format_variable_list,format_variable_reference,resolve_variables
 from .doe_analysis_dialogs import _verified_factors,_MIXTURE_DESIGNS
 
@@ -127,7 +128,7 @@ class MixtureProcessPredictionDialog(QDialog):
         form.addRow('Fitted mixture/process model:',self.model);form.addRow('Confidence level (%):',self.confidence);form.addRow('Prediction rows:',self.row_count);layout.addLayout(form)
         self.note=QLabel();self.note.setWordWrap(True);layout.addWidget(self.note)
         self.table=QTableWidget(1,0);self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch);layout.addWidget(self.table)
-        self.error=QLabel();self.error.setObjectName('error');self.error.setWordWrap(True);layout.addWidget(self.error)
+        self.error=AutoErrorLabel();layout.addWidget(self.error)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);buttons.accepted.connect(self.validate);buttons.rejected.connect(self.reject);layout.addWidget(buttons)
         self.row_count.valueChanged.connect(self._rows_changed);self.model.currentIndexChanged.connect(self._model_changed);self._model_changed()
 

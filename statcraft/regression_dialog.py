@@ -281,6 +281,67 @@ class RegressionModelTermsDialog(QDialog):
         return sorted(pair for pair, chk in self.term_checks.items() if chk.isChecked())
 
 
+class RegressionCodingDialog(QDialog):
+    """Subdialog for Categorical Predictor Coding ((1, 0) vs (-1, 0, +1) and reference level)."""
+
+    def __init__(self, parent: QDialog, cat_cols: list[Any], coding: dict[str, Any]):
+        super().__init__(parent)
+        from .dialog_theme import dialog_stylesheet, is_dark_active
+        from .value_order import ordered_values
+
+        self.setWindowTitle("Regression: Coding")
+        self.setMinimumSize(420, 260)
+        self.setSizeGripEnabled(True)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
+        self.coding = copy.deepcopy(coding) if isinstance(coding, dict) else {"scheme": "1_0", "references": {}}
+
+        layout = QVBoxLayout(self)
+        row_scheme = QHBoxLayout()
+        row_scheme.addWidget(QLabel("Coding for categorical predictors:"))
+        self.scheme_combo = QComboBox()
+        self.scheme_combo.addItem("(1, 0) Reference level", "1_0")
+        self.scheme_combo.addItem("(-1, 0, +1) Effects coding", "minus_one_plus_one")
+        cur_scheme = str(self.coding.get("scheme") or "1_0")
+        idx = self.scheme_combo.findData(cur_scheme)
+        self.scheme_combo.setCurrentIndex(max(0, idx))
+        row_scheme.addWidget(self.scheme_combo, 1)
+        layout.addLayout(row_scheme)
+
+        layout.addWidget(QLabel("Reference level (coded as 0 in (1, 0), or -1 in (-1, 0, +1)):"))
+        self.ref_combos: dict[str, QComboBox] = {}
+        refs = self.coding.get("references") if isinstance(self.coding.get("references"), dict) else {}
+        grid = QGridLayout()
+        for row_idx, col in enumerate(cat_cols):
+            raw = [v for v in col.values if v is not None and str(v).strip() != ""]
+            lvls = [str(v) for v in ordered_values(col, raw)] if raw else []
+            grid.addWidget(QLabel(f"{col.name}:"), row_idx, 0)
+            cbo = QComboBox()
+            for lvl in lvls:
+                cbo.addItem(lvl, lvl)
+            prev_ref = refs.get(col.name)
+            if prev_ref is not None:
+                found = cbo.findData(str(prev_ref))
+                if found >= 0:
+                    cbo.setCurrentIndex(found)
+            grid.addWidget(cbo, row_idx, 1)
+            self.ref_combos[col.name] = cbo
+        layout.addLayout(grid)
+        layout.addStretch(1)
+
+        _subdialog_footer(self, layout, self.validate, "Regression: Coding")
+
+    def validate(self):
+        self.coding = {
+            "scheme": self.scheme_combo.currentData(),
+            "references": {
+                name: cbo.currentData()
+                for name, cbo in self.ref_combos.items()
+                if cbo.currentData() is not None
+            },
+        }
+        self.accept()
+
+
 class FitRegressionModelDialog(ProcedureDialog):
     """Minitab-standard Fit Regression Model procedure dialog."""
 
@@ -300,6 +361,7 @@ class FitRegressionModelDialog(ProcedureDialog):
         )
         self.window = window
         self.options = default_regression_options()
+        self.options.setdefault("coding", {"scheme": "1_0", "references": {}})
         self.higher_terms: list[tuple[int, int]] = []
         self.entry = None
 
@@ -309,24 +371,37 @@ class FitRegressionModelDialog(ProcedureDialog):
         self.btn_model.clicked.connect(self.open_model)
         grid.addWidget(self.btn_model, 0, 0)
 
+        self.btn_coding = QPushButton("Coding…")
+        self.btn_coding.clicked.connect(self.open_coding)
+        grid.addWidget(self.btn_coding, 0, 1)
+
         self.btn_options = QPushButton("Options…")
         self.btn_options.clicked.connect(self.open_options)
-        grid.addWidget(self.btn_options, 0, 1)
+        grid.addWidget(self.btn_options, 0, 2)
 
         self.btn_graphs = QPushButton("Graphs…")
         self.btn_graphs.clicked.connect(self.open_graphs)
-        grid.addWidget(self.btn_graphs, 0, 2)
+        grid.addWidget(self.btn_graphs, 1, 0)
 
         self.btn_results = QPushButton("Results…")
         self.btn_results.clicked.connect(self.open_results)
-        grid.addWidget(self.btn_results, 0, 3)
+        grid.addWidget(self.btn_results, 1, 1)
 
         self.btn_storage = QPushButton("Storage…")
         self.btn_storage.clicked.connect(self.open_storage)
-        grid.addWidget(self.btn_storage, 0, 4)
+        grid.addWidget(self.btn_storage, 1, 2)
 
         self.layout().insertLayout(self.layout().count() - 2, grid)
         self.restore_previous()
+        self.controls["predictor_indices"].textChanged.connect(self._update_subdialog_enablement)
+        self.controls["categorical_indices"].textChanged.connect(self._update_subdialog_enablement)
+        self._update_subdialog_enablement()
+
+    def _update_subdialog_enablement(self):
+        has_cont = bool(self.controls["predictor_indices"].text().strip())
+        has_cat = bool(self.controls["categorical_indices"].text().strip())
+        self.btn_model.setEnabled(has_cont or has_cat)
+        self.btn_coding.setEnabled(has_cat)
 
     def _save_dialog_state(self):
         super()._save_dialog_state()
@@ -342,6 +417,7 @@ class FitRegressionModelDialog(ProcedureDialog):
         if saved and isinstance(saved.get("options"), dict):
             merged = copy.deepcopy(default_regression_options())
             merged.update(saved["options"])
+            merged.setdefault("coding", {"scheme": "1_0", "references": {}})
             self.options = merged
         if saved and isinstance(saved.get("higher_terms"), list):
             self.higher_terms = [tuple(t) for t in saved["higher_terms"] if isinstance(t, (list, tuple)) and len(t) == 2]
@@ -360,6 +436,8 @@ class FitRegressionModelDialog(ProcedureDialog):
                     self.controls["categorical_indices"].setText(format_variable_list(v["categorical_indices"], self.worksheet))
                 if "confidence" in v:
                     self.options["confidence"] = float(v["confidence"])
+                if isinstance(v.get("categorical_coding"), dict):
+                    self.options["coding"] = copy.deepcopy(v["categorical_coding"])
             except Exception:
                 continue
             break
@@ -389,6 +467,24 @@ class FitRegressionModelDialog(ProcedureDialog):
         dlg = RegressionModelTermsDialog(self, cont_names, cat_names, set(self.higher_terms))
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.higher_terms = dlg.selected_pairs()
+        dlg.deleteLater()
+
+    def open_coding(self):
+        try:
+            _cont, cat = self._current_predictor_lists()
+        except ValueError as exc:
+            self.error.setText(str(exc))
+            self.error.setVisible(True)
+            return
+        if not cat:
+            self.error.setText("Select at least one categorical predictor first.")
+            self.error.setVisible(True)
+            return
+        self.error.setVisible(False)
+        cat_cols = [self.worksheet.columns[i] for i in cat]
+        dlg = RegressionCodingDialog(self, cat_cols, self.options.get("coding", {"scheme": "1_0", "references": {}}))
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.options["coding"] = copy.deepcopy(dlg.coding)
         dlg.deleteLater()
 
     def open_options(self):
@@ -441,19 +537,21 @@ class FitRegressionModelDialog(ProcedureDialog):
             model_terms = [[i] for i in range(n_total)] + valid_higher if valid_higher else None
 
             conf = self.options.get("confidence", 0.95)
+            coding = copy.deepcopy(self.options.get("coding")) if cat_indices else None
             self.entry = self.window.presenter.multiple_regression(
                 resp_idx,
                 pred_indices,
                 confidence=conf,
                 categorical_indices=cat_indices or None,
                 model_terms=model_terms,
+                categorical_coding=coding,
             )
 
             # Apply graphs & results options
             graphs_mode = self.options.get("graphs", "four")
             res_opts = copy.deepcopy(self.options.get("results", {"equation": True, "summary": True, "anova": True, "unusual": True}))
             if "result" in self.entry and isinstance(self.entry["result"], dict):
-                self.entry["result"]["options"] = {"graphs": graphs_mode, "results": res_opts}
+                self.entry["result"]["options"] = {"graphs": graphs_mode, "results": res_opts, "coding": coding}
                 self.entry["result"]["graphs"] = graphs_mode
             self.entry["graphs"] = graphs_mode
 

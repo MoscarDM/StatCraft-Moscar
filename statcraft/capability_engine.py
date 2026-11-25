@@ -310,15 +310,17 @@ def run_normal_capability(
                     current_group.append(fv)
             if current_group:
                 subgroups.append(current_group)
+        elif subgroup_spec is None:
+            sub_size = 1
         else:
             # Subgroup size constant
             try:
                 sub_size = int(subgroup_spec)
-            except (ValueError, TypeError):
-                sub_size = 1
+            except (ValueError, TypeError) as exc:
+                raise ValueError("Subgroup size must be a positive integer.") from exc
 
             if sub_size < 1:
-                sub_size = 1
+                raise ValueError("Subgroup size must be a positive integer.")
 
             # Extract clean observations
             for v in raw_vals:

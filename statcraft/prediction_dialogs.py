@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QLineEdit, QComboBox, QCheckBox, QPushButton, QDialogButtonBox,
     QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem, QStackedWidget,
     QHeaderView, QTextEdit)
+from .dialog_theme import AutoErrorLabel
 from .prediction import settings, model_spec, normalize_recipe
 from .variable_dialogs import format_variable_reference, resolve_variables
 
@@ -44,7 +45,7 @@ class PredictOptionsDialog(QDialog):
         self.intervals.setCurrentIndex(self.intervals.findData(self.initial['intervals']))
         form.addRow('Intervals to display:', self.intervals)
         layout.addLayout(form)
-        self.error = QLabel(); self.error.setObjectName('error'); self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error); self.buttons = footer(self, layout, self.validate)
 
     def validate(self):
@@ -127,7 +128,7 @@ class PredictDialog(QDialog):
         note = QLabel('Uses current worksheet data and the selected model setup. '
                       'Enter up to 500 rows manually. For larger input sets, select worksheet columns.')
         note.setObjectName('secondary'); note.setWordWrap(True); layout.addWidget(note)
-        self.error = QLabel(); self.error.setObjectName('error'); self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error); self.buttons = footer(self, layout, self.validate)
         self.load_models()
         self.model_selector.currentIndexChanged.connect(self.change_model)

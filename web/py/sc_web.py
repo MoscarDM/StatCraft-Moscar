@@ -78,10 +78,18 @@ def _histogram(ws, opts):
 def _boxplot(ws, opts):
     from statcraft import boxplot_graphs
 
-    args = {"response_indices": [int(i) for i in opts["columns"]]}
-    if opts.get("group") not in (None, "", -1):
-        args["variant"] = "one"
+    resp = [int(i) for i in opts["columns"]]
+    args = {"response_indices": resp}
+    multi = len(resp) > 1
+    grouped = opts.get("group") not in (None, "", -1)
+    variants = getattr(boxplot_graphs, "VARIANTS", ())
+    if grouped:
         args["group_indices"] = [int(opts["group"])]
+        args["variant"] = "multiple_groups" if multi else "one_groups"
+    else:
+        args["variant"] = "multiple" if multi else "one"
+    if variants and args["variant"] not in variants:
+        args["variant"] = "one"
     return boxplot_graphs.build_boxplots(ws, **args)
 
 

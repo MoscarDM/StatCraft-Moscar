@@ -121,11 +121,17 @@ def text_report(result: dict[str, Any]) -> str:
     test_fails = result.get('test_failures', {})
     tests_cfg = opts.get('tests', {})
 
-    # Invert mapping to test -> list of points
+    # Invert mapping to test -> list of points (normalize JSON-roundtripped string keys)
     failures_by_test: dict[int, list[int]] = {}
-    for pt, test_list in sorted(test_fails.items()):
+    normalized_fails: list[tuple[int, list[int]]] = []
+    for pt, test_list in test_fails.items():
+        try:
+            normalized_fails.append((int(pt), list(test_list)))
+        except (TypeError, ValueError):
+            continue
+    for pt, test_list in sorted(normalized_fails):
         for t in test_list:
-            failures_by_test.setdefault(t, []).append(pt)
+            failures_by_test.setdefault(int(t), []).append(pt)
 
     if failures_by_test:
         lines.append(f"Test Results for Xbar Chart of {var_name}")

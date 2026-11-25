@@ -9,6 +9,7 @@ import math
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QFormLayout,QComboBox,QLineEdit,
     QSpinBox,QTableWidget,QTableWidgetItem,QHeaderView,QLabel,QDialogButtonBox,QCheckBox)
+from .dialog_theme import AutoErrorLabel
 from .variable_dialogs import format_variable_reference
 
 
@@ -28,7 +29,7 @@ class _MixtureModelDialog(QDialog):
         if self.entries:self.model.setCurrentIndex(len(self.entries)-1)
         self.form.addRow('Fitted mixture model:',self.model);self.outer.addLayout(self.form)
         self.note=QLabel();self.note.setWordWrap(True);self.outer.addWidget(self.note)
-        self.error=QLabel();self.error.setObjectName('error');self.error.setWordWrap(True)
+        self.error=AutoErrorLabel()
         self.buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.validate);self.buttons.rejected.connect(self.reject)
 

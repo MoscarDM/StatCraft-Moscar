@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QTableWidgetItem, QDialog, QVBoxLayout,
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QTableWidget,
     QHeaderView, QDialogButtonBox)
+from .dialog_theme import AutoErrorLabel
 from .recipes import columns, fingerprints, run
 from .compositions import appearance_from_entry, validate_appearance
 from .variable_dialogs import (ProcedureDialog, ScatterDialog,
@@ -269,7 +270,7 @@ class SimilarGraphDialog(QDialog):
         body.addWidget(self.roles,3);outer.addLayout(body)
         self.retain_appearance=QCheckBox('Retain graph appearance (annotations, scales and object styles)')
         self.retain_appearance.setChecked(True);outer.addWidget(self.retain_appearance)
-        self.error=QLabel();self.error.setObjectName('error');self.error.setWordWrap(True);outer.addWidget(self.error)
+        self.error=AutoErrorLabel();outer.addWidget(self.error)
         bottom=QHBoxLayout();self.options_button=QPushButton('Options…')
         self.options_button.setAutoDefault(False);self.options_button.clicked.connect(self.edit_options)
         bottom.addWidget(self.options_button);bottom.addStretch()

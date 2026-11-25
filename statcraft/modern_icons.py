@@ -58,6 +58,12 @@ _ALIASES = {
     'split_worksheet': 'split', 'symmetry_plot': 'symmetry',
     'capability_analysis': 'capability', 'control_charts': 'control_chart',
     'gage_rr': 'chart', 'attribute_agreement': 'table',
+    'refresh': 'rerun', 'replace': 'find', 'autofill': 'assign_formula',
+    'direction': 'next_brushed', 'reliability': 'probability', 'shield': 'help',
+    'dark_mode': 'reset', 'settings': 'last_dialog', 'font': 'format_column',
+    'word': 'report', 'powerpoint': 'layout_tool', 'excel': 'table',
+    'pdf': 'print', 'info': 'worksheet', 'exit': 'cancel', 'close': 'delete_red_x',
+    'clear': 'erase',
 }
 
 
@@ -516,9 +522,23 @@ def _draw(p, kind):
         page(); line(8,11,16,11); line(8,15,16,15)
 
 
+_QUIT_HOOKED = False
+
+
+def _clear_icon_cache():
+    tool_icon.cache_clear()
+
+
 @lru_cache(maxsize=160)
 def tool_icon(kind):
     """Return a reusable icon. Call after creating QApplication, on its UI thread."""
+    global _QUIT_HOOKED
+    if not _QUIT_HOOKED:
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(_clear_icon_cache)
+            _QUIT_HOOKED = True
     kind = _ALIASES.get(str(kind), str(kind))
     icon = QIcon()
     for size in (16, 20, 24, 32, 40, 48, 64, 96):

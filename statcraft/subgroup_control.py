@@ -75,6 +75,39 @@ def d3(n: int) -> float:
     return 0.65
 
 
+def _parse_row_indices(raw_spec: Any) -> list[int]:
+    """Parse 1-based positive row/subgroup indices from sequence or range string."""
+    parsed: set[int] = set()
+    if isinstance(raw_spec, (list, tuple, set)):
+        for item in raw_spec:
+            try:
+                v = int(item)
+                if v > 0:
+                    parsed.add(v)
+            except (ValueError, TypeError):
+                pass
+    elif isinstance(raw_spec, str):
+        for tok in raw_spec.replace(',', ' ').split():
+            sep = ':' if ':' in tok else ('-' if '-' in tok and not tok.startswith('-') else None)
+            if sep is not None:
+                parts = tok.split(sep)
+                if len(parts) == 2:
+                    try:
+                        a, b = int(parts[0]), int(parts[1])
+                        lo, hi = min(a, b), max(a, b)
+                        parsed.update(v for v in range(lo, hi + 1) if v > 0)
+                    except ValueError:
+                        pass
+            else:
+                try:
+                    v = int(tok)
+                    if v > 0:
+                        parsed.add(v)
+                except ValueError:
+                    pass
+    return sorted(parsed)
+
+
 def control_chart_settings(options: dict[str, Any] | None = None) -> dict[str, Any]:
     """Validate and normalize settings for subgroup control charts."""
     opts = copy.deepcopy(options or {})
@@ -135,23 +168,8 @@ def control_chart_settings(options: dict[str, Any] | None = None) -> dict[str, A
     unbiasing = bool(opts.get('unbiasing', True))
 
     omit_subgroups_raw = opts.get('omit_subgroups', [])
-    omit_subgroups: list[int] = []
-    if isinstance(omit_subgroups_raw, (list, tuple, set)):
-        for item in omit_subgroups_raw:
-            try:
-                v = int(item)
-                if v > 0:
-                    omit_subgroups.append(v)
-            except (ValueError, TypeError):
-                pass
-    elif isinstance(omit_subgroups_raw, str):
-        tokens = omit_subgroups_raw.replace(',', ' ').split()
-        for tok in tokens:
-            try:
-                omit_subgroups.append(int(tok))
-            except ValueError:
-                pass
-    omit_subgroups = sorted(set(omit_subgroups))
+    omit_subgroups = _parse_row_indices(omit_subgroups_raw)
+    exclude_rows = _parse_row_indices(opts.get('exclude_rows', []))
 
     # Nelson Tests 1-8 configuration
     tests_in = opts.get('tests', {})
@@ -190,6 +208,7 @@ def control_chart_settings(options: dict[str, Any] | None = None) -> dict[str, A
         'estimation_method': method,
         'unbiasing': unbiasing,
         'omit_subgroups': omit_subgroups,
+        'exclude_rows': exclude_rows,
         'tests': tests_cfg,
         'storage': storage_cfg,
     }
@@ -421,6 +440,8 @@ def fit_subgroups(subgroups: list[list[float | None]],
 
     # 2. Estimate within-subgroup variation sigma
     disp_indices = [i for i in est_indices if subgroup_sizes[i] >= 2]
+    disp_sizes = {subgroup_sizes[i] for i in disp_indices}
+    has_unequal_disp = len(disp_sizes) > 1
     if opts['historical_sigma'] is not None:
         sigma_hat = opts['historical_sigma']
         disp_center = None
@@ -438,31 +459,57 @@ def fit_subgroups(subgroups: list[list[float | None]],
             else:
                 sigma_hat = 0.0
         elif chart_type in ('xbar_r', 'xbar', 'r'):
-            # Rbar method
-            r_vals = [ranges[i] for i in disp_indices if ranges[i] is not None]
-            rbar = float(np.mean(r_vals)) if r_vals else 0.0
-            avg_n = int(round(np.mean([subgroup_sizes[i] for i in disp_indices])))
-            d2_val = d2(avg_n) if unbiasing else 1.0
-            sigma_hat = rbar / d2_val if d2_val > 0 else 0.0
+            # Rbar method (weighted by d2^2 / d3^2 when subgroup sizes vary)
+            r_pairs = [(subgroup_sizes[i], ranges[i]) for i in disp_indices if ranges[i] is not None]
+            if has_unequal_disp and unbiasing and r_pairs:
+                num = 0.0
+                den = 0.0
+                for n_i, r_i in r_pairs:
+                    d2_i = d2(n_i)
+                    d3_i = d3(n_i)
+                    f_i = (d2_i * d2_i) / (d3_i * d3_i) if d3_i > 0 else 1.0
+                    num += f_i * (r_i / d2_i if d2_i > 0 else r_i)
+                    den += f_i
+                sigma_hat = num / den if den > 0 else 0.0
+            else:
+                r_vals = [r for _, r in r_pairs]
+                rbar = float(np.mean(r_vals)) if r_vals else 0.0
+                avg_n = int(round(np.mean([n for n, _ in r_pairs]))) if r_pairs else 2
+                d2_val = d2(avg_n) if unbiasing else 1.0
+                sigma_hat = rbar / d2_val if d2_val > 0 else 0.0
         else:
-            # Sbar method
-            s_vals = [stdevs[i] for i in disp_indices if stdevs[i] is not None]
-            sbar = float(np.mean(s_vals)) if s_vals else 0.0
-            avg_n = int(round(np.mean([subgroup_sizes[i] for i in disp_indices])))
-            c4_val = c4(avg_n) if unbiasing else 1.0
-            sigma_hat = sbar / c4_val if c4_val > 0 else 0.0
+            # Sbar method (weighted by c4^2 / (1 - c4^2) when subgroup sizes vary)
+            s_pairs = [(subgroup_sizes[i], stdevs[i]) for i in disp_indices if stdevs[i] is not None]
+            if has_unequal_disp and unbiasing and s_pairs:
+                num = 0.0
+                den = 0.0
+                for n_i, s_i in s_pairs:
+                    c4_i = c4(n_i)
+                    c5_sq = max(1e-12, 1.0 - c4_i * c4_i)
+                    f_i = (c4_i * c4_i) / c5_sq
+                    num += f_i * (s_i / c4_i if c4_i > 0 else s_i)
+                    den += f_i
+                sigma_hat = num / den if den > 0 else 0.0
+            else:
+                s_vals = [s for _, s in s_pairs]
+                sbar = float(np.mean(s_vals)) if s_vals else 0.0
+                avg_n = int(round(np.mean([n for n, _ in s_pairs]))) if s_pairs else 2
+                c4_val = c4(avg_n) if unbiasing else 1.0
+                sigma_hat = sbar / c4_val if c4_val > 0 else 0.0
 
     # Dispersion center line
+    all_disp_sizes = {n for n in subgroup_sizes if n >= 2}
+    varying_disp_sizes = len(all_disp_sizes) > 1
     if chart_type in ('xbar_r', 'xbar', 'r'):
-        if opts['historical_sigma'] is not None:
-            avg_n = int(round(np.mean([subgroup_sizes[i] for i in range(k_subgroups) if subgroup_sizes[i] >= 2]))) if any(n >= 2 for n in subgroup_sizes) else 2
+        if opts['historical_sigma'] is not None or varying_disp_sizes:
+            avg_n = int(round(np.mean([n for n in subgroup_sizes if n >= 2]))) if all_disp_sizes else 2
             disp_center = d2(avg_n) * sigma_hat
         else:
             r_valid = [ranges[i] for i in est_indices if ranges[i] is not None]
             disp_center = float(np.mean(r_valid)) if r_valid else 0.0
     else:
-        if opts['historical_sigma'] is not None:
-            avg_n = int(round(np.mean([subgroup_sizes[i] for i in range(k_subgroups) if subgroup_sizes[i] >= 2]))) if any(n >= 2 for n in subgroup_sizes) else 2
+        if opts['historical_sigma'] is not None or varying_disp_sizes:
+            avg_n = int(round(np.mean([n for n in subgroup_sizes if n >= 2]))) if all_disp_sizes else 2
             disp_center = (c4(avg_n) if unbiasing else 1.0) * sigma_hat
         else:
             s_valid = [stdevs[i] for i in est_indices if stdevs[i] is not None]
@@ -472,6 +519,7 @@ def fit_subgroups(subgroups: list[list[float | None]],
     xbar_lcl_list: list[float | None] = []
     xbar_ucl_list: list[float | None] = []
     xbar_se_list: list[float | None] = []
+    disp_centers_list: list[float | None] = []
     disp_lcl_list: list[float | None] = []
     disp_ucl_list: list[float | None] = []
 
@@ -492,20 +540,23 @@ def fit_subgroups(subgroups: list[list[float | None]],
             if chart_type in ('xbar_r', 'xbar', 'r'):
                 d2_val = d2(n)
                 d3_val = d3(n)
-                r_cl = d2_val * sigma_hat if opts['historical_sigma'] is not None else disp_center
-                r_lcl = max(0.0, r_cl - 3.0 * d3_val * sigma_hat) if opts['display_lower'] else None
-                r_ucl = r_cl + 3.0 * d3_val * sigma_hat if opts['display_upper'] else None
+                r_cl = d2_val * sigma_hat if (opts['historical_sigma'] is not None or varying_disp_sizes) else disp_center
+                r_lcl = max(0.0, r_cl - k_sigma * d3_val * sigma_hat) if opts['display_lower'] else None
+                r_ucl = r_cl + k_sigma * d3_val * sigma_hat if opts['display_upper'] else None
+                disp_centers_list.append(r_cl)
                 disp_lcl_list.append(r_lcl)
                 disp_ucl_list.append(r_ucl)
             else:
                 c4_val = c4(n)
                 c5_val = c5(n)
-                s_cl = (c4_val if unbiasing else 1.0) * sigma_hat if opts['historical_sigma'] is not None else disp_center
-                s_lcl = max(0.0, s_cl - 3.0 * c5_val * sigma_hat) if opts['display_lower'] else None
-                s_ucl = s_cl + 3.0 * c5_val * sigma_hat if opts['display_upper'] else None
+                s_cl = (c4_val if unbiasing else 1.0) * sigma_hat if (opts['historical_sigma'] is not None or varying_disp_sizes) else disp_center
+                s_lcl = max(0.0, s_cl - k_sigma * c5_val * sigma_hat) if opts['display_lower'] else None
+                s_ucl = s_cl + k_sigma * c5_val * sigma_hat if opts['display_upper'] else None
+                disp_centers_list.append(s_cl)
                 disp_lcl_list.append(s_lcl)
                 disp_ucl_list.append(s_ucl)
         else:
+            disp_centers_list.append(None)
             disp_lcl_list.append(None)
             disp_ucl_list.append(None)
 
@@ -530,10 +581,10 @@ def fit_subgroups(subgroups: list[list[float | None]],
             xbar_lwl_list.append(None)
 
         if has_warn and n >= 2 and sigma_hat >= 0:
-            if chart_type == 'xbar_r':
+            if chart_type in ('xbar_r', 'xbar', 'r'):
                 d2_val = d2(n)
                 d3_val = d3(n)
-                r_cl = d2_val * sigma_hat if opts['historical_sigma'] is not None else disp_center
+                r_cl = disp_centers_list[idx] if disp_centers_list[idx] is not None else disp_center
                 r_lwl = max(0.0, r_cl - warn_k * d3_val * sigma_hat) if opts['display_lower'] else None
                 r_uwl = r_cl + warn_k * d3_val * sigma_hat if opts['display_upper'] else None
                 disp_lwl_list.append(r_lwl)
@@ -541,7 +592,7 @@ def fit_subgroups(subgroups: list[list[float | None]],
             else:
                 c4_val = c4(n)
                 c5_val = c5(n)
-                s_cl = (c4_val if unbiasing else 1.0) * sigma_hat if opts['historical_sigma'] is not None else disp_center
+                s_cl = disp_centers_list[idx] if disp_centers_list[idx] is not None else disp_center
                 s_lwl = max(0.0, s_cl - warn_k * c5_val * sigma_hat) if opts['display_lower'] else None
                 s_uwl = s_cl + warn_k * c5_val * sigma_hat if opts['display_upper'] else None
                 disp_lwl_list.append(s_lwl)
@@ -586,6 +637,7 @@ def fit_subgroups(subgroups: list[list[float | None]],
         'xbar_lcl': xbar_lcl_list,
         'xbar_ucl': xbar_ucl_list,
         'disp_center': disp_center,
+        'disp_centers': disp_centers_list,
         'disp_lcl': disp_lcl_list,
         'disp_ucl': disp_ucl_list,
         'xbar_uwl': xbar_uwl_list,
@@ -614,7 +666,9 @@ def fit_from_worksheet(worksheet: Worksheet,
                        options: dict[str, Any] | None = None) -> dict[str, Any]:
     """Fit subgroup control chart directly from worksheet columns."""
     subgroups: list[list[float | None]] = []
+    trace_groups: list[tuple[int, str, list[list[Any]]]] = []
     variable_name: str = ""
+    exclude_set = set(control_chart_settings({**(options or {}), 'chart_type': chart_type}).get('exclude_rows', []))
 
     if stacked:
         if response_index is None or response_index < 0 or response_index >= len(worksheet.columns):
@@ -629,20 +683,27 @@ def fit_from_worksheet(worksheet: Worksheet,
             if factor_index < 0 or factor_index >= len(worksheet.columns) or factor_index == response_index:
                 raise ValueError("Select a distinct subgroup ID column.")
             fac_col = worksheet.columns[factor_index]
-            group_dict: dict[Any, list[float | None]] = {}
+            group_dict: dict[Any, list[list[Any]]] = {}
             for r in range(max(len(resp_col.values), len(fac_col.values))):
+                if (r + 1) in exclude_set:
+                    continue
                 lvl = fac_col.values[r] if r < len(fac_col.values) else None
                 if lvl is None or lvl == '':
                     continue
                 val = vals[r] if r < len(vals) else None
-                group_dict.setdefault(lvl, []).append(val)
-            subgroups = list(group_dict.values())
+                group_dict.setdefault(lvl, []).append([r + 1, val])
+            for sg_idx, (lvl, items) in enumerate(group_dict.items(), 1):
+                trace_groups.append((sg_idx, str(lvl), items))
+                subgroups.append([item[1] for item in items])
         else:
             sz = int(subgroup_size or 5)
             if sz < 2:
                 raise ValueError("Subgroup size must be at least 2.")
-            for start in range(0, len(vals), sz):
-                subgroups.append(vals[start : start + sz])
+            for sg_idx, start in enumerate(range(0, len(vals), sz), 1):
+                end = min(start + sz, len(vals))
+                items = [[r + 1, None if (r + 1) in exclude_set else vals[r]] for r in range(start, end)]
+                trace_groups.append((sg_idx, str(sg_idx), items))
+                subgroups.append([item[1] for item in items])
     else:
         if not indices or len(indices) < 2:
             raise ValueError("Select 2 or more columns for subgroup row arrangement.")
@@ -652,8 +713,14 @@ def fit_from_worksheet(worksheet: Worksheet,
                 raise ValueError(f"Subgroup column '{c.name}' must be numeric.")
         variable_name = ", ".join(c.name for c in cols)
         n_rows = max(len(c.values) for c in cols)
+        sg_idx = 0
         for r in range(n_rows):
-            subgroups.append([normalize_numeric(c.values[r] if r < len(c.values) else None) for c in cols])
+            if (r + 1) in exclude_set:
+                continue
+            sg_idx += 1
+            items = [[r + 1, normalize_numeric(c.values[r] if r < len(c.values) else None), c.name] for c in cols]
+            trace_groups.append((sg_idx, str(r + 1), items))
+            subgroups.append([item[1] for item in items])
 
     result = fit_subgroups(subgroups, chart_type=chart_type, options=options)
     result['variable_name'] = variable_name
@@ -662,6 +729,40 @@ def fit_from_worksheet(worksheet: Worksheet,
     result['factor_index'] = factor_index
     result['indices'] = list(indices) if indices else None
     result['subgroup_size'] = subgroup_size
+    omit_set = set(result['options'].get('omit_subgroups', []))
+    result['subgroup_trace'] = [
+        {
+            'subgroup': sg_idx,
+            'label': sg_label,
+            'rows': items,
+            'omitted': sg_idx in omit_set,
+        }
+        for sg_idx, sg_label, items in trace_groups
+    ]
+    disp_sizes = {sz for sz in result['subgroup_sizes'] if sz >= 2}
+    varying_sizes = len(disp_sizes) > 1
+    est_opts = result['options']
+    sigma_label = (
+        'historical sigma'
+        if est_opts.get('historical_sigma') is not None
+        else (
+            f"{result['estimation_method']} (weighted)"
+            if varying_sizes and result['estimation_method'] in ('rbar', 'sbar') and result['unbiasing']
+            else result['estimation_method']
+        )
+    )
+    result['estimation_trace'] = {
+        'center_method': 'historical mean' if est_opts.get('historical_mean') is not None else 'weighted mean of eligible subgroups',
+        'sigma_method': sigma_label,
+        'chart_type': result['chart_type'],
+        'k_sigma': est_opts['k_sigma'],
+        'unbiasing': result['unbiasing'],
+        'historical_mean': est_opts.get('historical_mean'),
+        'historical_sigma': est_opts.get('historical_sigma'),
+        'omit_subgroups': list(est_opts.get('omit_subgroups', [])),
+        'exclude_rows': sorted(exclude_set),
+        'varying_sizes': varying_sizes,
+    }
 
     # Storage execution
     store_opts = result['options']['storage']

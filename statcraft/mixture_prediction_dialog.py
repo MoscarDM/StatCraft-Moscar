@@ -1,6 +1,7 @@
 """Prediction entry for a selected source-bound mixture model."""
 import copy
 from PySide6.QtWidgets import QDialog,QVBoxLayout,QFormLayout,QComboBox,QLineEdit,QSpinBox,QTableWidget,QTableWidgetItem,QHeaderView,QLabel,QDialogButtonBox
+from .dialog_theme import AutoErrorLabel
 from .model import finite_number
 
 
@@ -15,7 +16,7 @@ class MixturePredictionDialog(QDialog):
         self.row_count=QSpinBox();self.row_count.setRange(1,100);form.addRow('Prediction rows:',self.row_count);layout.addLayout(form)
         self.note=QLabel();self.note.setWordWrap(True);layout.addWidget(self.note)
         self.table=QTableWidget(1,0);self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch);layout.addWidget(self.table)
-        self.error=QLabel();self.error.setObjectName('error');self.error.setWordWrap(True);layout.addWidget(self.error)
+        self.error=AutoErrorLabel();layout.addWidget(self.error)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);buttons.accepted.connect(self.validate);buttons.rejected.connect(self.reject);layout.addWidget(buttons)
         self.row_count.valueChanged.connect(self.table.setRowCount);self.model.currentIndexChanged.connect(self._model_changed)
         self._model_changed()

@@ -54,8 +54,12 @@ def format_attribute_control_report(result: Dict[str, Any]) -> str:
     test_failures = result.get("test_failures", {})
     test_to_pts: Dict[int, List[int]] = {}
     for pt, test_list in test_failures.items():
+        try:
+            pt_idx = int(pt)
+        except (TypeError, ValueError):
+            continue
         for t in test_list:
-            test_to_pts.setdefault(t, []).append(pt)
+            test_to_pts.setdefault(int(t), []).append(pt_idx)
 
     if test_to_pts:
         lines.append(f"Test Results for {chart_title} of {var_name}")
@@ -104,6 +108,11 @@ def format_attribute_control_report(result: Dict[str, Any]) -> str:
     if omitted:
         omit_str = ", ".join(str(x) for x in omitted)
         lines.append(f"  Subgroups omitted:      {omit_str}")
+
+    excluded = result.get("excluded_rows", [])
+    if excluded:
+        excl_str = ", ".join(str(x) for x in excluded)
+        lines.append(f"  Rows excluded:          {excl_str}")
 
     if result.get("is_historical"):
         lines.append("  Note: Parameters were specified historically.")

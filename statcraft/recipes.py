@@ -38,6 +38,8 @@ FIELDS = {
     'model_contour_plot':{'model_recipe','x_index','y_index','options'},
     'model_surface_plot':{'model_recipe','x_index','y_index','options'},
     'optimize_responses':{'responses','options'},
+    'operating_window_3d':{'response_specs','x_index','y_index','options'},
+    'evaluate_confirmation_runs':{'plan_result','response_column_map'},
     'fit_binary_logistic':{'response_index','continuous_indices','categorical_indices','event','trials_index','terms','options'},
     'predict_model':{'model_recipe','input_mode','values','new_indices','options'},
     'gage_rr':{'measurement_index','part_index','operator_index','options'},
@@ -63,7 +65,7 @@ FIELDS = {
     'two_proportions': {'first_index', 'second_index', 'confidence'},
     'describe_columns': {'indices', 'by_indices', 'statistics', 'graphs'}, 'describe_column': {'index'},
     'inference': {'method', 'indices', 'mu', 'confidence'},
-    'multiple_regression': {'response_index', 'predictor_indices', 'confidence', 'categorical_indices', 'model_terms'},
+    'multiple_regression': {'response_index', 'predictor_indices', 'confidence', 'categorical_indices', 'model_terms', 'categorical_coding'},
     'best_subsets': {'response_index', 'free_indices', 'forced_indices', 'models_per_subset', 'min_free', 'max_free'},
     'stepwise_regression': {'response_index', 'predictor_indices', 'method', 'alpha_to_enter', 'alpha_to_remove'},
     'poisson_regression': {'response_index', 'continuous_indices', 'categorical_indices', 'offset_index', 'confidence'},
@@ -675,6 +677,55 @@ def columns(recipe):
             if c['index'] not in pred_cols:raise ValueError('Constraint references a non-predictor column.')
         for s in opts['starting_values']:
             if s['index'] not in pred_cols:raise ValueError('Starting value references a non-predictor column.')
+        return sorted(set(indices))
+    if action == 'operating_window_3d':
+        from .operating_window import operating_window_settings, SUPPORTED_MODELS
+        opts = operating_window_settings(parameters['options'])
+        specs = parameters['response_specs']
+        if not isinstance(specs, list) or not 1 <= len(specs) <= 8:
+            raise ValueError('Select 1–8 fitted responses for the 3D Operating Window.')
+        indices = []
+        resp_cols = []
+        pred_cols = set()
+        for item in specs:
+            if not isinstance(item, dict) or 'model_recipe' not in item:
+                raise ValueError('Invalid 3D Operating Window response specification.')
+            src = item['model_recipe']
+            if not isinstance(src, dict) or src.get('action') not in SUPPORTED_MODELS:
+                raise ValueError('Choose a supported source model for the 3D Operating Window.')
+            src_cols = columns(src)
+            indices.extend(src_cols)
+            r_col = src['parameters']['response_index']
+            resp_cols.append(r_col)
+            pred_cols.update(c for c in src_cols if c != r_col and c != src['parameters'].get('trials_index'))
+        if len(set(resp_cols)) != len(resp_cols):
+            raise ValueError('Duplicate response columns in 3D Operating Window recipe.')
+        if set(resp_cols) & pred_cols:
+            raise ValueError('A response column cannot also be a predictor in the operating window.')
+        x_idx, y_idx = parameters['x_index'], parameters['y_index']
+        if type(x_idx) is not int or type(y_idx) is not int or x_idx == y_idx or x_idx not in pred_cols or y_idx not in pred_cols:
+            raise ValueError('Choose two distinct model predictors for X and Y axes.')
+        for d in opts['drifts']:
+            if d['index'] not in pred_cols:
+                raise ValueError('Drift tolerance references a non-predictor column.')
+        for h in opts['holds']:
+            if h['index'] not in pred_cols:
+                raise ValueError('Hold value references a non-predictor column.')
+        return sorted(set(indices))
+    if action == 'evaluate_confirmation_runs':
+        plan = parameters['plan_result']
+        if not isinstance(plan, dict) or plan.get('analysis') != 'confirmation_plan':
+            raise ValueError('Confirmation evaluation recipe requires a valid confirmation plan.')
+        col_map = parameters['response_column_map']
+        if col_map is None:
+            return []
+        if not isinstance(col_map, dict):
+            raise ValueError('Response column map must be a dictionary.')
+        indices = []
+        for idx in col_map.values():
+            if type(idx) is not int or idx < 0:
+                raise ValueError('Confirmation column map values must be non-negative column indices.')
+            indices.append(idx)
         return sorted(set(indices))
     if action in ('factorial_plots','model_contour_plot','model_surface_plot'):
         from .model_plots import SUPPORTED_MODELS,factorial_plots_settings,contour_plot_settings,surface_plot_settings

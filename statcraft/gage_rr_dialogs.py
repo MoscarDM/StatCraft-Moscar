@@ -1,6 +1,7 @@
 """Named worksheet roles and supported ANOVA options for crossed Gage R&R."""
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
     QLineEdit, QCheckBox, QPushButton, QDialogButtonBox)
+from .dialog_theme import AutoErrorLabel, clamp_dialog_to_screen, dialog_stylesheet, is_dark_active
 from .variable_dialogs import ProcedureDialog, format_variable_reference
 from .gage_rr import settings
 
@@ -8,9 +9,9 @@ from .gage_rr import settings
 class GageRROptionsDialog(QDialog):
     def __init__(self, parent, options):
         super().__init__(parent)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.setWindowTitle('Gage R&R Study (Crossed): ANOVA Options')
-        self.setMinimumWidth(470)
         self.initial = settings(options)
         self.options = None
         self.controls = {}
@@ -37,14 +38,13 @@ class GageRROptionsDialog(QDialog):
                       'The six study graphs are displayed together.')
         note.setWordWrap(True)
         layout.addWidget(note)
-        self.error = QLabel()
-        self.error.setObjectName('error')
-        self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.validate)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
+        clamp_dialog_to_screen(self, 490, 320, min_w=440, min_h=270)
 
     def validate(self):
         try:

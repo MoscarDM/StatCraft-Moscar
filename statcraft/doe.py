@@ -8,6 +8,7 @@ multiple blocks, curvature test or native parity is implemented.
 import itertools
 import math
 import random
+from scipy.stats import t as student_t
 from .model import Column, Worksheet
 from .engine import normalize_numeric
 from .regression import multiple_regression
@@ -31,11 +32,24 @@ def _coding(name,low,high):
     span=high-low;center=math.fsum((low/2,high/2));half=span/2
     if not math.isfinite(span) or half<=0 or not low<center<high:
         raise ValueError('Factor range/midpoint exceeds supported numeric precision.')
-    return dict(name=name,low=low,high=high,center=center,half_range=half)
+    return dict(name=name,kind='number',low=low,high=high,center=center,half_range=half,levels=[low,high])
+
+
+def _factor_spec(name, factor):
+    kind = str(factor.get('kind', 'number')).strip().lower()
+    if 'low' not in factor or 'high' not in factor:
+        raise ValueError('Each factor needs low and high settings.')
+    if kind == 'text':
+        low = str(factor['low']).strip()
+        high = str(factor['high']).strip()
+        if not low or not high or low == high:
+            raise ValueError('Text factor requires two distinct non-empty levels.')
+        return dict(name=name, kind='text', low=low, high=high, center=None, half_range=None, levels=[low, high])
+    return _coding(name, factor['low'], factor['high'])
 
 
 def create_factorial(factors,replicates=1,centers=0,randomize=True,seed=1,blocks=1):
-    """Create 2..8 numeric factors, first factor fastest, single or multiple blocks, <=4096 runs.
+    """Create 2..8 numeric or text 2-level factors, first factor fastest, single or multiple blocks, <=4096 runs.
 
     Centers is the center-run count per block. PtType=1 corners, 0 centers.
     StdOrder is grouped by block (corners then centers); RunOrder is physical row order.
@@ -45,7 +59,10 @@ def create_factorial(factors,replicates=1,centers=0,randomize=True,seed=1,blocks
     _integer(centers,0,20,'Center runs')
     _integer(blocks,1,64,'Blocks')
     if type(randomize) is not bool:raise ValueError('Randomize must be true or false.')
-    _integer(seed,-(2**63),2**63-1,'Randomization seed')
+    if seed is None:
+        seed = random.SystemRandom().randint(1, 2_147_483_647)
+    else:
+        _integer(seed,-(2**63),2**63-1,'Randomization seed')
     total_corners=(2**k)*replicates
     if total_corners%blocks!=0:
         raise ValueError('Total corner runs must be evenly divisible by the number of blocks.')
@@ -58,8 +75,9 @@ def create_factorial(factors,replicates=1,centers=0,randomize=True,seed=1,blocks
         if not isinstance(name,str) or not name.strip() or name.casefold() in names:
             raise ValueError('Factor names must be nonempty, unique and different from design-column names.')
         names.add(name.casefold())
-        if 'low' not in factor or 'high' not in factor:raise ValueError('Each factor needs low and high settings.')
-        code=_coding(name,factor['low'],factor['high']);code['column_index']=4+i;coding.append(code)
+        code=_factor_spec(name,factor);code['column_index']=4+i;coding.append(code)
+    if centers and any(f.get('kind')=='text' for f in coding):
+        raise ValueError('Center points require all factors to be numeric.')
     corners_per_rep=2**k; corners_per_block=total_corners//blocks
     corner_runs=[]
     for rep in range(replicates):
@@ -103,13 +121,205 @@ def create_factorial(factors,replicates=1,centers=0,randomize=True,seed=1,blocks
              Column('RunOrder',values=list(range(1,count+1))),
              Column('PtType',values=[r['pt_type'] for r in plan]),
              Column('Blocks',values=[r['block'] for r in plan])]
-    columns.extend(Column(f['name'],values=[r['settings'][i] for r in plan]) for i,f in enumerate(coding))
+    columns.extend(Column(f['name'],kind=f.get('kind','number'),values=[r['settings'][i] for r in plan]) for i,f in enumerate(coding))
     return Worksheet('Full factorial design',columns,metadata={'doe':dict(
         schema='statcraft-full-factorial-v1',origin='Original StatCraft design',
         design='full two-level factorial',factors=coding,replicates=replicates,
         centers=centers,randomize=randomize,seed=seed,blocks=blocks,
         standard_order='Runs grouped by block; first factor fastest within block; centers per block.',
         point_types={'factorial':1,'center':0},native_parity=False)})
+
+
+def _resolve_factorial_block_column(worksheet, metadata):
+    if isinstance(metadata, dict) and metadata.get('custom_defined') and metadata.get('blocks_mode') == 'none':
+        return None
+    idx = metadata.get('blocks_column_index') if isinstance(metadata, dict) else None
+    col_name = metadata.get('blocks_column') if isinstance(metadata, dict) else None
+    if type(idx) is int and 0 <= idx < len(worksheet.columns):
+        candidate = worksheet.columns[idx]
+        if not col_name or candidate.name == col_name:
+            return candidate
+    if isinstance(col_name, str) and col_name:
+        matched = next((c for c in worksheet.columns if c.name == col_name), None)
+        if matched is not None:
+            return matched
+    return next((c for c in worksheet.columns if c.name.casefold() == 'blocks'), None)
+
+
+def _encode_blocks(worksheet, used, block_col, include_blocks, require_nonmissing=False):
+    raw_blocks = [
+        (block_col.values[r] if r < len(block_col.values) else None)
+        for r in used
+    ] if block_col is not None else [1] * len(used)
+    observed_blocks = []
+    for raw in raw_blocks:
+        if block_col is not None and block_col.kind == 'text':
+            val = raw.strip() if isinstance(raw, str) and raw.strip() else None
+        elif block_col is not None:
+            val = normalize_numeric(raw)
+        else:
+            val = raw
+        if require_nonmissing and val is None:
+            raise ValueError(f"Blocks column '{block_col.name}' has missing values on active rows.")
+        observed_blocks.append(val)
+    unique_blocks = sorted(
+        {b for b in observed_blocks if b is not None},
+        key=lambda v: (0, float(v)) if isinstance(v, (int, float)) else (1, str(v)),
+    )
+    has_multiple_blocks = len(unique_blocks) > 1
+    if include_blocks is None:
+        include_blocks = has_multiple_blocks
+    elif type(include_blocks) is not bool:
+        raise ValueError('Include blocks must be true or false.')
+    elif include_blocks and not has_multiple_blocks:
+        include_blocks = False
+    block_predictors = []
+    block_names = []
+    if include_blocks:
+        if len(unique_blocks) == 2:
+            b1 = unique_blocks[1]
+            block_predictors.append([1. if b == b1 else -1. for b in observed_blocks])
+            block_names.append(block_col.name if block_col else 'Blocks')
+        elif len(unique_blocks) > 2:
+            ref_block = unique_blocks[-1]
+            prefix = block_col.name if block_col else 'Blocks'
+            for b_lvl in unique_blocks[:-1]:
+                block_predictors.append([1. if b == b_lvl else (-1. if b == ref_block else 0.) for b in observed_blocks])
+                block_names.append(f'{prefix} {b_lvl}')
+    return block_predictors, block_names, unique_blocks, has_multiple_blocks, include_blocks
+
+
+def _factor_terms_hierarchy(k, max_order, selected_terms):
+    terms = [indices for order in range(1, min(max_order, k) + 1) for indices in itertools.combinations(range(k), order)]
+    if selected_terms is not None:
+        if not isinstance(selected_terms, list) or not selected_terms:
+            raise ValueError('Select at least one model term.')
+        terms = []
+        for term in selected_terms:
+            if not isinstance(term, list) or not 1 <= len(term) <= 3 or any(type(i) is not int or not 0 <= i < k for i in term):
+                raise ValueError('Model terms must contain one to three valid factor positions.')
+            if len(set(term)) != len(term):
+                raise ValueError('A factor cannot repeat within a term.')
+            value = tuple(sorted(term))
+            if value in terms:
+                raise ValueError('Model terms must be distinct.')
+            terms.append(value)
+        terms.sort(key=lambda value: (len(value), value))
+        for term in terms:
+            for order in range(1, len(term)):
+                if any(subset not in terms for subset in itertools.combinations(term, order)):
+                    raise ValueError('Include all lower-order terms for a hierarchical model.')
+    return terms
+
+
+def _analyze_general_factorial(worksheet, response, selected, factors, used, ys, raw_rows, metadata, max_order, confidence, selected_terms, include_blocks):
+    from .fractional import _FACTOR_LETTERS
+    k = len(selected)
+    names = [c.name for c in selected]
+    coding = []
+    factor_contrasts = []
+    for pos, (col, index) in enumerate(zip(selected, factors)):
+        obs = [row[pos] for row in raw_rows]
+        declared = next((f for f in metadata.get('factors', []) if f.get('column_index') == index and f.get('name') == col.name), None)
+        if declared and isinstance(declared.get('levels'), list) and len(declared['levels']) >= 2:
+            levels = list(declared['levels'])
+            source = 'Custom StatCraft design metadata' if metadata.get('custom_defined') else 'StatCraft design metadata'
+        else:
+            levels = sorted(
+                set(obs),
+                key=lambda v: (0, float(v)) if isinstance(v, (int, float)) else (1, str(v)),
+            )
+            source = 'Observed levels'
+        if len(levels) < 2:
+            raise ValueError(f"Factor '{col.name}' needs at least 2 observed levels.")
+        ref = levels[-1]
+        contrasts = []
+        contrast_labels = []
+        if len(levels) == 2:
+            contrasts.append([1.0 if v == levels[1] else -1.0 for v in obs])
+            contrast_labels.append(col.name)
+        else:
+            for lvl in levels[:-1]:
+                contrasts.append([1.0 if v == lvl else (-1.0 if v == ref else 0.0) for v in obs])
+                contrast_labels.append(f"{col.name} ({lvl})")
+        info = {'name': col.name, 'kind': col.kind, 'levels': levels, 'column_index': index,
+                'letter': _FACTOR_LETTERS[pos] if pos < len(_FACTOR_LETTERS) else f'F{pos + 1}',
+                'source': source}
+        if len(levels) == 2:
+            info['low'] = levels[0]
+            info['high'] = levels[1]
+            info['center'] = math.fsum((float(levels[0]) / 2.0, float(levels[1]) / 2.0)) if col.kind == 'number' else None
+        coding.append(info)
+        factor_contrasts.append(list(zip(contrast_labels, contrasts)))
+
+    block_col = _resolve_factorial_block_column(worksheet, metadata)
+    block_predictors, block_names, unique_blocks, has_multiple_blocks, include_blocks = _encode_blocks(
+        worksheet, used, block_col, include_blocks,
+        require_nonmissing=bool(metadata.get('custom_defined') and block_col is not None),
+    )
+    terms = _factor_terms_hierarchy(k, max_order, selected_terms)
+    term_names = ['*'.join(names[i] for i in term) for term in terms]
+    if len(set(term_names)) != len(term_names):
+        raise ValueError('Factor names produce ambiguous interaction labels.')
+
+    term_predictors = []
+    term_pred_names = []
+    term_pred_factors = []
+    for term in terms:
+        combos = itertools.product(*(factor_contrasts[i] for i in term))
+        for combo in combos:
+            lbl = '*'.join(lbl_part for lbl_part, _ in combo)
+            col_vals = [math.prod(vals[r] for _, vals in combo) for r in range(len(used))]
+            term_predictors.append(col_vals)
+            term_pred_names.append(lbl)
+            term_pred_factors.append([names[i] for i in term])
+
+    all_predictors = block_predictors + term_predictors
+    all_pred_names = block_names + term_pred_names
+    result = multiple_regression(all_predictors, ys, confidence, predictor_names=all_pred_names)
+    n_blocks = len(block_names)
+    for i, coefficient in enumerate(result['coefficients']):
+        if i == 0:
+            coefficient['term_factors'] = []
+            coefficient['effect'] = None
+            coefficient['effect_se'] = None
+        elif i <= n_blocks:
+            coefficient['term_factors'] = [block_col.name if block_col else 'Blocks']
+            coefficient['effect'] = None
+            coefficient['effect_se'] = None
+        else:
+            p_idx = i - n_blocks - 1
+            t_factors = term_pred_factors[p_idx]
+            coefficient['term_factors'] = t_factors
+            all_two_level = all(len(c['levels']) == 2 for c in coding if c['name'] in t_factors)
+            coefficient['effect'] = 2 * coefficient['estimate'] if all_two_level else None
+            coefficient['effect_se'] = 2 * coefficient['standard_error'] if all_two_level else None
+        for suffix in ('low', 'high'):
+            ci = coefficient['ci_' + suffix]
+            coefficient['effect_ci_' + suffix] = None if coefficient['effect'] is None or ci is None else 2 * ci
+
+    result.update(
+        method='General factorial effects-coded OLS; hierarchical selected terms',
+        response_name=response.name,
+        factor_coding=coding,
+        terms=block_names + term_names,
+        factor_terms=term_names,
+        block_terms=block_names,
+        include_blocks=include_blocks,
+        blocks=len(unique_blocks) if has_multiple_blocks else 1,
+        blocks_column=block_col.name if (include_blocks and block_col is not None) else None,
+        max_order=max(map(len, terms)),
+        selected_terms=[list(term) for term in terms],
+        row_indices=used,
+        used_rows=used,
+        missing=worksheet.row_count - len(used),
+        coded_factors=raw_rows,
+        native_parity=False,
+        verification_block_columns=block_predictors,
+        design_seed=None,
+        assumptions='Independent errors with common variance and normality for t/F inference. Multi-level factors use sum-to-zero effects coding.',
+    )
+    return result
 
 
 def analyze_factorial(worksheet,response_index,factor_indices,max_order=2,confidence=.95,selected_terms=None,include_blocks=None):
@@ -122,85 +332,89 @@ def analyze_factorial(worksheet,response_index,factor_indices,max_order=2,confid
     """
     if not isinstance(worksheet,Worksheet):raise ValueError('A Worksheet is required.')
     from .fractional import _FACTOR_LETTERS
+    metadata=worksheet.metadata.get('doe',{}) if isinstance(worksheet.metadata,dict) else {}
+    custom_general=metadata.get('design_type')=='general_full'
     factors=list(factor_indices);k=len(factors)
-    _integer(k,2,15,'Factor count');_integer(max_order,1,3,'Maximum interaction order')
+    _integer(k,1 if custom_general else 2,15,'Factor count');_integer(max_order,1,3,'Maximum interaction order')
     _integer(response_index,0,len(worksheet.columns)-1,'Response index')
     for index in factors:_integer(index,0,len(worksheet.columns)-1,'Factor index')
     if len(set(factors))!=k or response_index in factors:raise ValueError('Select distinct factor columns and a separate response.')
     selected=[worksheet.columns[i] for i in factors]
     response=worksheet.columns[response_index]
-    if any(c.kind!='number' for c in selected+[response]):raise ValueError('DOE requires numeric factor and response columns.')
+    if response.kind!='number' or any(c.kind not in ('number','text') for c in selected):
+        raise ValueError('DOE requires a numeric response column and numeric or text factor columns.')
     names=[c.name for c in selected]
     if len(set(names))!=k:raise ValueError('Selected factors need distinct names.')
     n=worksheet.row_count
     if n>4096:raise ValueError('DOE analysis is limited to 4096 worksheet rows.')
-    values=[[_level_or_missing(c.values[i]) if i<len(c.values) else None for i in range(n)] for c in selected]
-    metadata=worksheet.metadata.get('doe',{})
-    trusted=metadata.get('schema') in ('statcraft-full-factorial-v1','statcraft-regular-fractional-v1')
-    coding=[]
-    for column,index,observed in zip(selected,factors,values):
-        declared=next((f for f in metadata.get('factors',[]) if f.get('column_index')==index and f.get('name')==column.name),None) if trusted else None
-        if declared is not None:
-            code=_coding(column.name,declared['low'],declared['high']);code['source']='StatCraft design metadata'
+    raw_values=[]
+    for c in selected:
+        if c.kind=='text':
+            raw_values.append([c.values[i].strip() if i<len(c.values) and isinstance(c.values[i],str) and c.values[i].strip() else None for i in range(n)])
         else:
-            levels=sorted(set(v for v in observed if v is not None))
-            if len(levels) not in (2,3):raise ValueError('Each factor needs two observed levels, optionally their common center setting.')
-            code=_coding(column.name,levels[0],levels[-1]);code['source']='Observed levels'
-        code['column_index']=index;code['letter']=_FACTOR_LETTERS[len(coding)];coding.append(code)
-    used=[];coded_rows=[];ys=[]
+            raw_values.append([_level_or_missing(c.values[i]) if i<len(c.values) else None for i in range(n)])
+    used=[];obs_rows=[];ys=[]
     for row in range(n):
         y=_level_or_missing(response.values[row]) if row<len(response.values) else None
-        raw=[v[row] for v in values]
+        raw=[v[row] for v in raw_values]
         if y is None or any(v is None for v in raw):continue
+        used.append(row);obs_rows.append(raw);ys.append(y)
+
+    # Check whether this fit is multi-level / general full factorial
+    use_general=bool(
+        metadata.get('design_type')=='general_full'
+        or (metadata.get('schema')=='statcraft-catalog-design-v1' and metadata.get('design')=='general_factorial')
+    )
+    if use_general:
+        return _analyze_general_factorial(
+            worksheet,response,selected,factors,used,ys,obs_rows,metadata,max_order,confidence,selected_terms,include_blocks,
+        )
+
+    trusted=metadata.get('schema') in ('statcraft-full-factorial-v1','statcraft-regular-fractional-v1','statcraft-custom-factorial-v1')
+    coding=[]
+    for pos,(column,index) in enumerate(zip(selected,factors)):
+        observed=[row[pos] for row in obs_rows]
+        declared=next((f for f in metadata.get('factors',[]) if f.get('column_index')==index and f.get('name')==column.name),None) if trusted else None
+        source_label='Custom StatCraft design metadata' if (declared is not None and metadata.get('custom_defined')) else ('StatCraft design metadata' if declared is not None else 'Observed levels')
+        if column.kind=='text':
+            if declared is not None and declared.get('low') is not None and declared.get('high') is not None:
+                low_s,high_s=str(declared['low']),str(declared['high'])
+            else:
+                levels=sorted(set(observed))
+                if len(levels)!=2:raise ValueError('Each text two-level factor needs two observed levels.')
+                low_s,high_s=levels[0],levels[1]
+            code={'name':column.name,'kind':'text','low':low_s,'high':high_s,'center':None,'half_range':None,'levels':[low_s,high_s],'source':source_label}
+        else:
+            if declared is not None:
+                code=_coding(column.name,declared['low'],declared['high']);code['source']=source_label
+            else:
+                levels=sorted(set(observed))
+                if len(levels) not in (2,3):raise ValueError('Each factor needs two observed levels, optionally their common center setting.')
+                code=_coding(column.name,levels[0],levels[-1]);code['source']='Observed levels'
+        code['column_index']=index;code['letter']=_FACTOR_LETTERS[len(coding)];coding.append(code)
+    coded_rows=[]
+    for raw in obs_rows:
         codes=[]
         for v,code in zip(raw,coding):
-            z=(v-code['center'])/code['half_range']
-            if not math.isfinite(z):raise ValueError('Factor coding exceeds supported numeric range.')
-            nearest=min((-1.,0.,1.),key=lambda t:abs(z-t))
-            if abs(z-nearest)>1e-10:raise ValueError('Factor data contain settings outside the two levels and their midpoint.')
-            codes.append(nearest)
+            if code.get('kind')=='text':
+                if v==code['low']:codes.append(-1.0)
+                elif v==code['high']:codes.append(1.0)
+                else:raise ValueError('Factor data contain settings outside the declared text levels.')
+            else:
+                z=(v-code['center'])/code['half_range']
+                if not math.isfinite(z):raise ValueError('Factor coding exceeds supported numeric range.')
+                nearest=min((-1.,0.,1.),key=lambda t:abs(z-t))
+                if abs(z-nearest)>1e-10:raise ValueError('Factor data contain settings outside the two levels and their midpoint.')
+                codes.append(nearest)
         if any(v==0 for v in codes) and not all(v==0 for v in codes):
             raise ValueError('A center run must place every selected factor at its midpoint.')
-        used.append(row);coded_rows.append(codes);ys.append(y)
-    block_col=next((c for c in worksheet.columns if c.name.casefold()=='blocks'),None)
-    raw_blocks=[block_col.values[r] if r<len(block_col.values) else None for r in used] if block_col is not None else [1]*len(used)
-    observed_blocks=[normalize_numeric(b) for b in raw_blocks]
-    unique_blocks=sorted(set(b for b in observed_blocks if b is not None))
-    has_multiple_blocks=len(unique_blocks)>1
-    if include_blocks is None:
-        include_blocks=has_multiple_blocks
-    elif type(include_blocks) is not bool:
-        raise ValueError('Include blocks must be true or false.')
-    elif include_blocks and not has_multiple_blocks:
-        include_blocks=False
-    block_predictors=[]
-    block_names=[]
-    if include_blocks:
-        if len(unique_blocks)==2:
-            b0,b1=unique_blocks[0],unique_blocks[1]
-            block_predictors.append([1. if b==b1 else -1. for b in observed_blocks])
-            block_names.append('Blocks')
-        elif len(unique_blocks)>2:
-            ref_block=unique_blocks[-1]
-            for b_lvl in unique_blocks[:-1]:
-                block_predictors.append([1. if b==b_lvl else (-1. if b==ref_block else 0.) for b in observed_blocks])
-                block_names.append(f'Blocks {b_lvl}')
-    terms=[indices for order in range(1,min(max_order,k)+1) for indices in itertools.combinations(range(k),order)]
-    if selected_terms is not None:
-        if not isinstance(selected_terms,list) or not selected_terms:raise ValueError('Select at least one model term.')
-        terms=[]
-        for term in selected_terms:
-            if not isinstance(term,list) or not 1<=len(term)<=3 or any(type(i) is not int or not 0<=i<k for i in term):
-                raise ValueError('Model terms must contain one to three valid factor positions.')
-            if len(set(term))!=len(term):raise ValueError('A factor cannot repeat within a term.')
-            value=tuple(sorted(term))
-            if value in terms:raise ValueError('Model terms must be distinct.')
-            terms.append(value)
-        terms.sort(key=lambda value:(len(value),value))
-        for term in terms:
-            for order in range(1,len(term)):
-                if any(subset not in terms for subset in itertools.combinations(term,order)):
-                    raise ValueError('Include all lower-order terms for a hierarchical model.')
+        coded_rows.append(codes)
+    block_col=_resolve_factorial_block_column(worksheet,metadata)
+    block_predictors,block_names,unique_blocks,has_multiple_blocks,include_blocks=_encode_blocks(
+        worksheet,used,block_col,include_blocks,
+        require_nonmissing=bool(metadata.get('custom_defined') and block_col is not None),
+    )
+    terms=_factor_terms_hierarchy(k,max_order,selected_terms)
     term_names=['*'.join(names[i] for i in term) for term in terms]
     if len(set(term_names))!=len(term_names):raise ValueError('Factor names produce ambiguous interaction labels.')
     predictors=[[math.prod(row[i] for i in term) for row in coded_rows] for term in terms]
@@ -239,6 +453,7 @@ def analyze_factorial(worksheet,response_index,factor_indices,max_order=2,confid
         blocks=len(unique_blocks) if has_multiple_blocks else 1,
         max_order=max(map(len,terms)),selected_terms=[list(term) for term in terms],row_indices=used,used_rows=used,missing=n-len(used),
         coded_factors=coded_rows,native_parity=False,
+        verification_block_columns=block_predictors,design_seed=metadata.get('seed') if trusted else None,
         assumptions='Independent errors with common variance and normality for t/F inference. Selected hierarchical terms are fitted in coded units; effects equal twice coefficients. Omitted effects are assumed negligible.')
     if not include_blocks:
         result['warnings'].append('Limited coded analysis: no multiple blocks, response-surface/Taguchi models, curvature test or native parity. Omitted effects are assumed negligible.')
@@ -265,3 +480,24 @@ def analyze_factorial(worksheet,response_index,factor_indices,max_order=2,confid
 
 def _level_or_missing(value):
     return normalize_numeric(value)
+
+
+def factorial_pareto(result):
+    """Build a standardized-effects plot from an estimated factorial fit."""
+    if not result.get('factor_terms'):
+        return None
+    df_error = result.get('df_error', 0)
+    if df_error <= 0:
+        return None
+    effects = []
+    factor_terms = set(result['factor_terms'])
+    for row in result.get('effects', []):
+        statistic = row.get('t')
+        if row['term'] in factor_terms and statistic is not None and math.isfinite(statistic):
+            effects.append(dict(term=row['term'], effect=abs(statistic), p_val=row['p_value']))
+    if not effects:
+        return None
+    effects.sort(key=lambda row: row['effect'], reverse=True)
+    alpha = 1.0 - result['confidence']
+    return dict(pareto_effects=effects, t_crit=float(student_t.isf(alpha / 2, df_error)),
+                alpha=alpha, response_name=result['response_name'])

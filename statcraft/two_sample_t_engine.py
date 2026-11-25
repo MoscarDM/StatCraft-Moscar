@@ -149,11 +149,7 @@ def run_two_sample_t(
         var2_n = (s2 ** 2) / n2
         se_diff = math.sqrt(var1_n + var2_n)
         denom = ((var1_n ** 2) / (n1 - 1)) + ((var2_n ** 2) / (n2 - 1))
-        if denom > 0:
-            df_welch = ((var1_n + var2_n) ** 2) / denom
-        else:
-            df_welch = float(n1 + n2 - 2)
-        df = int(round(df_welch))
+        df = ((var1_n + var2_n) ** 2) / denom if denom > 0 else n1 + n2 - 2
 
     # T-value
     if se_diff > 0:
@@ -168,12 +164,12 @@ def run_two_sample_t(
         ci_lower = None
         ci_upper = diff + t_crit * se_diff
     elif alt == "greater_than":
-        p_val = float(1.0 - stats.t.cdf(t_val, df))
+        p_val = float(stats.t.sf(t_val, df))
         t_crit = float(stats.t.ppf(1.0 - alpha, df))
         ci_lower = diff - t_crit * se_diff
         ci_upper = None
     else:  # not_equal
-        p_val = float(2.0 * (1.0 - stats.t.cdf(abs(t_val), df)))
+        p_val = float(2.0 * stats.t.sf(abs(t_val), df))
         t_crit = float(stats.t.ppf(1.0 - alpha / 2.0, df))
         ci_lower = diff - t_crit * se_diff
         ci_upper = diff + t_crit * se_diff

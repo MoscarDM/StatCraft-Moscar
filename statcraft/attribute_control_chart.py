@@ -75,7 +75,13 @@ class AttributeControlChartWidget(GraphInteractionMixin, QWidget):
         center = self.result.get("center_lines", [])
         ucl = self.result.get("ucl", [])
         lcl = self.result.get("lcl", [])
-        tests = self.result.get("test_failures", {})
+        raw_tests = self.result.get("test_failures", {})
+        tests: Dict[int, List[int]] = {}
+        for k, v in raw_tests.items():
+            try:
+                tests[int(k)] = v
+            except (TypeError, ValueError):
+                pass
         return obs, center, ucl, lcl, tests
 
     def paintEvent(self, event):

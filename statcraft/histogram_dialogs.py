@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSpinBox,
     QToolButton, QVBoxLayout)
 
-from .dialog_theme import dialog_stylesheet, gallery_button_stylesheet, is_dark_active
+from .dialog_theme import AutoErrorLabel, clamp_dialog_to_screen, dialog_stylesheet, gallery_button_stylesheet, is_dark_active
 from .histogram_options import validate_histogram_settings
 from .variable_dialogs import VariableEntry, format_variable_reference, resolve_variables
 
@@ -86,6 +86,8 @@ class HistogramScaleDialog(QDialog):
     """Functional subset of histogram scales, with shared existing validation."""
     def __init__(self, settings, parent=None):
         super().__init__(parent)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.setWindowTitle('Histogram: Scale')
         self.initial = validate_histogram_settings(settings)
@@ -110,6 +112,7 @@ class HistogramScaleDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         outer.addWidget(self.buttons)
+        clamp_dialog_to_screen(self, 360, 220, min_w=320, min_h=190)
 
     def scale_changed(self, scale):
         self.cumulative.setEnabled(scale != 'Density')
@@ -130,6 +133,7 @@ class HistogramDialog(QDialog):
         if mode not in MODES:
             raise ValueError('Unsupported histogram type.')
         super().__init__(parent)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.setWindowTitle('Histogram: ' + MODES[mode])
         self.resize(740, 420)
@@ -142,6 +146,11 @@ class HistogramDialog(QDialog):
         outer = QVBoxLayout(self)
         body = QHBoxLayout()
         left = QVBoxLayout()
+        self.var_filter = QLineEdit()
+        self.var_filter.setPlaceholderText('Filter variables…')
+        self.var_filter.setClearButtonEnabled(True)
+        self.var_filter.textChanged.connect(self._populate_available)
+        left.addWidget(self.var_filter)
         self.available = QListWidget()
         self.available.setMinimumWidth(230)
         self.available.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -192,9 +201,7 @@ class HistogramDialog(QDialog):
         right.addWidget(note)
         body.addLayout(right, 2)
         outer.addLayout(body)
-        self.error = QLabel()
-        self.error.setWordWrap(True)
-        self.error.setObjectName('error')
+        self.error = AutoErrorLabel()
         outer.addWidget(self.error)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
                                         QDialogButtonBox.StandardButton.Cancel)
@@ -212,23 +219,31 @@ class HistogramDialog(QDialog):
         self.arrangement.setCurrentIndex(max(0, position))
         self.activate('responses')
         if lock_variables:
-            for widget in (self.available, self.select_button, self.variables, self.group):
+            for widget in (self.var_filter, self.available, self.select_button, self.variables, self.group):
                 widget.setEnabled(False)
         self.variables.setFocus()
+        clamp_dialog_to_screen(self, 740, 440, min_w=600, min_h=380)
 
-    def activate(self, role):
-        if self.active == role:
-            return
-        self.active = role
+    def _populate_available(self):
         self.available.clear()
+        role = self.active or 'responses'
+        needle = self.var_filter.text().strip().lower() if hasattr(self, 'var_filter') else ''
         for index, column in enumerate(self.worksheet.columns):
             if column.kind == 'number' or role == 'group' and column.kind == 'text':
+                if needle and needle not in column.name.lower() and needle not in f'c{index + 1}':
+                    continue
                 text = format_variable_reference(index, self.worksheet)
                 item = QListWidgetItem(text)
                 item.setToolTip(text)
                 item.setData(Qt.ItemDataRole.UserRole, index)
                 self.available.addItem(item)
         self.select_button.setEnabled(False)
+
+    def activate(self, role):
+        if self.active == role:
+            return
+        self.active = role
+        self._populate_available()
 
     def transfer(self):
         selected = self.available.selectedItems()
@@ -251,6 +266,8 @@ class HistogramDialog(QDialog):
 
     def edit_labels(self):
         dialog = QDialog(self)
+        dialog.setStyleSheet(dialog_stylesheet(is_dark_active(self)))
+        dialog.setSizeGripEnabled(True)
         dialog.setWindowTitle(self.windowTitle().split(':',1)[0]+': Labels')
         outer = QVBoxLayout(dialog)
         form = QFormLayout()
@@ -268,6 +285,7 @@ class HistogramDialog(QDialog):
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         outer.addWidget(buttons)
+        clamp_dialog_to_screen(dialog, 400, 210, min_w=340, min_h=180)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.labels = {key: edit.text() for key, edit in edits.items()}
 

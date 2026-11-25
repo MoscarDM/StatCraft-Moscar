@@ -32,7 +32,7 @@ class TestConnectHud(unittest.TestCase):
         buttons = bridge.findChildren(QPushButton)
         button_texts = [b.text() for b in buttons]
 
-        self.assertTrue(any("Minitab" in t for t in button_texts), f"Expected Minitab button, got {button_texts}")
+        self.assertTrue(any("Recall Dialog" in t for t in button_texts), f"Expected Recall Dialog button, got {button_texts}")
         self.assertTrue(any("R Script" in t for t in button_texts), f"Expected R Script button, got {button_texts}")
         self.assertTrue(any("View R Code" in t for t in button_texts), f"Expected View R Code button, got {button_texts}")
         self.assertTrue(any("ReportPad" in t for t in button_texts), f"Expected ReportPad button, got {button_texts}")

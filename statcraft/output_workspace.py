@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (
 )
 from . import workspace_state as ws
 
+OUTPUT_VIEWS = ws.VIEWS + ('Effects Pareto', 'Residual Plots')
+
 
 class OutputWorkspace:
     def __init__(self,window,layout):
@@ -62,15 +64,14 @@ class OutputWorkspace:
         key=self.state['active'];w=self.window
         if key is None:return
         curr_text = w.result_tabs.tabText(w.result_tabs.currentIndex())
-        v_name = curr_text if curr_text in ws.VIEWS else 'Graph'
+        v_name = curr_text if curr_text in OUTPUT_VIEWS else 'Graph'
         record={'view':v_name,'zoom':{},'scroll':{},'editor':not w.graph_options_pane.isHidden()}
         for i in range(w.result_tabs.count()):
             page=w.result_tabs.widget(i);name=w.result_tabs.tabText(i)
-            target_name = name if name in ws.VIEWS else 'Graph'
+            if name not in OUTPUT_VIEWS:continue
             zoom=getattr(page,'percent',w._output_zoom_levels.get((key,name),100))
-            record['zoom'][target_name]=max(10,min(500,int(zoom)))
-            if hasattr(page,'horizontalScrollBar'):record['scroll'][target_name]=[page.horizontalScrollBar().value(),page.verticalScrollBar().value()]
-        if record['view'] not in ws.VIEWS:record['view']='Report'
+            record['zoom'][name]=max(10,min(500,int(zoom)))
+            if hasattr(page,'horizontalScrollBar'):record['scroll'][name]=[page.horizontalScrollBar().value(),page.verticalScrollBar().value()]
         self.state['views'][key]=record;self.state['report_pad']=self.pad.toPlainText()
 
     def before_show(self,entry):
@@ -301,13 +302,40 @@ class OutputWorkspace:
         self.show_pad()
 
     def snapshot(self):
-        self.remember();known=[self.key(e) for e in self.window.presenter.history if e.get('origin')=='statcraft']
-        return ws.prune(self.state,known)
+        self.remember()
+        entries = {key: entry for key, entry in self.entries().items() if entry.get('origin') == 'statcraft'}
+        state = ws.prune(self.state, entries, strict=False)
+        for key, record in state['views'].items():
+            if key == ws.REPORT:
+                continue
+            fallback = copy.deepcopy(record)
+            if fallback['view'] not in ws.VIEWS:
+                fallback['view'] = 'Graph' if 'Graph' in fallback['zoom'] else 'Report'
+            for field in ('zoom', 'scroll'):
+                fallback[field] = {name: value for name, value in record[field].items() if name in ws.VIEWS}
+            # Keep the workspace member readable by versions that only know the original view names.
+            if record != fallback:
+                entries[key]['output_view'] = record
+            else:
+                entries[key].pop('output_view', None)
+            state['views'][key] = fallback
+        return ws.validate(state)
 
     def restore(self,state):
         self.history=self.window.presenter.history
         self.busy=True
-        self.state=ws.prune(state or ws.empty(),self.entries())
+        entries = self.entries()
+        self.state=ws.prune(state or ws.empty(),entries)
+        for key in self.state['views']:
+            if key == ws.REPORT:
+                continue
+            record = entries[key].get('output_view')
+            if record is None:continue
+            try:
+                ws.validate(dict(ws.empty(), views={key: record}), view_names=OUTPUT_VIEWS)
+            except ValueError:
+                continue
+            self.state['views'][key] = copy.deepcopy(record)
         with QSignalBlocker(self.pad):self.pad.setPlainText(self.state['report_pad'])
         key=self.state['active'];self.state['active']=None;self.rebuild()
         if key:self.activate(key)

@@ -21,11 +21,11 @@ DEFAULT_CERT_THUMBPRINT = "BF26A8FE2AFB6218CDC2E2CB90CE9EF6DA8E89C5"
 
 
 def get_current_version(repo_root: Path) -> str:
-    """Read STATCRAFT_VERSION from statcraft/updater.py."""
-    updater_file = repo_root / "statcraft" / "updater.py"
-    if updater_file.exists():
-        text = updater_file.read_text(encoding="utf-8")
-        match = re.search(r'STATCRAFT_VERSION\s*=\s*["\']([^"\']+)["\']', text)
+    """Read the app version from the package metadata."""
+    version_file = repo_root / "statcraft" / "__init__.py"
+    if version_file.exists():
+        text = version_file.read_text(encoding="utf-8")
+        match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
         if match:
             return match.group(1).strip()
     return "109.0.0"

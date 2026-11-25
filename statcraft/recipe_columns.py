@@ -56,6 +56,29 @@ def remap_recipe(recipe, mapping):
             s['index']=mapping[s['index']]
         columns(updated)
         return updated
+    if updated['action'] == 'operating_window_3d':
+        for item in updated['parameters']['response_specs']:
+            item['model_recipe'] = remap_recipe(item['model_recipe'], mapping)
+        updated['parameters']['x_index'] = mapping[updated['parameters']['x_index']]
+        updated['parameters']['y_index'] = mapping[updated['parameters']['y_index']]
+        opts = updated['parameters'].get('options', {})
+        for d in opts.get('drifts', []):
+            d['index'] = mapping[d['index']]
+        for h in opts.get('holds', []):
+            h['index'] = mapping[h['index']]
+        if 'selected_setting' in opts:
+            opts['selected_setting'] = {
+                str(mapping[int(key)]) if key.isdecimal() else key: value
+                for key, value in opts['selected_setting'].items()
+            }
+        columns(updated)
+        return updated
+    if updated['action'] == 'evaluate_confirmation_runs':
+        col_map = updated['parameters'].get('response_column_map')
+        if isinstance(col_map, dict):
+            updated['parameters']['response_column_map'] = {k: mapping[v] for k, v in col_map.items()}
+        columns(updated)
+        return updated
     for key,value in updated['parameters'].items():
         if key in ('source_recipe','model_recipe'):
             updated['parameters'][key]=remap_recipe(value,mapping)

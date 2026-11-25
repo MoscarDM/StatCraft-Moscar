@@ -1,3 +1,4 @@
+from itertools import product
 import tempfile
 import unittest
 from pathlib import Path
@@ -68,6 +69,59 @@ class TestModelPlotsIntegration(unittest.TestCase):
             win.refresh()
             self.assertTrue(win.contour_plot_actions['general_linear_model'].isEnabled())
             self.assertTrue(win.surface_plot_actions['general_linear_model'].isEnabled())
+        finally:
+            self._close_window(win)
+
+    def test_custom_general_factorial_plots_with_blocks(self):
+        win = ModernWindow()
+        try:
+            runs = list(product((1, 2), (0, 15, 30), ('No', 'Yes')))
+            runs += [(2, 30, 'Yes')]  # Unequal replication makes block adjustment matter.
+            angle_effect = {0: 0, 15: 13, 30: 4}
+            clip_effect = {0: 3, 15: 8, 30: -2}
+            win.presenter.worksheet = Worksheet('Custom DOE', [
+                Column('Block', 'number', [block for block, _, _ in runs]),
+                Column('Angle', 'number', [angle for _, angle, _ in runs]),
+                Column('Clip', 'text', [clip for _, _, clip in runs]),
+                Column('Distance', 'number', [
+                    100 + angle_effect[angle] + (20 if block == 2 else -20)
+                    + (clip_effect[angle] if clip == 'Yes' else 0)
+                    for block, angle, clip in runs
+                ]),
+            ])
+            win.presenter.define_custom_factorial([1, 2], 'general_full', blocks_index=0)
+            win.presenter.analyze_factorial(
+                3, [1, 2], selected_terms=[[0], [1], [0, 1]], include_blocks=True,
+            )
+            win.refresh()
+            self.assertTrue(win.factorial_plot_actions['analyze_factorial'].isEnabled())
+            dialog = FactorialPlotsDialog(win, family='factorial')
+            self.assertEqual(dialog.selected.count(), 2)
+            dialog.validate()
+            self.assertIsNotNone(dialog.entry)
+            result = dialog.entry['result']
+            angle = result['main_effects'][0]
+            self.assertEqual(angle['x_values'], [0, 15, 30])
+            for actual, expected in zip(angle['fits'], [100, 113, 104]):
+                self.assertAlmostEqual(actual, expected)
+            trace = result['interactions'][0]['series'][1]
+            for actual, expected in zip(trace['fits'], [103, 121, 102]):
+                self.assertAlmostEqual(actual, expected)
+            chart = ChartWidget(dialog.entry)
+            self.assertIsNone(chart.error)
+            self.assertEqual(len(chart.panels), 2)
+
+            with tempfile.TemporaryDirectory() as tmp:
+                path = str(Path(tmp) / 'custom_factorial.mpx')
+                win.save_path(path)
+                reopened = ModernWindow()
+                try:
+                    reopened.load_path(path)
+                    reopened_dialog = FactorialPlotsDialog(reopened, family='factorial')
+                    self.assertEqual(reopened_dialog.selected.count(), 2)
+                    reopened_dialog.reject()
+                finally:
+                    self._close_window(reopened)
         finally:
             self._close_window(win)
 

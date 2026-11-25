@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,
     QTableWidget,QTableWidgetItem,QComboBox,QPushButton,QHeaderView,QSpinBox,
     QLineEdit,QCheckBox,QDialogButtonBox,QScrollArea,QWidget)
+from .dialog_theme import AutoErrorLabel
 from .variable_dialogs import format_variable_reference
 from .mixture_exploration_dialogs import _finite
 
@@ -37,7 +38,7 @@ class MixtureMultiOptimizerDialog(QDialog):
         for c in (1,2,3):self.bounds_table.horizontalHeader().setSectionResizeMode(c,QHeaderView.ResizeMode.ResizeToContents)
         self.bounds_table.setMinimumHeight(140);outer.addWidget(self.bounds_table)
         self.use_start_values.toggled.connect(self._start_changed)
-        self.error=QLabel();self.error.setWordWrap(True);self.error.setObjectName('error');outer.addWidget(self.error)
+        self.error=AutoErrorLabel();outer.addWidget(self.error)
         limitation=QLabel('The search balances fitted response means under the fixed mixture total. Nonlinear global optimality and native optimizer equivalence are unverified.');limitation.setWordWrap(True);outer.addWidget(limitation)
         root_layout.addWidget(scroll)
         self.buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);self.buttons.accepted.connect(self.validate);self.buttons.rejected.connect(self.reject);root_layout.addWidget(self.buttons)

@@ -4,13 +4,15 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,
     QListWidget,QListWidgetItem,QPushButton,QDialogButtonBox,QComboBox,QCheckBox,
     QDoubleSpinBox,QSpinBox,QGridLayout)
+from .dialog_theme import AutoErrorLabel, clamp_dialog_to_screen, dialog_stylesheet, is_dark_active
 from .variable_dialogs import ProcedureDialog,format_variable_list,format_variable_reference
 from .glm import settings,validate_terms
 
 
 class ModelTermsDialog(QDialog):
     def __init__(self,parent,names,terms):
-        super().__init__(parent);self.setWindowTitle('General Linear Model: Model');self.resize(690,430)
+        super().__init__(parent);self.setWindowTitle('General Linear Model: Model')
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.names=names;self.terms=None;layout=QVBoxLayout(self);body=QHBoxLayout()
         self.available=QListWidget();self.selected=QListWidget()
@@ -26,9 +28,10 @@ class ModelTermsDialog(QDialog):
         layout.addLayout(buttons);row=QHBoxLayout();row.addWidget(QLabel('Interactions through order:'))
         self.order=QSpinBox();self.order.setRange(1,min(3,len(names)));self.order.setValue(min(2,len(names)));row.addWidget(self.order)
         allbutton=QPushButton('Add terms');allbutton.clicked.connect(self.add_order);row.addWidget(allbutton);row.addStretch();layout.addLayout(row)
-        self.error=QLabel();self.error.setWordWrap(True);self.error.setStyleSheet('color:#a02020');layout.addWidget(self.error)
+        self.error=AutoErrorLabel();layout.addWidget(self.error)
         footer=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);footer.accepted.connect(self.validate);footer.rejected.connect(self.reject);layout.addWidget(footer)
         self.available.itemDoubleClicked.connect(lambda item:self.add())
+        clamp_dialog_to_screen(self,690,430,min_w=580,min_h=360)
 
     def item(self,widget,term):
         item=QListWidgetItem('*'.join(self.names[i] for i in term));item.setData(Qt.ItemDataRole.UserRole,list(term));widget.addItem(item)
@@ -61,8 +64,9 @@ class ModelTermsDialog(QDialog):
 class ModelSettingsDialog(QDialog):
     def __init__(self,parent,section,options):
         super().__init__(parent);self.setWindowTitle('General Linear Model: '+section);self.options=None;self.section=section;self.initial=dict(options);self.controls={}
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
-        self.setMinimumWidth(460);layout=QVBoxLayout(self);form=QFormLayout();layout.addLayout(form)
+        layout=QVBoxLayout(self);form=QFormLayout();layout.addLayout(form)
         def combo(key,label,choices,values):
             c=QComboBox();c.addItems(choices);c.setCurrentIndex(values.index(options[key]));self.controls[key]=(c,values);form.addRow(label,c)
         if section=='Options':
@@ -79,6 +83,7 @@ class ModelSettingsDialog(QDialog):
                 c=QCheckBox(label);c.setChecked(options[key]);self.controls[key]=c;form.addRow(c)
             combo('diagnostics','Fits and diagnostics:',['Do not display','Only for unusual observations','For all observations'],['none','unusual','all'])
         footer=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);footer.accepted.connect(self.validate);footer.rejected.connect(self.reject);layout.addWidget(footer)
+        clamp_dialog_to_screen(self,480,280,min_w=420,min_h=220)
 
     def validate(self):
         o=dict(self.initial)

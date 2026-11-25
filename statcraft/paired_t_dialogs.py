@@ -4,12 +4,23 @@ from typing import Any, Dict, List, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
-    QLineEdit, QPushButton, QComboBox, QCheckBox, QListWidget,
-    QStackedWidget, QWidget, QMessageBox, QGroupBox
+    QLineEdit, QPushButton, QComboBox, QCheckBox, QListWidget, QListWidgetItem,
+    QStackedWidget, QWidget, QMessageBox, QGroupBox, QDialogButtonBox
 )
-from .dialog_theme import is_dark_active, subtle_label_style
+from .dialog_theme import AutoErrorLabel, clamp_dialog_to_screen, dialog_stylesheet, is_dark_active, subtle_label_style
 from .model import Worksheet
 from .paired_t_engine import paired_t_settings
+from .variable_dialogs import resolve_variables
+
+
+def _show_context_help(dialog: QDialog, title: str, text: str) -> None:
+    target = dialog.parent()
+    while target is not None and not hasattr(target, "context_help"):
+        target = target.parent() if callable(getattr(target, "parent", None)) else None
+    if target is not None and hasattr(target, "context_help"):
+        target.context_help(title)
+        return
+    QMessageBox.information(dialog, title, text)
 
 
 class PairedTOptionsDialog(QDialog):
@@ -20,8 +31,7 @@ class PairedTOptionsDialog(QDialog):
         self.setWindowTitle("Paired t: Options")
         self.setModal(True)
         self.options = dict(options)
-        self.setMinimumSize(380, 260)
-        self.resize(380, 260)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
 
         layout = QVBoxLayout(self)
@@ -49,6 +59,9 @@ class PairedTOptionsDialog(QDialog):
             "Difference ≠ hypothesized difference",
             "Difference > hypothesized difference",
         ])
+        fm = self.alt_combo.fontMetrics()
+        needed_w = max(fm.horizontalAdvance(self.alt_combo.itemText(i)) for i in range(self.alt_combo.count())) + 44
+        self.alt_combo.setMinimumWidth(max(240, needed_w))
         alt_val = self.options.get("alternative", "not_equal")
         if alt_val == "less_than":
             self.alt_combo.setCurrentIndex(0)
@@ -61,31 +74,33 @@ class PairedTOptionsDialog(QDialog):
         layout.addLayout(grid)
         layout.addStretch()
 
-        btn_box = QHBoxLayout()
-        btn_box.addStretch()
-        self.ok_btn = QPushButton("&OK")
-        self.ok_btn.clicked.connect(self._accept)
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.clicked.connect(self.reject)
-        btn_box.addWidget(self.ok_btn)
-        btn_box.addWidget(self.cancel_btn)
-        layout.addLayout(btn_box)
+        self.error = AutoErrorLabel()
+        layout.addWidget(self.error)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.cancel_btn = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        clamp_dialog_to_screen(self, max(460, needed_w + 185), 290, min_w=420, min_h=250)
 
     def _accept(self):
+        self.error.clear()
         try:
             c = float(self.conf_edit.text().strip())
             if not (0.0 < c < 100.0):
                 raise ValueError
             self.options["confidence_level"] = c
         except ValueError:
-            QMessageBox.critical(self, "Validation Error", "Confidence level must be a number between 0 and 100.")
+            self.error.setText("Confidence level must be a number between 0 and 100.")
             return
 
         try:
             h = float(self.hyp_edit.text().strip())
             self.options["hypothesized_difference"] = h
         except ValueError:
-            QMessageBox.critical(self, "Validation Error", "Hypothesized difference must be a valid number.")
+            self.error.setText("Hypothesized difference must be a valid number.")
             return
 
         idx = self.alt_combo.currentIndex()
@@ -107,8 +122,7 @@ class PairedTGraphsDialog(QDialog):
         self.setWindowTitle("Paired t: Graphs")
         self.setModal(True)
         self.graphs = dict(graphs)
-        self.setMinimumSize(380, 260)
-        self.resize(380, 260)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
 
         layout = QVBoxLayout(self)
@@ -127,15 +141,13 @@ class PairedTGraphsDialog(QDialog):
 
         layout.addStretch()
 
-        btn_box = QHBoxLayout()
-        btn_box.addStretch()
-        self.ok_btn = QPushButton("&OK")
-        self.ok_btn.clicked.connect(self._accept)
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.clicked.connect(self.reject)
-        btn_box.addWidget(self.ok_btn)
-        btn_box.addWidget(self.cancel_btn)
-        layout.addLayout(btn_box)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.cancel_btn = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        clamp_dialog_to_screen(self, 380, 260, min_w=340, min_h=220)
 
     def _accept(self):
         self.graphs["histogram"] = self.hist_cb.isChecked()
@@ -157,20 +169,38 @@ class PairedTDialog(QDialog):
         self.settings = paired_t_settings()
         from .variable_dialogs import default_confidence_percent
         self.settings["confidence_level"] = default_confidence_percent()
-        self.setMinimumSize(560, 420)
-        self.resize(560, 420)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self._build_ui()
+        clamp_dialog_to_screen(self, 600, 440, min_w=540, min_h=380)
+
+    def _populate_var_list(self):
+        self.var_list.clear()
+        if not self.worksheet:
+            return
+        needle = self.var_filter.text().strip().lower() if hasattr(self, "var_filter") else ""
+        for idx, col in enumerate(self.worksheet.columns):
+            if col.kind != "number":
+                continue
+            if needle and needle not in col.name.lower() and needle not in f"c{idx + 1}":
+                continue
+            item = QListWidgetItem(f"C{idx+1}   {col.name}")
+            item.setData(Qt.ItemDataRole.UserRole, idx)
+            self.var_list.addItem(item)
 
     def _build_ui(self):
         main_layout = QHBoxLayout(self)
 
-        # Left: Variable List & Select
+        # Left: Filter, Variable List & Select
         left_box = QVBoxLayout()
+        self.var_filter = QLineEdit()
+        self.var_filter.setPlaceholderText("Filter variables…")
+        self.var_filter.setClearButtonEnabled(True)
+        self.var_filter.textChanged.connect(self._populate_var_list)
+        left_box.addWidget(self.var_filter)
+
         self.var_list = QListWidget()
-        if self.worksheet:
-            for idx, col in enumerate(self.worksheet.columns):
-                self.var_list.addItem(f"C{idx+1}   {col.name}")
+        self._populate_var_list()
         self.var_list.itemDoubleClicked.connect(self._on_var_double_clicked)
         left_box.addWidget(self.var_list)
 
@@ -231,6 +261,10 @@ class PairedTDialog(QDialog):
         self.stack.addWidget(page_sum)
         right_box.addWidget(self.stack)
 
+        self.diff_cue = QLabel("Difference = mean of (Sample 1 − Sample 2)")
+        self.diff_cue.setStyleSheet(subtle_label_style(is_dark_active(self.parent() or self), bold=True, font_size="8.5pt"))
+        right_box.addWidget(self.diff_cue)
+
         right_box.addStretch()
 
         # Subdialog Buttons (Options, Graphs)
@@ -244,19 +278,23 @@ class PairedTDialog(QDialog):
         sub_btns.addStretch()
         right_box.addLayout(sub_btns)
 
+        self.error = AutoErrorLabel()
+        right_box.addWidget(self.error)
+
         # Action Buttons (OK, Cancel, Help)
-        action_btns = QHBoxLayout()
-        action_btns.addStretch()
-        self.ok_btn = QPushButton("&OK")
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+            | QDialogButtonBox.StandardButton.Help
+        )
+        self.ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
         self.ok_btn.setDefault(True)
-        self.ok_btn.clicked.connect(self._on_ok)
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.clicked.connect(self.reject)
-        self.help_btn = QPushButton("Help")
-        action_btns.addWidget(self.ok_btn)
-        action_btns.addWidget(self.cancel_btn)
-        action_btns.addWidget(self.help_btn)
-        right_box.addLayout(action_btns)
+        self.cancel_btn = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        self.help_btn = buttons.button(QDialogButtonBox.StandardButton.Help)
+        buttons.accepted.connect(self._on_ok)
+        buttons.rejected.connect(self.reject)
+        buttons.helpRequested.connect(lambda: _show_context_help(self, "Paired t", "Select two paired numeric columns or enter summarized differences."))
+        right_box.addWidget(buttons)
 
         main_layout.addLayout(right_box, 2)
 
@@ -270,8 +308,12 @@ class PairedTDialog(QDialog):
     def _on_data_format_changed(self, index: int):
         self.stack.setCurrentIndex(index)
         # Graphs button is disabled when summarized data is selected
-        self.graphs_btn.setEnabled(index != 1)
-        if index == 0:
+        is_raw = index == 0
+        self.graphs_btn.setEnabled(is_raw)
+        self.var_filter.setEnabled(is_raw)
+        self.var_list.setEnabled(is_raw)
+        self.select_btn.setEnabled(is_raw)
+        if is_raw:
             self.active_edit = self.sample1_edit
         else:
             self.active_edit = self.size_edit
@@ -301,23 +343,36 @@ class PairedTDialog(QDialog):
             self.settings["graphs"] = dlg.graphs
 
     def _on_ok(self):
+        self.error.clear()
         idx = self.combo_data.currentIndex()
         if idx == 0:  # Each sample is in a column
             s1_text = self.sample1_edit.text().strip()
             s2_text = self.sample2_edit.text().strip()
             if not s1_text or not s2_text:
-                QMessageBox.critical(self, "Validation Error", "Please specify both Sample 1 and Sample 2 columns.")
+                self.error.setText("Please specify both Sample 1 and Sample 2 columns.")
                 return
 
-            def parse_col(txt):
-                if txt.upper().startswith("C") and txt[1:].isdigit():
-                    return int(txt[1:]) - 1
-                return txt
+            if self.worksheet is not None:
+                try:
+                    c1s = resolve_variables(s1_text, self.worksheet, kinds=("number",))
+                    c2s = resolve_variables(s2_text, self.worksheet, kinds=("number",))
+                except ValueError as exc:
+                    self.error.setText(str(exc))
+                    return
+                if len(c1s) != 1 or len(c2s) != 1:
+                    self.error.setText("Specify one numeric column each for Sample 1 and Sample 2.")
+                    return
+                col1, col2 = c1s[0], c2s[0]
+            else:
+                def parse_col(txt):
+                    if txt.upper().startswith("C") and txt[1:].isdigit():
+                        return int(txt[1:]) - 1
+                    return txt
 
-            col1 = parse_col(s1_text)
-            col2 = parse_col(s2_text)
+                col1 = parse_col(s1_text)
+                col2 = parse_col(s2_text)
             if col1 == col2:
-                QMessageBox.critical(self, "Validation Error", "Sample 1 and Sample 2 must be different columns.")
+                self.error.setText("Sample 1 and Sample 2 must be different columns.")
                 return
 
             self.settings["data_format"] = 1
@@ -333,10 +388,7 @@ class PairedTDialog(QDialog):
                 if s < 0:
                     raise ValueError
             except ValueError:
-                QMessageBox.critical(
-                    self, "Validation Error",
-                    "Please enter valid summarized values (Sample size >= 2, StDev >= 0)."
-                )
+                self.error.setText("Please enter valid summarized values (Sample size >= 2, StDev >= 0).")
                 return
 
             self.settings["data_format"] = 2

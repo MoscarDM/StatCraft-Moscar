@@ -2,6 +2,7 @@
 import copy
 import math
 import re
+from .dialog_theme import AutoErrorLabel
 from .doe_catalog_designs import PB_RUNS,TAGUCHI_ARRAYS
 from PySide6.QtCore import Qt,QTimer
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QWidget,
@@ -73,7 +74,7 @@ class DOEPlannerDialog(QDialog):
         preview=QWidget();preview_layout=QVBoxLayout(preview);self.summary=QLabel('Preparing design preview…');self.summary.setWordWrap(True);preview_layout.addWidget(self.summary)
         self.guidance=QLabel();self.guidance.setWordWrap(True);self.guidance.setObjectName('secondary');preview_layout.addWidget(self.guidance)
         self.preview_table=QTableWidget();self.preview_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers);self.preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents);preview_layout.addWidget(self.preview_table);splitter.addWidget(preview);splitter.setSizes([260,240]);layout.addWidget(splitter)
-        self.error=QLabel();self.error.setObjectName('error');self.error.setWordWrap(True);layout.addWidget(self.error)
+        self.error=AutoErrorLabel();layout.addWidget(self.error)
         buttons=QHBoxLayout();self.export_button=QPushButton('Export to Excel…');self.export_button.setAutoDefault(False);self.export_button.clicked.connect(self.export_excel);buttons.addWidget(self.export_button);buttons.addStretch()
         self.create_button=QPushButton('Create Worksheet');self.create_button.setDefault(True);self.create_button.clicked.connect(self.create);self.cancel_button=QPushButton('Cancel');self.cancel_button.setAutoDefault(False);self.cancel_button.clicked.connect(self.reject);buttons.addWidget(self.create_button);buttons.addWidget(self.cancel_button);layout.addLayout(buttons)
         self.factor_count.valueChanged.connect(self._factor_rows);self.factor_table.itemChanged.connect(self._factor_changed);self.forbidden_table.itemChanged.connect(self.queue_preview)

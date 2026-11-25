@@ -27,6 +27,13 @@ def generate_connected_report(
     conf_pct = int(connected.confidence * 100)
     n_complete = len(connected.fitted_row_ids)
     n_omitted = len(connected.omitted_row_ids)
+    meta = getattr(connected, "metadata", {}) or {}
+    if connected.analysis_type == "two_sample_t" and meta.get("data_format", 1) != 2:
+        n1 = meta.get("sample1_n") or (meta.get("sample1") or {}).get("n")
+        n2 = meta.get("sample2_n") or (meta.get("sample2") or {}).get("n")
+        obs_summary = f"N1={n1}, N2={n2}" if (n1 is not None and n2 is not None) else f"{n_complete} complete, {n_omitted} omitted observations"
+    else:
+        obs_summary = f"{n_complete} complete, {n_omitted} omitted observations"
 
     # Resolve candidate point from worksheet metadata if not passed directly
     if candidate_point is None and worksheet and hasattr(worksheet, "metadata"):
@@ -54,7 +61,7 @@ def generate_connected_report(
         f"Response:    {connected.response_name}",
         f"Factors:     {', '.join(connected.predictor_names)}",
         f"Confidence:  {conf_pct}%",
-        f"Provenance:  {connected.data_fingerprint[:16]}… ({n_complete} complete, {n_omitted} omitted observations)",
+        f"Provenance:  {connected.data_fingerprint[:16]}… ({obs_summary})",
         f"Generated:   {now_str}",
         "",
         "─" * 80,

@@ -8,6 +8,7 @@ import math
 from PySide6.QtCore import Qt,QEvent
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,
     QFormLayout,QLabel,QLineEdit,QPushButton,QListWidget,QListWidgetItem)
+from .dialog_theme import AutoErrorLabel
 from .variable_dialogs import format_variable_reference,resolve_variables
 
 
@@ -46,7 +47,7 @@ class GageRRNestedOptionsDialog(QDialog):
             value=options.get(key,6 if key=='study_multiplier' else None)
             control=QLineEdit('' if value is None else str(value));control.setPlaceholderText(placeholder)
             setattr(self,attr,control);form.addRow(label,control)
-        layout.addLayout(form);self.error=QLabel();self.error.setObjectName('error');self.error.setWordWrap(True);layout.addWidget(self.error)
+        layout.addLayout(form);self.error=AutoErrorLabel();layout.addWidget(self.error)
         buttons=QHBoxLayout();buttons.addStretch()
         self.btn_ok=QPushButton('OK');self.btn_ok.setDefault(True);self.btn_ok.clicked.connect(self._on_ok)
         self.btn_cancel=QPushButton('Cancel');self.btn_cancel.setAutoDefault(False);self.btn_cancel.clicked.connect(self.reject)
@@ -81,7 +82,7 @@ class _MsaColumnDialog(QDialog):
         for attr,label,placeholder in scalar_fields:
             field=QLineEdit();field.setPlaceholderText(placeholder);setattr(self,attr,field);self.form_layout.addRow(label,field)
         right=QVBoxLayout();right.addLayout(self.form_layout);right.addStretch();body.addLayout(right,2);layout.addLayout(body)
-        self.error=QLabel();self.error.setObjectName('error');self.error.setWordWrap(True);layout.addWidget(self.error)
+        self.error=AutoErrorLabel();layout.addWidget(self.error)
         buttons=QHBoxLayout();buttons.addStretch()
         self.btn_ok=QPushButton('OK');self.btn_ok.setDefault(True);self.btn_ok.clicked.connect(self._on_ok)
         self.btn_cancel=QPushButton('Cancel');self.btn_cancel.setAutoDefault(False);self.btn_cancel.clicked.connect(self.reject)

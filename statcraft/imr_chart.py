@@ -56,7 +56,6 @@ class IMRChartWidget(GraphInteractionMixin, QWidget):
         super().__init__(parent)
         self.entry = entry
         self.result = entry.get("result", entry) if isinstance(entry, dict) else {}
-        self._init_graph_interaction()
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumSize(QSize(760, 680))
@@ -75,9 +74,15 @@ class IMRChartWidget(GraphInteractionMixin, QWidget):
         i_center = r.get("i_center", r.get("mean", 0.0))
         i_lcl = r.get("i_lcl")
         i_ucl = r.get("i_ucl")
-        i_tests = r.get("test_failures", {})
+        raw_tests = r.get("test_failures", {})
+        i_tests: Dict[int, List[int]] = {}
+        for k, v in raw_tests.items():
+            try:
+                i_tests[int(k)] = v
+            except (TypeError, ValueError):
+                pass
         if not i_tests and r.get("i_signals"):
-            i_tests = {pt: [1] for pt in r.get("i_signals", [])}
+            i_tests = {int(pt): [1] for pt in r.get("i_signals", [])}
 
         self.panels.append({
             "panel_type": "i_chart",

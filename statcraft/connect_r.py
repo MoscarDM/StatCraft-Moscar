@@ -976,8 +976,8 @@ def generate_r_two_sample_t_script(connected: "ConnectedAnalysis", worksheet: "W
         s2 = json.dumps(connected.predictor_names[0]) if connected.predictor_names else '"sample2"'
         lines.extend([
             "# 2-Sample t-Test (Separate Columns)",
-            f"x1 <- df[[{s1}]]",
-            f"x2 <- df[[{s2}]]",
+            f"x1 <- na.omit(df[[{s1}]])",
+            f"x2 <- na.omit(df[[{s2}]])",
             f"t_res <- t.test(x1, x2, var.equal = {var_eq}, conf.level = {conf}, alternative = '{alt}', mu = {mu})",
             "print(t_res)",
             "",
@@ -2157,18 +2157,26 @@ def generate_r_tidyverse_script(connected: "ConnectedAnalysis", worksheet: "Work
         ])
     elif atype in ("two_sample_t", "one_sample_t", "paired_t"):
         if atype == "two_sample_t":
+            meta = connected.metadata or {}
+            settings = meta.get("settings", {})
             c1, c2 = connected.response_name, connected.predictor_names[0] if connected.predictor_names else "Group"
+            var_eq = "TRUE" if settings.get("assume_equal_variances", False) else "FALSE"
+            alt = _map_r_alternative(settings.get("alternative", "not_equal"))
+            mu = settings.get("hypothesized_difference", 0.0)
             lines.extend([
                 "# ------------------------------------------------------------------------------",
                 "# Two-Sample Hypothesis Testing (t-Test)",
                 "# ------------------------------------------------------------------------------",
-                f"t_res <- t.test(df[[{json.dumps(c1)}]], df[[{json.dumps(c2)}]], conf.level = {connected.confidence})",
+                f"x1 <- na.omit(df[[{json.dumps(c1)}]])",
+                f"x2 <- na.omit(df[[{json.dumps(c2)}]])",
+                f"t_res <- t.test(x1, x2, var.equal = {var_eq}, conf.level = {connected.confidence}, alternative = '{alt}', mu = {mu})",
                 "print(t_res)",
                 "",
                 "# ggplot2 Comparison Plot",
-                f"p_comp <- df %>%",
-                f"  select(all_of(c({json.dumps(c1)}, {json.dumps(c2)}))) %>%",
-                "  pivot_longer(cols = everything(), names_to = 'Sample', values_to = 'Measurement') %>%",
+                "p_comp <- bind_rows(",
+                f"  tibble(Sample = {json.dumps(c1)}, Measurement = x1),",
+                f"  tibble(Sample = {json.dumps(c2)}, Measurement = x2)",
+                f") %>% mutate(Sample = factor(Sample, levels = c({json.dumps(c1)}, {json.dumps(c2)}))) %>%",
                 "  ggplot(aes(x = Sample, y = Measurement, fill = Sample)) +",
                 "  geom_boxplot(alpha = 0.6, width = 0.4, outlier.shape = NA) +",
                 "  geom_jitter(width = 0.15, alpha = 0.5, size = 2) +",

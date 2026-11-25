@@ -4,14 +4,14 @@ Matches Minitab & JMP visual styling:
 - Horizontal bars sorted descending by absolute standardized effect |t|
 - Y-axis with term labels (e.g. 'Temp', 'Catalyst', 'Temp*Catalyst', 'Temp*Temp')
 - X-axis with Standardized Effect (|t|)
-- Prominent red dashed reference line at critical t-value (alpha = 0.05)
+- Dashed reference line at the critical t-value for the selected significance level
 - Active significant terms (|t| >= t_crit) highlighted in vibrant blue/crimson
 - Interactive tooltips showing Term, Effect, and P-value
 """
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QSizePolicy, QToolTip, QWidget
@@ -30,7 +30,7 @@ GRID = "#f0f2f5"
 
 
 class DSDParetoEffectsWidget(GraphInteractionMixin, QWidget):
-    """Pareto Chart of the Standardized Effects for Screening & DSD models."""
+    """Pareto chart of standardized effects for factorial and screening models."""
 
     objectSelected = Signal(str)
     objectActivated = Signal(str)
@@ -39,11 +39,14 @@ class DSDParetoEffectsWidget(GraphInteractionMixin, QWidget):
         super().__init__(parent)
         self.entry = entry
         self.result = entry.get("result", {})
+        self.alpha = self.result.get("alpha", (100.0 - self.result.get("confidence", 95.0)) / 100.0)
         self.setMouseTracking(True)
-        self.setMinimumSize(680, 420)
+        self.setMinimumSize(460, 400)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._hovered_bar_idx: Optional[int] = None
         self._bar_rects: List[Tuple[QRectF, Dict[str, Any]]] = []
+        self._value_label_rects: List[QRectF] = []
+        self._crit_x: Optional[float] = None
 
     def sizeHint(self) -> QSize:
         effects = self.result.get("pareto_effects", [])
@@ -68,7 +71,11 @@ class DSDParetoEffectsWidget(GraphInteractionMixin, QWidget):
         painter.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         painter.setPen(QColor(INK))
         title_rect = QRectF(20, 15, w - 40, 24)
-        painter.drawText(title_rect, Qt.AlignmentFlag.AlignHCenter, f"Pareto Chart of the Standardized Effects (response is {resp_name}, α = 0.05)")
+        title = "Pareto Chart of the Standardized Effects"
+        subtitle = f"Response: {resp_name}  |  α = {self.alpha:.4g}"
+        painter.drawText(title_rect, Qt.AlignmentFlag.AlignHCenter, title)
+        painter.setFont(QFont("Segoe UI", 9))
+        painter.drawText(QRectF(20, 39, w - 40, 18), Qt.AlignmentFlag.AlignHCenter, subtitle)
 
         if not effects:
             painter.setFont(QFont("Segoe UI", 10))
@@ -81,7 +88,7 @@ class DSDParetoEffectsWidget(GraphInteractionMixin, QWidget):
         max_term_w = max([fm.horizontalAdvance(str(eff.get("term", ""))) for eff in effects] + [120])
         margin_left = max(140, max_term_w + 24)
         margin_right = 50
-        margin_top = 55
+        margin_top = 78
         margin_bottom = 60
 
         plot_w = max(100.0, float(w - margin_left - margin_right))
@@ -100,7 +107,7 @@ class DSDParetoEffectsWidget(GraphInteractionMixin, QWidget):
         x_step = x_max / n_ticks
         # Round x_step nicely
         magnitude = 10 ** math.floor(math.log10(max(1e-4, x_step)))
-        nice_steps = [1, 2, 2.5, 5]
+        nice_steps = [1, 2, 2.5, 5, 10]
         best_step = magnitude
         for s in nice_steps:
             if s * magnitude >= x_step:
@@ -133,8 +140,15 @@ class DSDParetoEffectsWidget(GraphInteractionMixin, QWidget):
         n_bars = len(effects)
         bar_height = min(26.0, (plot_h / n_bars) * 0.72)
         bar_spacing = plot_h / n_bars
+        px_crit = x_to_px(t_crit)
+        crit_visible = margin_left <= px_crit <= margin_left + plot_w
+        self._crit_x = px_crit if crit_visible else None
+
+        val_font = QFont("Segoe UI", 8.5)
+        val_fm = QFontMetrics(val_font)
 
         self._bar_rects = []
+        self._value_label_rects = []
         for idx, eff in enumerate(effects):
             val = float(eff.get("effect", 0.0))
             term = str(eff.get("term", ""))
@@ -166,23 +180,44 @@ class DSDParetoEffectsWidget(GraphInteractionMixin, QWidget):
             label_rect = QRectF(10, bar_y, margin_left - 18, bar_height)
             painter.drawText(label_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, term)
 
-            # Value text right of bar
-            painter.setFont(QFont("Segoe UI", 8.5))
-            painter.setPen(QColor(MUTED))
-            painter.drawText(QRectF(margin_left + bar_w + 6, bar_y, 60, bar_height), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"{val:.2f}")
+            # Value text: avoid crossing the critical reference line at any chart width
+            val_text = f"{val:.2f}"
+            text_w = float(val_fm.horizontalAdvance(val_text)) + 4.0
+            out_left = margin_left + bar_w + 6.0
+            out_right = out_left + text_w
+            text_color = QColor(MUTED)
+            align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+
+            if crit_visible and (out_left - 4.0 <= px_crit <= out_right + 4.0):
+                if bar_w >= text_w + 14.0:
+                    lbl_x = margin_left + bar_w - text_w - 6.0
+                    text_color = QColor("#ffffff") if is_sig else QColor(INK)
+                    align = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                else:
+                    lbl_x = min(float(w) - text_w - 4.0, px_crit + 6.0)
+            else:
+                lbl_x = min(float(w) - text_w - 4.0, out_left)
+
+            val_rect = QRectF(lbl_x, bar_y, text_w, bar_height)
+            self._value_label_rects.append(val_rect)
+            painter.setFont(val_font)
+            painter.setPen(text_color)
+            painter.drawText(val_rect, align, val_text)
 
         # Draw red dashed critical line (t_crit)
-        px_crit = x_to_px(t_crit)
-        if margin_left <= px_crit <= margin_left + plot_w:
+        if crit_visible:
             pen_crit = QPen(QColor(RED), 1.8, Qt.PenStyle.DashLine)
             painter.setPen(pen_crit)
             painter.drawLine(QPointF(px_crit, margin_top - 6), QPointF(px_crit, margin_top + plot_h))
 
-            # Critical reference label at top
-            painter.setFont(QFont("Segoe UI", 8.5, QFont.Weight.Bold))
+            # Critical reference label at top, clamped cleanly inside chart bounds
+            crit_font = QFont("Segoe UI", 8.5, QFont.Weight.Bold)
+            painter.setFont(crit_font)
             painter.setPen(QColor(RED))
             crit_label = f"Reference = {t_crit:.3f}"
-            painter.drawText(QRectF(px_crit - 60, margin_top - 20, 120, 16), Qt.AlignmentFlag.AlignHCenter, crit_label)
+            crit_w = float(QFontMetrics(crit_font).horizontalAdvance(crit_label)) + 8.0
+            crit_x_left = max(margin_left, min(px_crit - crit_w / 2.0, margin_left + plot_w - crit_w))
+            painter.drawText(QRectF(crit_x_left, margin_top - 20, crit_w, 16), Qt.AlignmentFlag.AlignHCenter, crit_label)
 
     def mouseMoveEvent(self, event):
         pos = event.position()
@@ -203,7 +238,7 @@ class DSDParetoEffectsWidget(GraphInteractionMixin, QWidget):
             pval = eff.get("p_val", None)
             p_str = f"{pval:.4f}" if pval is not None else "N/A"
             t_crit = float(self.result.get("t_crit", 2.0))
-            status = "Significant (p < 0.05)" if val >= t_crit else "Not significant"
+            status = f"Significant at α = {self.alpha:.4g}" if val >= t_crit else "Not significant"
             tip = f"<b>Term:</b> {term}<br/><b>Standardized Effect |t|:</b> {val:.4f}<br/><b>P-Value:</b> {p_str}<br/><b>Status:</b> {status}"
             QToolTip.showText(event.globalPosition().toPoint(), tip, self)
         else:

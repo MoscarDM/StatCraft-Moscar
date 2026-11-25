@@ -184,21 +184,44 @@ def multiple_regression(predictors, response, confidence=.95, predictor_names=No
                 assumptions="Continuous predictors and a linear mean relationship; independent, normally distributed errors of constant variance for coefficient and model inference. Rows missing any selected value are omitted together.")
 
 
-def _encode_categorical_predictor(col, raw_values):
-    """Reference-code a categorical column (first ordered level as baseline)."""
+def _encode_categorical_predictor(col, raw_values, coding_spec=None):
+    """Encode a categorical column with (1, 0) dummy or (-1, 0, +1) effects coding."""
     from .value_order import ordered_values
 
     levels = ordered_values(col, raw_values)
     if not 2 <= len(levels) <= 32:
         raise ValueError(f"Categorical predictor '{col.name}' needs 2–32 observed levels after missing-row omission.")
-    basis = [[1.0 if v == lvl else 0.0 for v in raw_values] for lvl in levels[1:]]
-    labels = [f"{col.name} ({lvl})" for lvl in levels[1:]]
+    spec = coding_spec if isinstance(coding_spec, dict) else {}
+    raw_scheme = str(spec.get("scheme") or "1_0").strip().lower()
+    scheme = "minus_one_plus_one" if raw_scheme in ("minus_one_plus_one", "-1_0_1", "effects") else "1_0"
+    req_ref = spec.get("reference")
+    str_levels = [str(l) for l in levels]
+    if req_ref is not None and str(req_ref) in str_levels:
+        ref_str = str(req_ref)
+    else:
+        ref_str = str_levels[0]
+    non_ref = [(lvl, str(lvl)) for lvl in levels if str(lvl) != ref_str]
+    basis = []
+    for _lvl_obj, lvl_s in non_ref:
+        if scheme == "minus_one_plus_one":
+            basis.append([1.0 if str(v) == lvl_s else (-1.0 if str(v) == ref_str else 0.0) for v in raw_values])
+        else:
+            basis.append([1.0 if str(v) == lvl_s else 0.0 for v in raw_values])
+    labels = [f"{col.name} ({lvl_s})" for _lvl_obj, lvl_s in non_ref]
+    level_vectors = {}
+    for lvl_s in str_levels:
+        if lvl_s == ref_str:
+            level_vectors[lvl_s] = [-1.0 if scheme == "minus_one_plus_one" else 0.0] * len(non_ref)
+        else:
+            level_vectors[lvl_s] = [1.0 if s == lvl_s else 0.0 for _o, s in non_ref]
     info = {
         "name": col.name,
-        "levels": [str(l) for l in levels],
-        "reference": str(levels[0]),
+        "levels": str_levels,
+        "reference": ref_str,
+        "scheme": scheme,
+        "coding_label": "(-1, 0, +1)" if scheme == "minus_one_plus_one" else "(1, 0)",
     }
-    return basis, labels, info
+    return basis, labels, info, level_vectors
 
 
 def fit_general_regression(
@@ -208,6 +231,7 @@ def fit_general_regression(
     categorical_indices=(),
     terms=None,
     confidence=0.95,
+    categorical_coding=None,
 ):
     """Fit OLS regression with continuous, categorical, interaction, and quadratic terms."""
     cont = list(continuous_indices or ())
@@ -288,15 +312,26 @@ def fit_general_regression(
         basis_blocks.append([cont_rows[j]])
         basis_labels.append([cc.name])
     cat_coding = []
+    cat_level_vectors = []
+    raw_coding = categorical_coding if isinstance(categorical_coding, dict) else {}
+    raw_scheme = str(raw_coding.get("scheme") or "1_0").strip().lower()
+    scheme_label = "(-1, 0, +1)" if raw_scheme in ("minus_one_plus_one", "-1_0_1", "effects") else "(1, 0)"
+    refs_map = raw_coding.get("references") if isinstance(raw_coding.get("references"), dict) else {}
     for j, cc in enumerate(cat_cols):
-        b, lbls, info = _encode_categorical_predictor(cc, cat_rows[j])
+        spec = {
+            "scheme": raw_scheme,
+            "reference": refs_map.get(cc.name),
+        }
+        b, lbls, info, lvl_vecs = _encode_categorical_predictor(cc, cat_rows[j], coding_spec=spec)
         basis_blocks.append(b)
         basis_labels.append(lbls)
         cat_coding.append(info)
+        cat_level_vectors.append(lvl_vecs)
 
     import itertools
     design_cols = []
     design_names = []
+    design_meta = []
     n_complete = len(complete_rows)
     for t in term_list:
         for combo in itertools.product(*(range(len(basis_blocks[idx])) for idx in t)):
@@ -305,6 +340,7 @@ def fit_general_regression(
                 v = basis_blocks[t[0]][0]
                 design_cols.append([x * x for x in v])
                 design_names.append(f"{basis_labels[t[0]][0]}*{basis_labels[t[0]][0]}")
+                design_meta.append((t, combo))
             else:
                 col_vec = [1.0] * n_complete
                 lbl_parts = []
@@ -314,6 +350,7 @@ def fit_general_regression(
                     lbl_parts.append(basis_labels[idx][b_idx])
                 design_cols.append(col_vec)
                 design_names.append("*".join(lbl_parts))
+                design_meta.append((t, combo))
     if len(design_cols) > 120:
         raise ValueError("Expanded model exceeds 120 terms.")
 
@@ -332,6 +369,50 @@ def fit_general_regression(
             uo["obs"] = complete_rows[orig_pos] + 1
     if cat_coding:
         res["categorical_predictors"] = cat_coding
+        res["categorical_coding_scheme"] = scheme_label
+        total_combos = 1
+        for info in cat_coding:
+            total_combos *= len(info["levels"])
+        if total_combos <= 24:
+            n_cont = len(cont_cols)
+            coefs = res.get("coefficients", [])
+            b0 = float(coefs[0]["estimate"]) if coefs else 0.0
+            slopes_est = [float(row["estimate"]) for row in coefs[1:]]
+            cat_eqs = []
+            for lvl_combo in itertools.product(*(info["levels"] for info in cat_coding)):
+                term_coefs = {(): b0}
+                for k, (t, combo) in enumerate(design_meta):
+                    bk = slopes_est[k] if k < len(slopes_est) else 0.0
+                    if len(t) == 2 and t[0] == t[1]:
+                        c_name = cont_cols[t[0]].name
+                        key = (c_name, c_name)
+                        term_coefs[key] = term_coefs.get(key, 0.0) + bk
+                    else:
+                        cat_prod = 1.0
+                        cont_factors = []
+                        for idx, b_idx in zip(t, combo):
+                            if idx < n_cont:
+                                cont_factors.append(cont_cols[idx].name)
+                            else:
+                                cat_idx = idx - n_cont
+                                lvl_s = lvl_combo[cat_idx]
+                                cat_prod *= cat_level_vectors[cat_idx][lvl_s][b_idx]
+                        key = tuple(cont_factors)
+                        term_coefs[key] = term_coefs.get(key, 0.0) + bk * cat_prod
+                const_val = term_coefs.get((), 0.0)
+                eq_parts = [f"{const_val:.4g}"]
+                for key, val in term_coefs.items():
+                    if key == () or abs(val) <= 1e-11:
+                        continue
+                    sign = "+ " if val >= 0 else "- "
+                    eq_parts.append(f"{sign}{abs(val):.4g} {'*'.join(key)}")
+                prefix_lbl = ", ".join(f"{cat_cols[ci].name} = {lvl_combo[ci]}" for ci in range(len(cat_cols)))
+                cat_eqs.append({
+                    "label": prefix_lbl,
+                    "levels": {cat_cols[ci].name: lvl_combo[ci] for ci in range(len(cat_cols))},
+                    "equation": f"{resp_col.name} = " + " ".join(eq_parts),
+                })
+            res["categorical_equations"] = cat_eqs
     res["model_terms"] = [list(t) for t in term_list]
     res["predictor_names"] = design_names
     return res

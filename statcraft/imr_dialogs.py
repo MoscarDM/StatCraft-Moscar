@@ -34,9 +34,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .dialog_theme import AutoErrorLabel, clamp_dialog_to_screen, dialog_stylesheet, is_dark_active
 from .imr_engine import parse_subgroup_omission, run_imr_chart
 from .model import Worksheet
 from .variable_dialogs import format_variable_reference, resolve_variables
+
+
+def _show_context_help(dialog: QDialog, title: str, text: str) -> None:
+    target = dialog.parent()
+    while target is not None and not hasattr(target, "context_help"):
+        target = target.parent() if callable(getattr(target, "parent", None)) else None
+    if target is not None and hasattr(target, "context_help"):
+        target.context_help(title)
+        return
+    QMessageBox.information(dialog, title, text)
 
 
 class IMROptionsDialog(QDialog):
@@ -45,8 +56,7 @@ class IMROptionsDialog(QDialog):
     def __init__(self, parent: QDialog, options: Dict[str, Any]):
         super().__init__(parent)
         self.setWindowTitle("I-MR Options")
-        self.setMinimumSize(560, 420)
-        self.resize(560, 420)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.options = copy.deepcopy(options)
 
@@ -271,11 +281,15 @@ class IMROptionsDialog(QDialog):
         layout_store.addStretch()
         self.tabs.addTab(tab_store, "Storage")
 
+        self.error = AutoErrorLabel()
+        layout.addWidget(self.error)
+
         # Dialog Buttons
         bbox = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         bbox.accepted.connect(self._save_and_accept)
         bbox.rejected.connect(self.reject)
         layout.addWidget(bbox)
+        clamp_dialog_to_screen(self, 560, 440, min_w=520, min_h=380)
 
     def _select_all_tests(self) -> None:
         self.chk_t1.setChecked(True)
@@ -290,13 +304,14 @@ class IMROptionsDialog(QDialog):
         self.chk_t4.setChecked(False)
 
     def _save_and_accept(self) -> None:
+        self.error.clear()
         # Validate Parameters
         mean_val = None
         if self.mean_edit.text().strip():
             try:
                 mean_val = float(self.mean_edit.text().strip())
             except ValueError:
-                QMessageBox.warning(self, "Invalid Entry", "Historical Mean must be a valid number.")
+                self.error.setText("Historical Mean must be a valid number.")
                 return
 
         sigma_val = None
@@ -306,7 +321,7 @@ class IMROptionsDialog(QDialog):
                 if sigma_val <= 0:
                     raise ValueError
             except ValueError:
-                QMessageBox.warning(self, "Invalid Entry", "Historical Standard Deviation must be a positive number.")
+                self.error.setText("Historical Standard Deviation must be a positive number.")
                 return
 
         # Validate Span
@@ -315,7 +330,7 @@ class IMROptionsDialog(QDialog):
             if not (2 <= span_val <= 100):
                 raise ValueError
         except ValueError:
-            QMessageBox.warning(self, "Invalid Entry", "Length of moving range must be an integer between 2 and 100.")
+            self.error.setText("Length of moving range must be an integer between 2 and 100.")
             return
 
         # Validate K Sigma
@@ -326,27 +341,38 @@ class IMROptionsDialog(QDialog):
             if not (0.1 <= k_sigma_val <= 10.0):
                 raise ValueError
         except ValueError:
-            QMessageBox.warning(self, "Invalid Entry", "Number of standard deviations must be between 0.1 and 10.0.")
+            self.error.setText("Number of standard deviations must be between 0.1 and 10.0.")
             return
 
         warn_k = 2.0
         try:
             warn_k = float(self.edit_warn_k.text().strip() or "2.0")
         except ValueError:
-            warn_k = 2.0
+            self.error.setText("Warning limits K must be a valid number.")
+            return
 
         # Estimation method
         mid = self.bg_method.checkedId()
         meth = "amr" if mid == 0 else ("mmr" if mid == 1 else "srmssd")
 
         # Omission
-        omit_set = parse_subgroup_omission(self.omit_edit.text().strip())
+        try:
+            omit_set = parse_subgroup_omission(self.omit_edit.text().strip())
+        except ValueError as exc:
+            self.error.setText(str(exc))
+            return
 
         # Tests
-        t1_k = float(self.edit_t1.text().strip() or 3.0)
-        t2_k = int(self.edit_t2.text().strip() or 9)
-        t3_k = int(self.edit_t3.text().strip() or 6)
-        t4_k = int(self.edit_t4.text().strip() or 14)
+        try:
+            t1_k = float(self.edit_t1.text().strip() or 3.0)
+            t2_k = int(self.edit_t2.text().strip() or 9)
+            t3_k = int(self.edit_t3.text().strip() or 6)
+            t4_k = int(self.edit_t4.text().strip() or 14)
+            if t1_k <= 0 or t2_k < 2 or t3_k < 2 or t4_k < 2:
+                raise ValueError("Special-cause test thresholds must be positive (count >= 2).")
+        except ValueError:
+            self.error.setText("Special-cause test thresholds must be valid positive numbers.")
+            return
 
         tests_dict = {
             "test1": {"enabled": self.chk_t1.isChecked(), "k": t1_k},
@@ -387,8 +413,7 @@ class IMRChartDialog(QDialog):
         super().__init__(parent)
         self.worksheet = worksheet
         self.setWindowTitle("Individuals - Moving Range Chart")
-        self.setMinimumSize(560, 420)
-        self.resize(560, 420)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
 
         self.options: Dict[str, Any] = {
@@ -410,14 +435,16 @@ class IMRChartDialog(QDialog):
 
         main_layout = QHBoxLayout(self)
 
-        # Left Column: Variables ListBox + Select Button
+        # Left Column: Filter, Variables ListBox + Select Button
         left_layout = QVBoxLayout()
+        self.var_filter = QLineEdit()
+        self.var_filter.setPlaceholderText("Filter variables…")
+        self.var_filter.setClearButtonEnabled(True)
+        self.var_filter.textChanged.connect(self._populate_var_list)
+        left_layout.addWidget(self.var_filter)
+
         self.var_list = QListWidget()
-        for idx, col in enumerate(worksheet.columns):
-            if col.kind == "number":
-                item = QListWidgetItem(f"C{idx + 1}  {col.name}")
-                item.setData(Qt.ItemDataRole.UserRole, idx)
-                self.var_list.addItem(item)
+        self._populate_var_list()
 
         left_layout.addWidget(self.var_list)
         self.btn_select = QPushButton("&Select")
@@ -437,12 +464,16 @@ class IMRChartDialog(QDialog):
         lbl_vars.setBuddy(self.edit_vars)
         right_layout.addWidget(self.edit_vars)
 
-        right_layout.addSpacing(16)
+        right_layout.addSpacing(12)
 
         # Child Dialog Launchers
         grid_buttons = QHBoxLayout()
         self.btn_scale = QPushButton("&Scale...")
+        self.btn_scale.setEnabled(False)
+        self.btn_scale.setToolTip("Scale customization is available in the right-side Graph Editing pane after creating the chart.")
         self.btn_labels = QPushButton("&Labels...")
+        self.btn_labels.setEnabled(False)
+        self.btn_labels.setToolTip("Label customization is available in the right-side Graph Editing pane after creating the chart.")
         self.btn_options = QPushButton("I-MR O&ptions...")
         self.btn_options.clicked.connect(self._open_options)
 
@@ -453,23 +484,40 @@ class IMRChartDialog(QDialog):
 
         right_layout.addStretch()
 
+        self.error = AutoErrorLabel()
+        right_layout.addWidget(self.error)
+
         # Dialog Footer Buttons: OK, Cancel, Help
-        footer_layout = QHBoxLayout()
-        self.btn_help = QPushButton("Help")
-        footer_layout.addWidget(self.btn_help)
-        footer_layout.addStretch()
-
-        self.btn_ok = QPushButton("&OK")
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+            | QDialogButtonBox.StandardButton.Help
+        )
+        self.btn_ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
         self.btn_ok.setDefault(True)
-        self.btn_ok.clicked.connect(self._on_ok)
-        self.btn_cancel = QPushButton("Cancel")
-        self.btn_cancel.clicked.connect(self.reject)
-
-        footer_layout.addWidget(self.btn_ok)
-        footer_layout.addWidget(self.btn_cancel)
-        right_layout.addLayout(footer_layout)
+        self.btn_cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        self.btn_help = buttons.button(QDialogButtonBox.StandardButton.Help)
+        buttons.accepted.connect(self._on_ok)
+        buttons.rejected.connect(self.reject)
+        buttons.helpRequested.connect(lambda: _show_context_help(self, "I-MR Chart", "Select one or more numeric variables and configure I-MR Options."))
+        right_layout.addWidget(buttons)
 
         main_layout.addLayout(right_layout, 2)
+        clamp_dialog_to_screen(self, 580, 440, min_w=540, min_h=380)
+
+    def _populate_var_list(self) -> None:
+        self.var_list.clear()
+        needle = self.var_filter.text().strip().lower() if hasattr(self, "var_filter") else ""
+        for idx, col in enumerate(self.worksheet.columns):
+            if col.kind != "number":
+                continue
+            if needle and needle not in col.name.lower() and needle not in f"c{idx + 1}":
+                continue
+            item = QListWidgetItem(f"C{idx + 1}  {col.name}")
+            item.setData(Qt.ItemDataRole.UserRole, idx)
+            self.var_list.addItem(item)
+        if hasattr(self, "btn_select"):
+            self._list_selection_changed()
 
     def _list_selection_changed(self) -> None:
         self.btn_select.setEnabled(bool(self.var_list.selectedItems()))
@@ -497,26 +545,27 @@ class IMRChartDialog(QDialog):
             self.options = dlg.options
 
     def _on_ok(self) -> None:
+        self.error.clear()
         raw_text = self.edit_vars.text().strip()
         if not raw_text:
-            QMessageBox.warning(self, "Invalid Entry", "Select or enter at least one numeric variable.")
+            self.error.setText("Select or enter at least one numeric variable.")
             return
 
         try:
             col_indices = resolve_variables(raw_text, self.worksheet)
         except ValueError as ex:
-            QMessageBox.warning(self, "Invalid Entry", str(ex))
+            self.error.setText(str(ex))
             return
 
         if not col_indices:
-            QMessageBox.warning(self, "Invalid Entry", "No matching columns found in worksheet.")
+            self.error.setText("No matching columns found in worksheet.")
             return
 
         # Check all are numeric
         for idx in col_indices:
             if self.worksheet.columns[idx].kind != "number":
                 col_name = self.worksheet.columns[idx].name
-                QMessageBox.warning(self, "Invalid Entry", f"Column '{col_name}' must be numeric.")
+                self.error.setText(f"Column '{col_name}' must be numeric.")
                 return
 
         self.selected_params = {

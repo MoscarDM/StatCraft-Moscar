@@ -2,7 +2,101 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
+
+
+class AutoErrorLabel(QLabel):
+    """Inline validation label that stays hidden whenever its text is empty."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("error")
+        self.setWordWrap(True)
+        self.hide()
+
+    def setText(self, text: str) -> None:
+        cleaned = "" if text is None else str(text)
+        super().setText(cleaned)
+        self.setVisible(bool(cleaned.strip()))
+
+    def clear(self) -> None:
+        super().clear()
+        self.hide()
+
+
+def _resolve_screen(dialog: QWidget):
+    screen = None
+    parent = dialog.parent() if callable(getattr(dialog, "parent", None)) else None
+    if parent is not None and callable(getattr(parent, "screen", None)):
+        screen = parent.screen()
+    if screen is None and callable(getattr(dialog, "screen", None)):
+        screen = dialog.screen()
+    if screen is None:
+        screen = QGuiApplication.primaryScreen()
+    return screen
+
+
+def clamp_dialog_to_screen(
+    dialog: QWidget,
+    preferred_w: int,
+    preferred_h: int,
+    min_w: int = 360,
+    min_h: int = 240,
+) -> None:
+    """Size a dialog to fit cleanly inside the active display's available work area."""
+    screen = _resolve_screen(dialog)
+    if screen is not None:
+        avail = screen.availableGeometry()
+        if dialog.isVisible():
+            fg = dialog.frameGeometry()
+            frame_w = max(16, fg.width() - dialog.width())
+            frame_h = max(40, fg.height() - dialog.height())
+        else:
+            frame_w = 16
+            frame_h = 44
+        max_w = max(320, int(avail.width()) - frame_w - 16)
+        max_h = max(240, int(avail.height()) - frame_h - 16)
+        dialog.setMinimumSize(min(min_w, max_w), min(min_h, max_h))
+        dialog.resize(min(preferred_w, max_w), min(preferred_h, max_h))
+    else:
+        dialog.setMinimumSize(min_w, min_h)
+        dialog.resize(preferred_w, preferred_h)
+
+
+def ensure_dialog_fits_screen(dialog: QWidget, margin: int = 8) -> None:
+    """Clamp and reposition an already-shown dialog so its frame stays inside the work area."""
+    screen = _resolve_screen(dialog)
+    if screen is None:
+        return
+    avail = screen.availableGeometry()
+    fg = dialog.frameGeometry()
+    extra_w = max(0, fg.width() - dialog.width())
+    extra_h = max(0, fg.height() - dialog.height())
+    max_w = max(320, int(avail.width()) - extra_w - 2 * margin)
+    max_h = max(240, int(avail.height()) - extra_h - 2 * margin)
+
+    cur_min_w = dialog.minimumWidth()
+    cur_min_h = dialog.minimumHeight()
+    if cur_min_w > max_w or cur_min_h > max_h:
+        dialog.setMinimumSize(min(cur_min_w, max_w), min(cur_min_h, max_h))
+    if dialog.width() > max_w or dialog.height() > max_h:
+        dialog.resize(min(dialog.width(), max_w), min(dialog.height(), max_h))
+
+    fg = dialog.frameGeometry()
+    safe = avail.adjusted(margin, margin, -margin, -margin)
+    x = fg.x()
+    y = fg.y()
+    if fg.right() > safe.right():
+        x -= fg.right() - safe.right()
+    if x < safe.left():
+        x = safe.left()
+    if fg.bottom() > safe.bottom():
+        y -= fg.bottom() - safe.bottom()
+    if y < safe.top():
+        y = safe.top()
+    if x != fg.x() or y != fg.y():
+        dialog.move(x, y)
 
 
 def is_dark_active(widget: QWidget | None = None) -> bool:

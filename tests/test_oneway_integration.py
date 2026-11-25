@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from PySide6.QtCore import QBuffer, QIODevice
+from PySide6.QtCore import QBuffer, QCoreApplication, QEvent, QIODevice
 from PySide6.QtWidgets import QApplication, QDialog
 
 from statcraft.model import Column, Worksheet
@@ -38,6 +38,13 @@ class TestOneWayIntegration(unittest.TestCase):
             ],
         )
         return win
+
+    def _close_window(self, window):
+        window.presenter.dirty = False
+        window.presenter._results_dirty = False
+        window.close()
+        window.deleteLater()
+        QCoreApplication.sendPostedEvents(window, QEvent.Type.DeferredDelete)
 
     def test_stacked_dialog_and_children(self):
         win = self._populate_window()
@@ -110,9 +117,7 @@ class TestOneWayIntegration(unittest.TestCase):
             self.assertFalse(pixmap.isNull())
             self.assertGreater(pixmap.width(), 0)
         finally:
-            win.presenter.dirty = False
-            win.presenter._results_dirty = False
-            win.close()
+            self._close_window(win)
 
     def test_unstacked_dialog(self):
         win = self._populate_window()
@@ -127,9 +132,7 @@ class TestOneWayIntegration(unittest.TestCase):
             self.assertEqual(res['anova_table']['df_factor'], 2)
             self.assertAlmostEqual(res['anova_table']['f_value'], 9.5889, places=2)
         finally:
-            win.presenter.dirty = False
-            win.presenter._results_dirty = False
-            win.close()
+            self._close_window(win)
 
     def test_mpx_save_reopen_and_column_move(self):
         win = self._populate_window()
@@ -164,13 +167,9 @@ class TestOneWayIntegration(unittest.TestCase):
                     self.assertEqual(last_entry['recipe']['action'], 'oneway_anova')
                     self.assertTrue(supported(last_entry))
                 finally:
-                    win2.presenter.dirty = False
-                    win2.presenter._results_dirty = False
-                    win2.close()
+                    self._close_window(win2)
         finally:
-            win.presenter.dirty = False
-            win.presenter._results_dirty = False
-            win.close()
+            self._close_window(win)
 
     def test_office_export(self):
         win = self._populate_window()
@@ -197,9 +196,7 @@ class TestOneWayIntegration(unittest.TestCase):
                 self.assertTrue(os.path.exists(pptx_path))
                 self.assertGreater(os.path.getsize(pptx_path), 1000)
         finally:
-            win.presenter.dirty = False
-            win.presenter._results_dirty = False
-            win.close()
+            self._close_window(win)
 
 
 if __name__ == '__main__':

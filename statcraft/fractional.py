@@ -9,7 +9,7 @@ No native metadata/parity, blocks, optimality search or nonregular designs.
 import itertools
 import random
 import re
-from .doe import _integer, _coding
+from .doe import _integer, _coding, _factor_spec
 from .model import Column, Worksheet
 
 # Positional factor letters skip 'I', which is reserved for the Identity element.
@@ -160,7 +160,10 @@ def create_fractional(factors,generators,replicates=1,centers=0,randomize=True,s
     labels,bases,parsed,normalized=_parse(generators,k)
     _integer(replicates,1,20,'Replicates');_integer(centers,0,20,'Center runs')
     _integer(blocks,1,64,'Blocks')
-    _integer(seed,-(2**63),2**63-1,'Randomization seed')
+    if seed is None:
+        seed=random.SystemRandom().randint(1, 2_147_483_647)
+    else:
+        _integer(seed,-(2**63),2**63-1,'Randomization seed')
     if type(randomize) is not bool:raise ValueError('Randomize must be true or false.')
     total_corners=2**len(bases)*replicates
     if total_corners%blocks!=0:
@@ -174,8 +177,9 @@ def create_fractional(factors,generators,replicates=1,centers=0,randomize=True,s
         if not isinstance(name,str) or not name.strip() or name.casefold() in names:
             raise ValueError('Factor names must be nonempty, unique and different from design-column names.')
         names.add(name.casefold())
-        if 'low' not in factor or 'high' not in factor:raise ValueError('Each factor requires low and high settings.')
-        code=_coding(name,factor['low'],factor['high']);code.update(letter=labels[i],column_index=4+i);coding.append(code)
+        code=_factor_spec(name,factor);code.update(letter=labels[i],column_index=4+i);coding.append(code)
+    if centers and any(f.get('kind')=='text' for f in coding):
+        raise ValueError('Center points require all factors to be numeric.')
     alias=alias_structure(normalized,k)
     corners_per_rep=2**len(bases); corners_per_block=total_corners//blocks
     corner_runs=[]
@@ -218,7 +222,7 @@ def create_fractional(factors,generators,replicates=1,centers=0,randomize=True,s
              Column('RunOrder',values=list(range(1,count+1))),
              Column('PtType',values=[r['pt_type'] for r in plan]),
              Column('Blocks',values=[r['block'] for r in plan])]
-    columns.extend(Column(f['name'],values=[r['settings'][i] for r in plan]) for i,f in enumerate(coding))
+    columns.extend(Column(f['name'],kind=f.get('kind','number'),values=[r['settings'][i] for r in plan]) for i,f in enumerate(coding))
     return Worksheet('Regular fractional factorial design',columns,metadata={'doe':dict(
         schema='statcraft-regular-fractional-v1',origin='Original StatCraft design',
         design='regular two-level fractional factorial',factors=coding,base_factors=bases,

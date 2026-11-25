@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox,
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QPushButton, QSpinBox, QVBoxLayout)
 
+from .dialog_theme import AutoErrorLabel
 from .graph_layouts import _identity, build_layout, layout_eligible
 
 
@@ -67,7 +68,7 @@ class GraphLayoutDialog(QDialog):
         right.addWidget(self.selected); body.addLayout(right, 1)
         layout.addLayout(body, 1)
         self.capacity = QLabel(); layout.addWidget(self.capacity)
-        self.error = QLabel(); self.error.setObjectName('error'); self.error.setWordWrap(True)
+        self.error = AutoErrorLabel()
         layout.addWidget(self.error)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText('Finish')

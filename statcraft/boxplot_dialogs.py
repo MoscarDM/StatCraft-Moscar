@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt,QSize,QRectF
 from PySide6.QtGui import QColor,QPainter,QPen,QIcon,QPixmap
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QGridLayout,QGroupBox,QToolButton,QButtonGroup,
     QDialogButtonBox,QCheckBox,QFormLayout,QLineEdit,QLabel,QComboBox,QPushButton)
-from .dialog_theme import dialog_stylesheet, gallery_button_stylesheet, is_dark_active
+from .dialog_theme import AutoErrorLabel, clamp_dialog_to_screen, dialog_stylesheet, gallery_button_stylesheet, is_dark_active
 from .histogram_dialogs import HistogramDialog
 from .variable_dialogs import format_variable_reference,resolve_variables
 from .boxplot_graphs import validate_parameters,validate_display,build_boxplots
@@ -69,7 +69,7 @@ class BoxplotDialog(HistogramDialog):
         if parameters.get('response_indices'):self.variables.setText(' '.join(format_variable_reference(i,worksheet) for i in parameters['response_indices']))
         if parameters.get('group_indices'):self.group.setText(' '.join(format_variable_reference(i,worksheet) for i in parameters['group_indices']))
         if lock_variables:
-            for widget in (self.available,self.select_button,self.variables,self.group):widget.setEnabled(False)
+            for widget in (self.var_filter,self.available,self.select_button,self.variables,self.group):widget.setEnabled(False)
 
     def transfer(self):
         refs=[format_variable_reference(item.data(Qt.ItemDataRole.UserRole),self.worksheet) for item in self.available.selectedItems()]
@@ -88,22 +88,28 @@ class BoxplotDialog(HistogramDialog):
         self._settings=parameters;self.error.clear();self.accept();return True
 
     def edit_data_view(self):
-        dialog=QDialog(self);dialog.setWindowTitle('Boxplot: Data View');layout=QVBoxLayout(dialog);dialog.controls={}
+        dialog=QDialog(self);dialog.setWindowTitle('Boxplot: Data View')
+        dialog.setStyleSheet(dialog_stylesheet(is_dark_active(self)));dialog.setSizeGripEnabled(True)
+        layout=QVBoxLayout(dialog);dialog.controls={}
         labels={'iqr_box':'Interquartile range box','whiskers':'Whiskers (1.5 IQR)','outliers':'Outlier symbols','individual':'Individual symbols',
                 'median_symbol':'Median symbol','mean_symbol':'Mean symbol','median_connect':'Median connect line','mean_connect':'Mean connect line'}
         for key,text in labels.items():
             control=QCheckBox(text);control.setChecked(self.display[key]);dialog.controls[key]=control;layout.addWidget(control)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons)
+        clamp_dialog_to_screen(dialog,360,300,min_w=320,min_h=260)
         if dialog.exec()==QDialog.DialogCode.Accepted:self.display={key:control.isChecked() for key,control in dialog.controls.items()}
 
     def edit_scale(self):
         from .graph_presentation import validate_presentation
-        dialog=QDialog(self);dialog.setWindowTitle('Boxplot: Scale');layout=QVBoxLayout(dialog);form=QFormLayout();dialog.controls={}
+        dialog=QDialog(self);dialog.setWindowTitle('Boxplot: Scale')
+        dialog.setStyleSheet(dialog_stylesheet(is_dark_active(self)));dialog.setSizeGripEnabled(True)
+        layout=QVBoxLayout(dialog);form=QFormLayout();dialog.controls={}
         for key,text in (('y_min','Y minimum:'),('y_max','Y maximum:')):
             edit=QLineEdit('' if self.axis_limits[key] is None else str(self.axis_limits[key]));edit.setPlaceholderText('Automatic');dialog.controls[key]=edit;form.addRow(text,edit)
-        layout.addLayout(form);error=QLabel();layout.addWidget(error)
+        layout.addLayout(form);error=AutoErrorLabel();layout.addWidget(error)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel);layout.addWidget(buttons)
+        clamp_dialog_to_screen(dialog,360,180,min_w=320,min_h=160)
         def accept():
             try:
                 values={key:float(edit.text()) if edit.text().strip() else None for key,edit in dialog.controls.items()};validate_presentation(values)

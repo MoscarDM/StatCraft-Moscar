@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from .dialog_theme import AutoErrorLabel, dialog_stylesheet, is_dark_active
 
 from .subgroup_control import control_chart_settings, fit_from_worksheet
 from .variable_dialogs import format_variable_reference, resolve_variables
@@ -321,7 +322,8 @@ class BaseSubgroupChartDialog(QDialog):
         self.chart_type = chart_type
         title = f"{_SUBGROUP_LABELS.get(chart_type, 'Xbar-S')} Chart"
         self.setWindowTitle(title)
-        self.resize(560, 380)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
+        self.resize(560, 400)
 
         self.options = control_chart_settings({'chart_type': chart_type})
         self.entry = None
@@ -334,6 +336,12 @@ class BaseSubgroupChartDialog(QDialog):
         # Left Column List
         left_layout = QVBoxLayout()
         left_layout.addWidget(QLabel("Columns:"))
+        self._last_filter_kinds: tuple[str, ...] | None = ('number',)
+        self.var_filter = QLineEdit()
+        self.var_filter.setPlaceholderText("Filter variables…")
+        self.var_filter.setClearButtonEnabled(True)
+        self.var_filter.textChanged.connect(lambda _txt: self._populate_columns(kinds=self._last_filter_kinds))
+        left_layout.addWidget(self.var_filter)
         self.col_list = QListWidget()
         left_layout.addWidget(self.col_list)
         self.btn_select = QPushButton("Select")
@@ -349,7 +357,6 @@ class BaseSubgroupChartDialog(QDialog):
         self.combo_arrangement = QComboBox()
         self.combo_arrangement.addItem("All observations for a chart are in one column:")
         self.combo_arrangement.addItem("Observations for a subgroup are in one row of columns:")
-        self.combo_arrangement.currentIndexChanged.connect(self._on_arrangement_changed)
         right_layout.addWidget(self.combo_arrangement)
 
         # Stacked widgets (Layer 1)
@@ -362,7 +369,7 @@ class BaseSubgroupChartDialog(QDialog):
         self.sub_size_edit = QLineEdit("5")
         sub_size_layout.addWidget(self.sub_size_edit)
         sub_size_layout.addWidget(QLabel("(enter a number or ID column)"))
-        stacked_form.addRow("Subgroup sizes:", sub_size_layout)
+        stacked_form.addRow("Subgroup size or ID column:", sub_size_layout)
         right_layout.addWidget(self.stacked_widget)
 
         # Unstacked widgets (Layer 2)
@@ -380,12 +387,32 @@ class BaseSubgroupChartDialog(QDialog):
         right_layout.addWidget(self.btn_options)
         right_layout.addStretch()
 
+        self.error = AutoErrorLabel()
+        root_layout.addWidget(self.error)
+
+        self._active_edit = self.resp_edit
+        self.resp_edit.installEventFilter(self)
+        self.sub_size_edit.installEventFilter(self)
+        self.rows_edit.installEventFilter(self)
+
         # Footer OK / Cancel
         _footer(self, root_layout, self.run_analysis)
 
-        self._populate_columns()
+        self.combo_arrangement.currentIndexChanged.connect(self._on_arrangement_changed)
+        self._populate_columns(kinds=('number',))
         self.col_list.itemDoubleClicked.connect(self._on_select)
         self._restore_state()
+
+    def _eligible_kinds_for(self, edit: Optional[QLineEdit]) -> tuple[str, ...]:
+        if edit is self.sub_size_edit:
+            return ('number', 'text')
+        return ('number',)
+
+    def eventFilter(self, obj, event):
+        if event.type() == event.Type.FocusIn and obj in (self.resp_edit, self.sub_size_edit, self.rows_edit):
+            self._active_edit = obj
+            self._populate_columns(kinds=self._eligible_kinds_for(obj))
+        return super().eventFilter(obj, event)
 
     def _save_state(self):
         ws = getattr(self.main_window.presenter, 'worksheet', None)
@@ -417,11 +444,18 @@ class BaseSubgroupChartDialog(QDialog):
         if isinstance(saved.get("options"), dict):
             self.options.update(saved["options"])
 
-    def _populate_columns(self):
+    def _populate_columns(self, kinds: tuple[str, ...] | None = None):
+        self._last_filter_kinds = kinds
+        self.col_list.clear()
         ws = getattr(self.main_window.presenter, 'worksheet', None)
         if not ws:
             return
+        needle = self.var_filter.text().strip().lower() if hasattr(self, 'var_filter') else ''
         for i, col in enumerate(ws.columns):
+            if kinds is not None and col.kind not in kinds:
+                continue
+            if needle and needle not in col.name.lower() and needle not in f'c{i + 1}':
+                continue
             item = QListWidgetItem(format_variable_reference(i, ws))
             item.setData(Qt.ItemDataRole.UserRole, i)
             self.col_list.addItem(item)
@@ -430,19 +464,29 @@ class BaseSubgroupChartDialog(QDialog):
         if index == 0:
             self.stacked_widget.setVisible(True)
             self.unstacked_widget.setVisible(False)
+            self._active_edit = self.resp_edit
         else:
             self.stacked_widget.setVisible(False)
             self.unstacked_widget.setVisible(True)
+            self._active_edit = self.rows_edit
+        self._populate_columns(kinds=self._eligible_kinds_for(self._active_edit))
 
     def _on_select(self):
         items = self.col_list.selectedItems()
         if not items:
             return
-        names = [item.text().split()[0] for item in items]
+        ws = getattr(self.main_window.presenter, 'worksheet', None)
+        names = []
+        for item in items:
+            idx = item.data(Qt.ItemDataRole.UserRole)
+            if ws is not None and isinstance(idx, int):
+                names.append(format_variable_reference(idx, ws))
+            else:
+                names.append(item.text())
         text_to_add = " ".join(names)
 
         if self.combo_arrangement.currentIndex() == 0:
-            if self.sub_size_edit.hasFocus():
+            if self.sub_size_edit.hasFocus() or getattr(self, '_active_edit', None) is self.sub_size_edit:
                 self.sub_size_edit.setText(text_to_add)
             else:
                 self.resp_edit.setText(text_to_add)
@@ -456,9 +500,12 @@ class BaseSubgroupChartDialog(QDialog):
             self.options = dlg.options
 
     def run_analysis(self):
+        self.error.hide()
+        self.error.clear()
         ws = getattr(self.main_window.presenter, 'worksheet', None)
         if not ws:
-            QMessageBox.warning(self, "No Worksheet", "No active worksheet available.")
+            self.error.setText("No active worksheet available.")
+            self.error.show()
             return
 
         is_stacked = (self.combo_arrangement.currentIndex() == 0)
@@ -466,7 +513,8 @@ class BaseSubgroupChartDialog(QDialog):
             if is_stacked:
                 resp_tokens = resolve_variables(self.resp_edit.text(), ws, kinds=('number',))
                 if not resp_tokens:
-                    QMessageBox.warning(self, "Invalid Selection", "Select a numeric measurement column.")
+                    self.error.setText("Select a numeric measurement column.")
+                    self.error.show()
                     return
                 resp_idx = resp_tokens[0]
 
@@ -476,12 +524,14 @@ class BaseSubgroupChartDialog(QDialog):
                 try:
                     sub_size = int(sz_text)
                     if sub_size < 2:
-                        QMessageBox.warning(self, "Invalid Subgroup Size", "Subgroup size must be at least 2.")
+                        self.error.setText("Subgroup size must be at least 2.")
+                        self.error.show()
                         return
                 except ValueError:
                     fac_tokens = resolve_variables(sz_text, ws, kinds=('number', 'text'))
                     if not fac_tokens:
-                        QMessageBox.warning(self, "Invalid Subgroup Size", "Enter a subgroup size >= 2 or an ID column.")
+                        self.error.setText("Enter a subgroup size >= 2 or an ID column.")
+                        self.error.show()
                         return
                     factor_idx = fac_tokens[0]
 
@@ -496,7 +546,8 @@ class BaseSubgroupChartDialog(QDialog):
             else:
                 row_tokens = resolve_variables(self.rows_edit.text(), ws, kinds=('number',))
                 if not row_tokens or len(row_tokens) < 2:
-                    QMessageBox.warning(self, "Invalid Selection", "Select at least 2 measurement columns.")
+                    self.error.setText("Select at least 2 numeric measurement columns.")
+                    self.error.show()
                     return
 
                 res = self.main_window.presenter.subgroup_control_chart(
@@ -512,7 +563,8 @@ class BaseSubgroupChartDialog(QDialog):
             if hasattr(self.main_window, 'show_result'):
                 self.main_window.show_result(res)
         except Exception as exc:
-            QMessageBox.critical(self, "Calculation Error", str(exc))
+            self.error.setText(str(exc))
+            self.error.show()
 
 
 class XbarRChartDialog(BaseSubgroupChartDialog):

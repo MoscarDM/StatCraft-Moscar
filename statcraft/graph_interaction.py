@@ -42,37 +42,13 @@ def draw_marker(painter,point,style,default_shape='circle',default_size=6.4):
         painter.drawLine(QPointF(x-radius,y-radius),QPointF(x+radius,y+radius));painter.drawLine(QPointF(x-radius,y+radius),QPointF(x+radius,y-radius))
 
 
-_GRAPH_STATE_NAMES = frozenset((
-    'graph_styles', 'selected_object', 'hit_regions', '_panel_index',
-    'is_brushing', 'brushed_rows', 'brush_regions', '_brush_start', '_brush_end',
-    'hover_regions', '_hover_text',
-))
-
-
 class GraphInteractionMixin:
-    def __getattr__(self, name):
-        # Many chart widgets inherit this mixin but never call
-        # _init_graph_interaction(); without it, the first mouse move/click raises
-        # AttributeError. Create any missing interaction state lazily, never
-        # overwriting values a widget has already set itself.
-        if name in _GRAPH_STATE_NAMES:
-            entry = self.__dict__.get('entry')
-            styles = entry.get('graph_styles', {}) if isinstance(entry, dict) else {}
-            defaults = {
-                'graph_styles': validate_styles(styles), 'selected_object': None,
-                'hit_regions': [], '_panel_index': 0, 'is_brushing': False,
-                'brushed_rows': set(), 'brush_regions': [], '_brush_start': None,
-                '_brush_end': None, 'hover_regions': [], '_hover_text': '',
-            }
-            for key, value in defaults.items():
-                if key not in self.__dict__:
-                    setattr(self, key, value)
-            self.setMouseTracking(True)
-            return self.__dict__[name]
-        raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, name))
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._init_graph_interaction()
 
     def _init_graph_interaction(self):
-        self.graph_styles=validate_styles(self.entry.get('graph_styles',{}))
+        self.graph_styles=validate_styles(getattr(self, 'entry', {}).get('graph_styles',{}))
         self.selected_object=None;self.hit_regions=[];self._panel_index=0
         self.is_brushing=False;self.brushed_rows=set();self.brush_regions=[]
         self._brush_start=None;self._brush_end=None

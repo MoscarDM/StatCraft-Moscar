@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
     QLineEdit, QRadioButton, QPushButton, QVBoxLayout
 )
+from .dialog_theme import clamp_dialog_to_screen, dialog_stylesheet, is_dark_active
 from .variable_dialogs import ProcedureDialog, format_variable_reference
 
 
@@ -42,7 +43,7 @@ class FittedLinePlotOptionsDialog(QDialog):
     def __init__(self, parent: QDialog, options: Dict[str, Any]):
         super().__init__(parent)
         self.setWindowTitle("Fitted Line Plot: Options")
-        self.setMinimumSize(380, 240)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.options = copy.deepcopy(options)
 
@@ -89,6 +90,7 @@ class FittedLinePlotOptionsDialog(QDialog):
         footer.accepted.connect(self.validate)
         footer.rejected.connect(self.reject)
         layout.addWidget(footer)
+        clamp_dialog_to_screen(self, 400, 260, min_w=360, min_h=220)
 
     def validate(self):
         self.options["ci"] = self.chk_ci.isChecked()
@@ -105,7 +107,7 @@ class FittedLinePlotGraphsDialog(QDialog):
     def __init__(self, parent: QDialog, options: Dict[str, Any]):
         super().__init__(parent)
         self.setWindowTitle("Fitted Line Plot: Graphs")
-        self.setMinimumSize(400, 310)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.options = copy.deepcopy(options)
 
@@ -195,6 +197,7 @@ class FittedLinePlotGraphsDialog(QDialog):
         footer.accepted.connect(self.validate)
         footer.rejected.connect(self.reject)
         layout.addWidget(footer)
+        clamp_dialog_to_screen(self, 440, 330, min_w=380, min_h=290)
 
     def validate(self):
         # Residual type
@@ -231,7 +234,7 @@ class FittedLinePlotStorageDialog(QDialog):
     def __init__(self, parent: QDialog, options: Dict[str, Any]):
         super().__init__(parent)
         self.setWindowTitle("Fitted Line Plot: Storage")
-        self.setMinimumSize(360, 240)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.options = copy.deepcopy(options)
         st = self.options.get("storage", {})
@@ -264,6 +267,7 @@ class FittedLinePlotStorageDialog(QDialog):
         footer.accepted.connect(self.validate)
         footer.rejected.connect(self.reject)
         layout.addWidget(footer)
+        clamp_dialog_to_screen(self, 360, 240, min_w=340, min_h=220)
 
     def validate(self):
         self.options["storage"] = {

@@ -79,6 +79,7 @@ def create_split_plot_design(
     replicates: int = 1,
     seed: int | None = None,
     randomize: bool = True,
+    subplot_replicates: int = 1,
 ) -> Worksheet:
     """Create a split-plot factorial design with randomized whole-plot (WP) blocks.
 
@@ -92,15 +93,21 @@ def create_split_plot_design(
         raise ValueError('Specify 1 to 6 hard-to-change (whole-plot) factors.')
     if not 1 <= len(easy_list) <= 8:
         raise ValueError('Specify 1 to 8 easy-to-change (subplot) factors.')
-    _integer(replicates, 1, 20, 'Replicates')
+    _integer(replicates, 1, 20, 'Whole-plot replicates')
+    _integer(subplot_replicates, 1, 20, 'Subplot replicates')
     if type(randomize) is not bool:
         raise ValueError('Randomize must be true or false.')
     if seed is not None:
         _integer(seed, -(2**63), 2**63 - 1, 'Randomization seed')
 
+    def _with_text_levels(f):
+        if isinstance(f, dict) and str(f.get('kind', '')).lower() == 'text' and 'levels' not in f and 'low' in f and 'high' in f:
+            return {**f, 'levels': [str(f['low']), str(f['high'])]}
+        return f
+
     seen_names = set()
-    hard_desc = [_parse_factor(f, seen_names, 'whole_plot') for f in hard_list]
-    easy_desc = [_parse_factor(f, seen_names, 'subplot') for f in easy_list]
+    hard_desc = [_parse_factor(_with_text_levels(f), seen_names, 'whole_plot') for f in hard_list]
+    easy_desc = [_parse_factor(_with_text_levels(f), seen_names, 'subplot') for f in easy_list]
     all_desc = hard_desc + easy_desc
     for idx, desc in enumerate(all_desc):
         desc['column_index'] = 4 + idx
@@ -108,7 +115,7 @@ def create_split_plot_design(
     wp_combos = list(itertools.product(*[d['levels'] for d in hard_desc]))
     sp_combos = list(itertools.product(*[d['levels'] for d in easy_desc]))
     n_wp = len(wp_combos) * replicates
-    total_runs = n_wp * len(sp_combos)
+    total_runs = n_wp * len(sp_combos) * subplot_replicates
     if total_runs > 4096:
         raise ValueError('The split-plot design exceeds the 4096-run limit.')
 
@@ -118,14 +125,15 @@ def create_split_plot_design(
     for _rep in range(replicates):
         for wp_vals in wp_combos:
             sp_runs = []
-            for sp_vals in sp_combos:
-                sp_runs.append({
-                    'std_order': std_order,
-                    'pt_type': 1,
-                    'hard': list(wp_vals),
-                    'easy': list(sp_vals),
-                })
-                std_order += 1
+            for _sp_rep in range(subplot_replicates):
+                for sp_vals in sp_combos:
+                    sp_runs.append({
+                        'std_order': std_order,
+                        'pt_type': 1,
+                        'hard': list(wp_vals),
+                        'easy': list(sp_vals),
+                    })
+                    std_order += 1
             whole_plots.append(sp_runs)
 
     if randomize:
@@ -165,6 +173,7 @@ def create_split_plot_design(
                 'easy_factors': easy_desc,
                 'factors': all_desc,
                 'replicates': replicates,
+                'subplot_replicates': subplot_replicates,
                 'randomize': randomize,
                 'seed': seed,
                 'whole_plots': n_wp,

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .dialog_theme import clamp_dialog_to_screen, dialog_stylesheet, is_dark_active
 from .variable_dialogs import (
     ProcedureDialog,
     load_dialog_state,
@@ -58,7 +59,8 @@ class _DescriptiveStatisticsSubDialog(QDialog):
     def __init__(self, parent, selected_keys: list[str]):
         super().__init__(parent)
         self.setWindowTitle("Display Descriptive Statistics: Statistics")
-        self.setMinimumWidth(420)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
+        self.setSizeGripEnabled(True)
         layout = QVBoxLayout(self)
         box = QGroupBox("Statistics")
         grid = QGridLayout(box)
@@ -90,6 +92,7 @@ class _DescriptiveStatisticsSubDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
+        clamp_dialog_to_screen(self, 460, 360, min_w=400, min_h=300)
 
     def _apply(self, keys):
         keyset = set(keys)
@@ -104,7 +107,8 @@ class _DescriptiveGraphsSubDialog(QDialog):
     def __init__(self, parent, graph_opts: dict[str, bool]):
         super().__init__(parent)
         self.setWindowTitle("Display Descriptive Statistics: Graphs")
-        self.setMinimumWidth(340)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
+        self.setSizeGripEnabled(True)
         layout = QVBoxLayout(self)
         box = QGroupBox("Graphs")
         vbox = QVBoxLayout(box)
@@ -122,6 +126,7 @@ class _DescriptiveGraphsSubDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
+        clamp_dialog_to_screen(self, 360, 220, min_w=320, min_h=190)
 
     def graph_options(self) -> dict[str, bool]:
         return {k: chk.isChecked() for k, chk in self.checks.items()}

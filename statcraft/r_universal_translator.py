@@ -24,17 +24,22 @@ def generate_dataframe_r_code(worksheet: Worksheet) -> str:
     lines = ["# ------------------------------------------------------------------------------",
              f"# Data Definition: {worksheet.name}",
              "# ------------------------------------------------------------------------------"]
+    max_len = max((len(c.values) for c in worksheet.columns), default=0)
     col_defs = []
     for c in worksheet.columns:
+        pad_count = max(0, max_len - len(c.values))
         if c.kind == "number":
             vals = ["NA" if v is None or not math.isfinite(v) else repr(float(v)) for v in c.values]
+            vals.extend(["NA"] * pad_count)
             col_defs.append(f"  {_escape_str(c.name)} = c({', '.join(vals)})")
         elif c.kind == "date":
             from .model import display_date
             vals = ["NA" if v is None else repr(display_date(v)) for v in c.values]
+            vals.extend(["NA"] * pad_count)
             col_defs.append(f"  {_escape_str(c.name)} = as.Date(c({', '.join(vals)}))")
         else:
             vals = ["NA" if v is None else repr(str(v)) for v in c.values]
+            vals.extend(["NA"] * pad_count)
             col_defs.append(f"  {_escape_str(c.name)} = c({', '.join(vals)})")
 
     df_body = ",\n".join(col_defs)
@@ -447,20 +452,55 @@ def translate_entry_to_r(entry: Dict[str, Any], worksheet: Worksheet) -> Tuple[s
 
     # 9. TWO-SAMPLE T-TEST
     elif "two_sample_t" in analysis or action == "two_sample_t":
-        s1 = worksheet.columns[params.get("first_index", 0)].name if "first_index" in params else worksheet.columns[0].name
-        s2 = worksheet.columns[params.get("second_index", 1)].name if "second_index" in params else worksheet.columns[1].name
-        b_body = [
-            f"# Two-Sample T-Test",
-            f"t_res <- t.test(df[[{_escape_str(s1)}]], df[[{_escape_str(s2)}]], var.equal = FALSE)",
-            "print(t_res)",
-            f"boxplot(df[[{_escape_str(s1)}]], df[[{_escape_str(s2)}]], names = c({_escape_str(s1)}, {_escape_str(s2)}), col = c('#93c5fd', '#fecdd3'), main = 'Two-Sample Comparison')",
-        ]
-        t_body = [
-            f"df %>% select(all_of(c({_escape_str(s1)}, {_escape_str(s2)}))) %>%",
-            "  pivot_longer(everything(), names_to = 'Sample', values_to = 'Value') %>%",
-            "  ggplot(aes(x = Sample, y = Value, fill = Sample)) +",
-            "  geom_boxplot(alpha = 0.8) + theme_minimal(base_size = 12)",
-        ]
+        settings = params.get("settings", {}) if isinstance(params.get("settings"), dict) else {}
+        fmt = int(settings.get("data_format", 1))
+        var_eq = "TRUE" if settings.get("assume_equal_variances", False) else "FALSE"
+        raw_conf = float(settings.get("confidence_level", result.get("confidence_level", 95.0)) or 95.0)
+        conf = raw_conf / 100.0 if raw_conf > 1.0 else raw_conf
+        alt_raw = str(settings.get("alternative", "not_equal")).lower()
+        alt = "less" if "less" in alt_raw else ("greater" if "greater" in alt_raw else "two.sided")
+        mu_val = float(settings.get("hypothesized_difference", 0.0) or 0.0)
+        if fmt == 2:
+            y_idx = settings.get("samples_col", 0)
+            g_idx = settings.get("sample_ids_col", 1)
+            y_col = worksheet.columns[y_idx].name if isinstance(y_idx, int) and 0 <= y_idx < len(worksheet.columns) else worksheet.columns[0].name
+            g_col = worksheet.columns[g_idx].name if isinstance(g_idx, int) and 0 <= g_idx < len(worksheet.columns) else worksheet.columns[min(1, len(worksheet.columns) - 1)].name
+            b_body = [
+                "# Two-Sample T-Test (Stacked Format)",
+                f"sub_df <- na.omit(df[, c({_escape_str(y_col)}, {_escape_str(g_col)}), drop = FALSE])",
+                f"t_res <- t.test(sub_df[[{_escape_str(y_col)}]] ~ as.factor(sub_df[[{_escape_str(g_col)}]]), var.equal = {var_eq}, conf.level = {conf:g}, alternative = '{alt}', mu = {mu_val:g})",
+                "print(t_res)",
+                f"boxplot(sub_df[[{_escape_str(y_col)}]] ~ as.factor(sub_df[[{_escape_str(g_col)}]]), col = c('#93c5fd', '#fecdd3'), xlab = {_escape_str(g_col)}, ylab = {_escape_str(y_col)}, main = 'Two-Sample Comparison')",
+            ]
+            t_body = [
+                f"sub_df <- na.omit(df[, c({_escape_str(y_col)}, {_escape_str(g_col)}), drop = FALSE])",
+                f"t_res <- t.test(sub_df[[{_escape_str(y_col)}]] ~ as.factor(sub_df[[{_escape_str(g_col)}]]), var.equal = {var_eq}, conf.level = {conf:g}, alternative = '{alt}', mu = {mu_val:g})",
+                "print(t_res)",
+                f"ggplot(sub_df, aes(x = as.factor(.data[[{_escape_str(g_col)}]]), y = .data[[{_escape_str(y_col)}]], fill = as.factor(.data[[{_escape_str(g_col)}]]))) +",
+                "  geom_boxplot(alpha = 0.8) + theme_minimal(base_size = 12) + theme(legend.position = 'none')",
+            ]
+        else:
+            s1_idx = settings.get("sample1_col", params.get("first_index", 0))
+            s2_idx = settings.get("sample2_col", params.get("second_index", 1))
+            s1 = worksheet.columns[s1_idx].name if isinstance(s1_idx, int) and 0 <= s1_idx < len(worksheet.columns) else worksheet.columns[0].name
+            s2 = worksheet.columns[s2_idx].name if isinstance(s2_idx, int) and 0 <= s2_idx < len(worksheet.columns) else worksheet.columns[min(1, len(worksheet.columns) - 1)].name
+            b_body = [
+                "# Two-Sample T-Test (Independent Samples)",
+                f"x1 <- na.omit(df[[{_escape_str(s1)}]])",
+                f"x2 <- na.omit(df[[{_escape_str(s2)}]])",
+                f"t_res <- t.test(x1, x2, var.equal = {var_eq}, conf.level = {conf:g}, alternative = '{alt}', mu = {mu_val:g})",
+                "print(t_res)",
+                f"boxplot(list(x1, x2), names = c({_escape_str(s1)}, {_escape_str(s2)}), col = c('#93c5fd', '#fecdd3'), main = 'Two-Sample Comparison')",
+            ]
+            t_body = [
+                f"x1 <- na.omit(df[[{_escape_str(s1)}]])",
+                f"x2 <- na.omit(df[[{_escape_str(s2)}]])",
+                f"t_res <- t.test(x1, x2, var.equal = {var_eq}, conf.level = {conf:g}, alternative = '{alt}', mu = {mu_val:g})",
+                "print(t_res)",
+                f"plot_df <- bind_rows(tibble(Sample = {_escape_str(s1)}, Value = x1), tibble(Sample = {_escape_str(s2)}, Value = x2)) %>% mutate(Sample = factor(Sample, levels = c({_escape_str(s1)}, {_escape_str(s2)})))",
+                "ggplot(plot_df, aes(x = Sample, y = Value, fill = Sample)) +",
+                "  geom_boxplot(alpha = 0.8) + theme_minimal(base_size = 12)",
+            ]
 
     # 10. ONE-WAY ANOVA
     elif "oneway_anova" in analysis or action in ("oneway_anova", "one_way_anova"):

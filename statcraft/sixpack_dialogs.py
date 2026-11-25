@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
+    QDialogButtonBox,
     QVBoxLayout,
     QHBoxLayout,
     QGridLayout,
@@ -24,12 +25,40 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QFrame,
     QGroupBox,
 )
 
 from .capability_dialogs import CapabilityOptionsDialog, CapabilityEstimateDialog
+from .dialog_theme import AutoErrorLabel, clamp_dialog_to_screen, dialog_stylesheet, is_dark_active
+
+
+def _show_context_help(dialog: QDialog, title: str, text: str) -> None:
+    target = dialog.parent()
+    while target is not None and not hasattr(target, "context_help"):
+        target = target.parent() if callable(getattr(target, "parent", None)) else None
+    if target is not None and hasattr(target, "context_help"):
+        target.context_help(title)
+        return
+    QMessageBox.information(dialog, title, text)
+
+
+def _resolve_sheet_col_name(worksheet, raw: str, allowed_kinds: Optional[tuple[str, ...]] = None) -> str:
+    s = raw.strip().strip("'\"")
+    if worksheet is None:
+        return s
+    for i, c in enumerate(worksheet.columns):
+        if s.lower() == f"C{i + 1}   {c.name}".lower():
+            if allowed_kinds and c.kind not in allowed_kinds:
+                raise ValueError(f"Column '{c.name}' is not eligible for this field.")
+            return c.name
+    from .variable_dialogs import resolve_variables
+    tokens = resolve_variables(raw, worksheet, kinds=allowed_kinds or ("number", "text", "date"))
+    if not tokens:
+        raise ValueError(f"Column '{s}' not found in worksheet.")
+    return worksheet.columns[tokens[0]].name
 
 
 class SixpackTestsDialog(QDialog):
@@ -39,6 +68,8 @@ class SixpackTestsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Capability Sixpack: Tests")
         self.setModal(True)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
+        self.setSizeGripEnabled(True)
         self.options = dict(options or {})
 
         layout = QVBoxLayout(self)
@@ -66,17 +97,12 @@ class SixpackTestsDialog(QDialog):
 
         layout.addWidget(box)
 
-        # Buttons
-        btn_layout = QHBoxLayout()
-        btn_ok = QPushButton("OK")
-        btn_ok.setDefault(True)
-        btn_cancel = QPushButton("Cancel")
-        btn_ok.clicked.connect(self._accept)
-        btn_cancel.clicked.connect(self.reject)
-        btn_layout.addStretch()
-        btn_layout.addWidget(btn_ok)
-        btn_layout.addWidget(btn_cancel)
-        layout.addLayout(btn_layout)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setDefault(True)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        clamp_dialog_to_screen(self, 420, 240, min_w=360, min_h=200)
 
     def _accept(self):
         self.options["test1"] = self.chk_test1.isChecked()
@@ -94,13 +120,17 @@ class CapabilitySixpackDialog(QDialog):
         self.analysis_mode = analysis_mode
         title_mode = "Between/Within" if analysis_mode == "between_within" else "Normal Distribution"
         self.setWindowTitle(f"Capability Sixpack ({title_mode})")
-        self.resize(580, 430)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
+        self.setSizeGripEnabled(True)
         self.worksheet = worksheet
         self.columns: List[str] = []
+        self._col_meta: List[tuple[int, str, str]] = []
         if worksheet and hasattr(worksheet, "columns"):
             self.columns = [c.name for c in worksheet.columns]
+            self._col_meta = [(i, c.name, getattr(c, "kind", "number")) for i, c in enumerate(worksheet.columns)]
 
         self.selected_params: Optional[Dict[str, Any]] = None
+        self._last_filter_kinds: Optional[tuple[str, ...]] = ("number",)
         from .variable_dialogs import default_confidence_percent
         self.options: Dict[str, Any] = {
             "tolerance_k": 6.0,
@@ -116,7 +146,9 @@ class CapabilitySixpackDialog(QDialog):
             "test1": True,
         }
 
-        main_layout = QHBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setSpacing(8)
+        main_layout = QHBoxLayout()
         main_layout.setSpacing(12)
 
         # Left Column List
@@ -124,9 +156,13 @@ class CapabilitySixpackDialog(QDialog):
         lbl_cols = QLabel("Columns:")
         left_layout.addWidget(lbl_cols)
 
+        self.var_filter = QLineEdit()
+        self.var_filter.setPlaceholderText("Filter variables…")
+        self.var_filter.setClearButtonEnabled(True)
+        self.var_filter.textChanged.connect(lambda _txt: self._populate_col_list(self._last_filter_kinds))
+        left_layout.addWidget(self.var_filter)
+
         self.col_list = QListWidget()
-        for c in self.columns:
-            self.col_list.addItem(c)
         self.col_list.itemDoubleClicked.connect(self._insert_selected_column)
         left_layout.addWidget(self.col_list)
 
@@ -157,7 +193,7 @@ class CapabilitySixpackDialog(QDialog):
         sc_grid.addWidget(self.rb_single_col, 0, 0)
         sc_grid.addWidget(self.edit_single_col, 0, 1)
 
-        lbl_sub_size = QLabel("&Subgroup size:")
+        lbl_sub_size = QLabel("&Subgroup size or ID column:")
         self.edit_sub_size = QLineEdit("1")
         lbl_sub_size.setBuddy(self.edit_sub_size)
         sc_grid.addWidget(lbl_sub_size, 1, 0, Qt.AlignmentFlag.AlignRight)
@@ -181,6 +217,7 @@ class CapabilitySixpackDialog(QDialog):
         self.edit_lsl = QLineEdit()
         lbl_lsl.setBuddy(self.edit_lsl)
         self.chk_lsl_bound = QCheckBox("Bound")
+        self.chk_lsl_bound.setToolTip("Treat as a natural physical boundary rather than a specification limit.")
         spec_grid.addWidget(lbl_lsl, 0, 0)
         spec_grid.addWidget(self.edit_lsl, 0, 1)
         spec_grid.addWidget(self.chk_lsl_bound, 0, 2)
@@ -189,6 +226,7 @@ class CapabilitySixpackDialog(QDialog):
         self.edit_usl = QLineEdit()
         lbl_usl.setBuddy(self.edit_usl)
         self.chk_usl_bound = QCheckBox("Bound")
+        self.chk_usl_bound.setToolTip("Treat as a natural physical boundary rather than a specification limit.")
         spec_grid.addWidget(lbl_usl, 1, 0)
         spec_grid.addWidget(self.edit_usl, 1, 1)
         spec_grid.addWidget(self.chk_usl_bound, 1, 2)
@@ -229,6 +267,7 @@ class CapabilitySixpackDialog(QDialog):
 
         btn_ok.clicked.connect(self._accept)
         btn_cancel.clicked.connect(self.reject)
+        btn_help.clicked.connect(lambda: _show_context_help(self, self.windowTitle(), "Configure Capability Sixpack data arrangement, subgroup size/ID, and specification limits."))
         btn_estimate.clicked.connect(self._open_estimate)
         btn_options.clicked.connect(self._open_options)
         btn_tests.clicked.connect(self._open_tests)
@@ -243,6 +282,9 @@ class CapabilitySixpackDialog(QDialog):
         right_layout.addStretch()
 
         main_layout.addLayout(right_layout)
+        outer_layout.addLayout(main_layout, 1)
+        self.error = AutoErrorLabel()
+        outer_layout.addWidget(self.error)
 
         # Focus tracking
         self._last_focused_edit = self.edit_single_col
@@ -253,17 +295,44 @@ class CapabilitySixpackDialog(QDialog):
         self.edit_usl.installEventFilter(self)
 
         self._update_arrangement_state()
+        clamp_dialog_to_screen(self, 680, 480, min_w=580, min_h=400)
+
+    def _eligible_kinds_for(self, obj) -> Optional[tuple[str, ...]]:
+        if obj in (self.edit_single_col, self.edit_across_rows):
+            return ("number",)
+        if obj is self.edit_sub_size:
+            return ("number", "text")
+        return None
+
+    def _populate_col_list(self, kinds: Optional[tuple[str, ...]] = None):
+        self._last_filter_kinds = kinds
+        self.col_list.clear()
+        needle = self.var_filter.text().strip().lower() if hasattr(self, "var_filter") else ""
+        for i, name, kind in self._col_meta:
+            if self.worksheet is not None and kinds is not None and kind not in kinds:
+                continue
+            if needle and needle not in name.lower() and needle not in f"c{i + 1}":
+                continue
+            item = QListWidgetItem(f"C{i + 1}   {name}")
+            item.setToolTip(f"C{i + 1}: {name} ({kind})")
+            item.setData(Qt.ItemDataRole.UserRole, (i, name, kind))
+            self.col_list.addItem(item)
 
     def eventFilter(self, obj, event):
         if event.type() == event.Type.FocusIn:
-            self._last_focused_edit = obj
+            if obj in (self.edit_single_col, self.edit_sub_size, self.edit_across_rows):
+                self._last_focused_edit = obj
+                self._populate_col_list(self._eligible_kinds_for(obj))
+            elif obj in (self.edit_lsl, self.edit_usl):
+                self._populate_col_list(None)
         return super().eventFilter(obj, event)
 
     def _insert_selected_column(self):
         cur_item = self.col_list.currentItem()
         if not cur_item or not self._last_focused_edit:
             return
-        col_text = cur_item.text()
+        meta = cur_item.data(Qt.ItemDataRole.UserRole)
+        col_text = meta[1] if isinstance(meta, tuple) and len(meta) >= 2 else cur_item.text()
         if self._last_focused_edit == self.edit_across_rows:
             current = self.edit_across_rows.text().strip()
             self.edit_across_rows.setText(f"{current} '{col_text}'" if current else f"'{col_text}'")
@@ -279,6 +348,7 @@ class CapabilitySixpackDialog(QDialog):
             self._last_focused_edit = self.edit_single_col
         else:
             self._last_focused_edit = self.edit_across_rows
+        self._populate_col_list(self._eligible_kinds_for(self._last_focused_edit))
 
     def _open_options(self):
         dlg = CapabilityOptionsDialog(self.options, self)
@@ -296,28 +366,59 @@ class CapabilitySixpackDialog(QDialog):
             self.options.update(dlg.options)
 
     def _accept(self):
+        self.error.clear()
         single = self.rb_single_col.isChecked()
-        col_name = self.edit_single_col.text().strip().strip("'\"")
+        raw_single = self.edit_single_col.text().strip()
         across_text = self.edit_across_rows.text().strip()
-        sub_size_text = self.edit_sub_size.text().strip().strip("'\"")
+        raw_sub = self.edit_sub_size.text().strip()
 
         if single:
-            if not col_name:
-                QMessageBox.warning(self, "StatCraft", "Please select or enter a data column.")
+            if not raw_single:
+                self.error.setText("Please select or enter a numeric data column.")
                 return
-            if not sub_size_text:
-                QMessageBox.warning(self, "StatCraft", "Please enter a subgroup size or subgroup indicator column.")
+            try:
+                col_name = _resolve_sheet_col_name(self.worksheet, raw_single, allowed_kinds=("number",))
+            except ValueError as exc:
+                self.error.setText(str(exc))
                 return
+            if not raw_sub:
+                self.error.setText("Please enter a subgroup size or subgroup indicator column.")
+                return
+            if raw_sub.isdigit():
+                sub_size_text = raw_sub
+                if int(sub_size_text) < 1:
+                    self.error.setText("Subgroup size must be a positive integer.")
+                    return
+            else:
+                try:
+                    sub_size_text = _resolve_sheet_col_name(self.worksheet, raw_sub, allowed_kinds=("number", "text"))
+                except ValueError as exc:
+                    self.error.setText(str(exc))
+                    return
+            cols_across_list = []
         else:
             if not across_text:
-                QMessageBox.warning(self, "StatCraft", "Please enter columns across rows.")
+                self.error.setText("Please enter columns across rows.")
                 return
+            import re
+            tokens = re.findall(r"'([^']*)'|\"([^\"]*)\"|(\S+)", across_text)
+            raw_tokens = [t[0] or t[1] or t[2] for t in tokens if (t[0] or t[1] or t[2])]
+            try:
+                cols_across_list = [
+                    _resolve_sheet_col_name(self.worksheet, tok, allowed_kinds=("number",))
+                    for tok in raw_tokens
+                ]
+            except ValueError as exc:
+                self.error.setText(str(exc))
+                return
+            col_name = cols_across_list[0] if cols_across_list else "Data"
+            sub_size_text = ""
 
         # Spec limits validation
         lsl_text = self.edit_lsl.text().strip()
         usl_text = self.edit_usl.text().strip()
         if not lsl_text and not usl_text:
-            QMessageBox.warning(self, "StatCraft", "At least one specification limit (Lower or Upper spec) is required.")
+            self.error.setText("At least one specification limit (Lower or Upper spec) is required.")
             return
 
         lsl_val = None
@@ -325,7 +426,7 @@ class CapabilitySixpackDialog(QDialog):
             try:
                 lsl_val = float(lsl_text)
             except ValueError:
-                QMessageBox.warning(self, "StatCraft", f"Invalid Lower spec limit: '{lsl_text}'")
+                self.error.setText(f"Invalid Lower spec limit: '{lsl_text}'.")
                 return
 
         usl_val = None
@@ -333,11 +434,11 @@ class CapabilitySixpackDialog(QDialog):
             try:
                 usl_val = float(usl_text)
             except ValueError:
-                QMessageBox.warning(self, "StatCraft", f"Invalid Upper spec limit: '{usl_text}'")
+                self.error.setText(f"Invalid Upper spec limit: '{usl_text}'.")
                 return
 
         if lsl_val is not None and usl_val is not None and lsl_val >= usl_val:
-            QMessageBox.warning(self, "StatCraft", "Lower specification limit must be strictly less than Upper specification limit.")
+            self.error.setText("Lower specification limit must be strictly less than Upper specification limit.")
             return
 
         hmean_val = None
@@ -345,7 +446,7 @@ class CapabilitySixpackDialog(QDialog):
             try:
                 hmean_val = float(self.edit_hmean.text().strip())
             except ValueError:
-                QMessageBox.warning(self, "StatCraft", "Invalid Historical mean value.")
+                self.error.setText("Invalid Historical mean value.")
                 return
 
         hsd_val = None
@@ -355,22 +456,13 @@ class CapabilitySixpackDialog(QDialog):
                 if hsd_val <= 0:
                     raise ValueError()
             except ValueError:
-                QMessageBox.warning(self, "StatCraft", "Historical standard deviation must be positive.")
+                self.error.setText("Historical standard deviation must be positive.")
                 return
-
-        cols_across_list = []
-        if not single:
-            import re
-            tokens = re.findall(r"'([^']*)'|\"([^\"]*)\"|(\S+)", across_text)
-            for t in tokens:
-                c = t[0] or t[1] or t[2]
-                if c:
-                    cols_across_list.append(c)
 
         self.selected_params = {
             "single_column": single,
             "analysis_mode": self.analysis_mode,
-            "column_name": col_name if single else (cols_across_list[0] if cols_across_list else "Data"),
+            "column_name": col_name,
             "subgroup_spec": sub_size_text if single else None,
             "cols_across": cols_across_list if not single else None,
             "lsl": lsl_val,
@@ -384,6 +476,47 @@ class CapabilitySixpackDialog(QDialog):
 
         self.accept()
 
+    def get_state(self) -> Dict[str, Any]:
+        import copy
+        return {
+            "single": self.rb_single_col.isChecked(),
+            "col": self.edit_single_col.text(),
+            "sub": self.edit_sub_size.text(),
+            "across": self.edit_across_rows.text(),
+            "lsl": self.edit_lsl.text(),
+            "usl": self.edit_usl.text(),
+            "lsl_bound": self.chk_lsl_bound.isChecked(),
+            "usl_bound": self.chk_usl_bound.isChecked(),
+            "hmean": self.edit_hmean.text(),
+            "hsd": self.edit_hsd.text(),
+            "options": copy.deepcopy(self.options),
+        }
+
+    def set_state(self, state: Dict[str, Any]) -> None:
+        import copy
+        if not isinstance(state, dict):
+            return
+        if "single" in state:
+            self.rb_single_col.setChecked(bool(state["single"]))
+            self.rb_across_rows.setChecked(not bool(state["single"]))
+        for attr, key in (
+            ("edit_single_col", "col"),
+            ("edit_sub_size", "sub"),
+            ("edit_across_rows", "across"),
+            ("edit_lsl", "lsl"),
+            ("edit_usl", "usl"),
+            ("edit_hmean", "hmean"),
+            ("edit_hsd", "hsd"),
+        ):
+            if key in state:
+                getattr(self, attr).setText(str(state[key]))
+        if "lsl_bound" in state:
+            self.chk_lsl_bound.setChecked(bool(state["lsl_bound"]))
+        if "usl_bound" in state:
+            self.chk_usl_bound.setChecked(bool(state["usl_bound"]))
+        if isinstance(state.get("options"), dict):
+            self.options.update(copy.deepcopy(state["options"]))
+
 
 
 class CapabilitySixpackNonnormalDialog(QDialog):
@@ -392,15 +525,19 @@ class CapabilitySixpackNonnormalDialog(QDialog):
     def __init__(self, worksheet=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Capability Sixpack (Nonnormal Distribution)")
-        self.resize(560, 400)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
+        self.setSizeGripEnabled(True)
         self.worksheet = worksheet
-        self.columns: List[str] = []
+        self._col_meta: List[tuple[int, str, str]] = []
+        self._last_filter_kinds: Optional[tuple[str, ...]] = ("number",)
         if worksheet and hasattr(worksheet, "columns"):
-            self.columns = [c.name for c in worksheet.columns]
+            self._col_meta = [(i, c.name, getattr(c, "kind", "number")) for i, c in enumerate(worksheet.columns)]
 
         self.selected_params: Optional[Dict[str, Any]] = None
 
-        main_layout = QHBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setSpacing(8)
+        main_layout = QHBoxLayout()
         main_layout.setSpacing(12)
 
         # Left Column List
@@ -408,9 +545,13 @@ class CapabilitySixpackNonnormalDialog(QDialog):
         lbl_cols = QLabel("Columns:")
         left_layout.addWidget(lbl_cols)
 
+        self.var_filter = QLineEdit()
+        self.var_filter.setPlaceholderText("Filter variables…")
+        self.var_filter.setClearButtonEnabled(True)
+        self.var_filter.textChanged.connect(lambda _txt: self._populate_col_list(self._last_filter_kinds))
+        left_layout.addWidget(self.var_filter)
+
         self.col_list = QListWidget()
-        for c in self.columns:
-            self.col_list.addItem(c)
         self.col_list.itemDoubleClicked.connect(self._insert_selected_column)
         left_layout.addWidget(self.col_list)
 
@@ -479,33 +620,67 @@ class CapabilitySixpackNonnormalDialog(QDialog):
         right_layout.addWidget(btn_cancel)
         right_layout.addStretch()
         main_layout.addLayout(right_layout)
+        outer_layout.addLayout(main_layout, 1)
+
+        self.error = AutoErrorLabel()
+        outer_layout.addWidget(self.error)
+
+        self._last_focused_edit = self.edit_col
+        self.edit_col.installEventFilter(self)
+        self.edit_sub.installEventFilter(self)
+        self._populate_col_list(("number",))
+        clamp_dialog_to_screen(self, 620, 440, min_w=540, min_h=380)
+
+    def _populate_col_list(self, kinds: Optional[tuple[str, ...]] = None):
+        self._last_filter_kinds = kinds
+        self.col_list.clear()
+        needle = self.var_filter.text().strip().lower() if hasattr(self, "var_filter") else ""
+        for i, name, kind in self._col_meta:
+            if self.worksheet is not None and kinds is not None and kind not in kinds:
+                continue
+            if needle and needle not in name.lower() and needle not in f"c{i + 1}":
+                continue
+            item = QListWidgetItem(f"C{i + 1}   {name}")
+            item.setToolTip(f"C{i + 1}: {name} ({kind})")
+            item.setData(Qt.ItemDataRole.UserRole, (i, name, kind))
+            self.col_list.addItem(item)
+
+    def eventFilter(self, obj, event):
+        if event.type() == event.Type.FocusIn and obj in (self.edit_col, self.edit_sub):
+            self._last_focused_edit = obj
+            kinds = ("number",) if obj is self.edit_col else ("number", "text")
+            self._populate_col_list(kinds)
+        return super().eventFilter(obj, event)
 
     def _insert_selected_column(self):
         item = self.col_list.currentItem()
         if not item:
             return
-        col_text = item.text()
+        meta = item.data(Qt.ItemDataRole.UserRole)
+        col_text = meta[1] if isinstance(meta, tuple) and len(meta) >= 2 else item.text()
         if " " in col_text:
             col_text = f"'{col_text}'"
-        self.edit_col.setText(col_text)
+        target = getattr(self, "_last_focused_edit", self.edit_col) or self.edit_col
+        target.setText(col_text)
 
     def _accept(self):
-        col_name = self.edit_col.text().strip()
-        if not col_name:
-            QMessageBox.warning(self, "StatCraft", "Please specify a data column.")
+        self.error.clear()
+        raw_col = self.edit_col.text().strip()
+        if not raw_col:
+            self.error.setText("Please specify a numeric data column.")
             return
-
-        import re
-        m = re.match(r"^'([^']*)'$|^\"([^\"]*)\"$", col_name)
-        if m:
-            col_name = m.group(1) or m.group(2)
+        try:
+            col_name = _resolve_sheet_col_name(self.worksheet, raw_col, allowed_kinds=("number",))
+        except ValueError as exc:
+            self.error.setText(str(exc))
+            return
 
         lsl_val = None
         if self.edit_lsl.text().strip():
             try:
                 lsl_val = float(self.edit_lsl.text().strip())
             except ValueError:
-                QMessageBox.warning(self, "StatCraft", "Invalid Lower Spec Limit.")
+                self.error.setText("Invalid Lower Spec Limit.")
                 return
 
         usl_val = None
@@ -513,22 +688,37 @@ class CapabilitySixpackNonnormalDialog(QDialog):
             try:
                 usl_val = float(self.edit_usl.text().strip())
             except ValueError:
-                QMessageBox.warning(self, "StatCraft", "Invalid Upper Spec Limit.")
+                self.error.setText("Invalid Upper Spec Limit.")
                 return
+
+        if lsl_val is not None and usl_val is not None and lsl_val >= usl_val:
+            self.error.setText("Lower specification limit must be strictly less than Upper specification limit.")
+            return
 
         tgt_val = None
         if self.edit_tgt.text().strip():
             try:
                 tgt_val = float(self.edit_tgt.text().strip())
             except ValueError:
-                QMessageBox.warning(self, "StatCraft", "Invalid Target.")
+                self.error.setText("Target must be a valid number.")
                 return
 
         if lsl_val is None and usl_val is None:
-            QMessageBox.warning(self, "StatCraft", "At least one specification limit (LSL or USL) must be provided.")
+            self.error.setText("At least one specification limit (LSL or USL) must be provided.")
             return
 
-        sub_spec = self.edit_sub.text().strip() or "1"
+        raw_sub = self.edit_sub.text().strip() or "1"
+        if raw_sub.isdigit():
+            sub_spec = raw_sub
+            if int(sub_spec) < 1:
+                self.error.setText("Subgroup size must be a positive integer.")
+                return
+        else:
+            try:
+                sub_spec = _resolve_sheet_col_name(self.worksheet, raw_sub, allowed_kinds=("number", "text"))
+            except ValueError as exc:
+                self.error.setText(str(exc))
+                return
         dist = self.cbo_dist.currentText().lower()
 
         self.selected_params = {

@@ -268,7 +268,8 @@ def _fit_model_bundle(worksheet, recipe):
             result=result,
             warnings=list(result.get('warnings', [])),
         )
-    if action in ('analyze_factorial', 'analyze_factorial_terms'):
+    is_factorial = action in ('analyze_factorial', 'analyze_factorial_terms')
+    if is_factorial:
         from .doe import analyze_factorial
         selected_terms = p.get('selected_terms') if action == 'analyze_factorial_terms' else None
         result = analyze_factorial(
@@ -278,15 +279,17 @@ def _fit_model_bundle(worksheet, recipe):
             p.get('max_order', 2),
             p.get('confidence', 0.95),
             selected_terms=selected_terms,
+            include_blocks=p.get('include_blocks'),
         )
+        result['coding'] = 'effect'
         result['coding_information'] = [
-            dict(name=c['name'], kind='covariate', center=c['center'], half_range=c['half_range'])
+            dict(kind='covariate', center=c['center'], half_range=c['half_range'])
+            if c.get('half_range') is not None else dict(kind='factor', levels=c['levels'])
             for c in result['factor_coding']
         ]
         result['terms'] = result['selected_terms']
         indices = list(p['factor_indices'])
         response_idx = p['response_index']
-        factor_count = 0
     else:
         from .prediction import _source as ols_source
         spec, result = ols_source(worksheet, recipe)
@@ -297,8 +300,11 @@ def _fit_model_bundle(worksheet, recipe):
     n = len(source_rows)
     train = [[worksheet.columns[j].values[r] for j in indices] for r in source_rows]
     y = np.asarray([worksheet.columns[response_idx].values[r] for r in source_rows], dtype=float)
-    encode_action = 'analyze_response_surface' if action in ('analyze_factorial', 'analyze_factorial_terms') else action
+    encode_action = 'analyze_response_surface' if is_factorial else action
     x = _encode_ols(train, encode_action, result)
+    block_columns = result['verification_block_columns'] if is_factorial else []
+    if block_columns:
+        x = np.column_stack([np.asarray(block_columns).T, x])
     means = np.asarray([math.fsum(x[:, j] / n) for j in range(x.shape[1])])
     scales = np.max(np.abs(x - means), axis=0)
     z = (x - means) / scales
@@ -309,14 +315,15 @@ def _fit_model_bundle(worksheet, recipe):
     predictors = []
     for j, idx in enumerate(indices):
         c = worksheet.columns[idx]
-        is_factor = j < factor_count
-        if action in ('analyze_factorial', 'analyze_factorial_terms'):
+        is_factor = (result['coding_information'][j]['kind'] == 'factor'
+                     if is_factorial else j < factor_count)
+        if is_factor:
+            lo = hi = None
+            levels = list(result['coding_information'][j]['levels'])
+        elif is_factorial:
             f_code = result['factor_coding'][j]
             lo, hi = float(f_code['low']), float(f_code['high'])
             levels = []
-        elif is_factor:
-            lo = hi = None
-            levels = list(result['coding_information'][j]['levels'])
         else:
             col_vals = [row[j] for row in train]
             lo, hi = float(min(col_vals)), float(max(col_vals))
@@ -334,6 +341,7 @@ def _fit_model_bundle(worksheet, recipe):
         recipe=recipe,
         action=action,
         encode_action=encode_action,
+        block_column_count=len(block_columns),
         model_title=MODEL_TITLES[action],
         response_index=response_idx,
         response_name=worksheet.columns[response_idx].name,
@@ -377,6 +385,9 @@ def _predict_bundle_rows(bundle, rows, confidence=0.95, side='two_sided', comput
     svd = bundle['svd']
     res = bundle['result']
     new_x = _encode_ols(rows, bundle['encode_action'], res)
+    if bundle['block_column_count']:
+        # Zero sum-to-zero contrasts give the equally weighted mean across blocks.
+        new_x = np.column_stack([np.zeros((len(rows), bundle['block_column_count'])), new_x])
     coded = (new_x - svd['means']) / svd['scales']
     fits = svd['mean_y'] + svd['unit'] * (coded @ svd['gamma'])
     if not compute_intervals:

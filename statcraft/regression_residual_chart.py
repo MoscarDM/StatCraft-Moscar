@@ -27,7 +27,7 @@ class RegressionResidualChartWidget(GraphInteractionMixin, QWidget):
         self.entry = entry if isinstance(entry, dict) else {}
         self.result = self.entry.get("result", self.entry)
         self.title = self.entry.get("title", "Residual Plots")
-        self.response_name = self.result.get("response_name", "Y")
+        self.response_name = self.result.get("response_name") or self.result.get("y_name") or "Y"
 
         self.setMinimumSize(680, 480)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -57,6 +57,11 @@ class RegressionResidualChartWidget(GraphInteractionMixin, QWidget):
             self.resid_label = "Residual"
 
         self.n = len(self.residuals)
+        rows = self.result.get("row_indices") or self.result.get("points", {}).get("row_indices", [])
+        if len(rows) == len(self.std_resids) and all(type(row) is int and row >= 0 for row in rows):
+            self.observation_order = [row + 1 for row in rows]
+        else:
+            self.observation_order = list(range(1, len(self.std_resids) + 1))
         self._init_graph_interaction()
         self.hit_regions = []
 
@@ -344,11 +349,11 @@ class RegressionResidualChartWidget(GraphInteractionMixin, QWidget):
         plot_rect = QRectF(rect.left() + margin_l, rect.top() + margin_t,
                            rect.width() - margin_l - margin_r, rect.height() - margin_t - margin_b)
 
-        n = len(self.std_resids)
-        x_arr = np.arange(1, n + 1)
+        x_arr = self.observation_order
         res_arr = np.asarray(self.std_resids, dtype=float)
 
-        x_min, x_max = 0.5, n + 0.5
+        first, last = min(x_arr), max(x_arr)
+        x_min, x_max = first - 0.5, last + 0.5
         y_min, y_max = float(np.min(res_arr)), float(np.max(res_arr))
         limit = max(2.5, abs(y_min), abs(y_max)) * 1.15
         y_min, y_max = -limit, limit
@@ -383,5 +388,9 @@ class RegressionResidualChartWidget(GraphInteractionMixin, QWidget):
         # Axis label
         p.setFont(QFont("Segoe UI", 7))
         p.setPen(text_c)
+        tick_step = max(1, math.ceil((last - first) / 6))
+        for order in range(first, last + 1, tick_step):
+            x = to_screen(order, 0).x()
+            p.drawText(QRectF(x - 20, plot_rect.bottom(), 40, 13), Qt.AlignmentFlag.AlignCenter, str(order))
         p.drawText(QRectF(plot_rect.left(), rect.bottom() - 16, plot_rect.width(), 14),
                    Qt.AlignmentFlag.AlignCenter, "Observation Order")

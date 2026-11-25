@@ -168,6 +168,26 @@ def generate_executive_summary(entry: Dict[str, Any], worksheet: Optional[Worksh
         sens = result.get("sensitivity") or []
         if sens:
             bullets.append(f"Primary variance driver: '{sens[0]['input']}' accounts for {sens[0]['variance_contribution_pct']:.1f}% of simulated output sensitivity.")
+    elif analysis == "operating_window_3d":
+        ws = result.get("window_summary", {})
+        rob = result.get("robust_setting") or {}
+        bullets.append(
+            f"3D Operating Window identified {ws.get('drift_feasible_pct', 0):.1f}% of the evaluated factor grid as drift-feasible inside the design hull."
+        )
+        if rob:
+            setting_label = "Best compromise (no feasible window)" if result.get("empty_window") else "Recommended Robust Setting"
+            bullets.append(
+                f"{setting_label} has min drift std margin = {rob.get('min_drift_std_margin', 0):.3f} (limiting spec: {rob.get('limiting_response', '')})."
+            )
+    elif analysis == "confirmation_plan":
+        bullets.append(
+            f"Confirmation Run Plan generated {result.get('n_runs', 0)} randomized runs (m = {result.get('replicates', 1)} replicates/setting, {result.get('confidence', 0.95)*100:.0f}% PI) in '{result.get('worksheet_name', '')}'."
+        )
+    elif analysis == "confirmation_evaluation":
+        verdict = "CONFIRMED" if result.get("confirmed") else "NOT CONFIRMED"
+        bullets.append(
+            f"Confirmation Experiments verdict: {verdict} across {len(result.get('comparisons', []))} response-setting check(s) aligned by RunID."
+        )
 
     # 8. UNIVERSAL FALLBACK FOR OTHER OUTPUTS
     else:
@@ -175,8 +195,8 @@ def generate_executive_summary(entry: Dict[str, Any], worksheet: Optional[Worksh
         if "sample_size" in result or "n" in result:
             n = result.get("sample_size") or result.get("n")
             bullets.append(f"Analysis evaluated {n} verified observations from the active worksheet.")
-        if "p_value" in result:
-            p = result["p_value"]
+        p = result.get("p_value")
+        if p is not None:
             bullets.append(f"Hypothesis test result: p-value = {p:.4f} ({'Significant at α = 0.05' if p < 0.05 else 'Not significant'}).")
 
     return bullets[:3]

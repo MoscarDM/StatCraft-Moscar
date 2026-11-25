@@ -225,6 +225,7 @@ class MinitabParityRound5Tests(unittest.TestCase):
         self.assertEqual(frame.chart.view_state, DEFAULT_VIEW)
 
     def test_08_exclusive_name_and_cell_selection_and_splitter_range(self):
+        self.win.resize(1200, 760)
         self.win.show()
         self.app.processEvents()
 

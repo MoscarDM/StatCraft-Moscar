@@ -14,10 +14,11 @@ def _is_dark_active(widget=None) -> bool:
     return False
 
 """Worksheet key navigation, active cell editor, and Standard statistical column/row selection painting."""
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QKeySequence, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
-    QApplication, QHeaderView, QLineEdit, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
+    QApplication, QFrame, QHeaderView, QLineEdit, QStyle, QStyledItemDelegate, QStyleOptionViewItem,
+    QTableView, QTableWidget,
 )
 
 
@@ -64,8 +65,9 @@ class WorksheetHeaderView(QHeaderView):
             if raw is not None:
                 label_text = str(raw)
 
-        is_selected = logicalIndex in self.selected_sections
-        is_active = logicalIndex in self.active_sections
+        appearance = getattr(self, "appearance_source", self)
+        is_selected = logicalIndex in appearance.selected_sections
+        is_active = logicalIndex in appearance.active_sections
 
         dark = _is_dark_active(self)
         if self.orientation() == Qt.Orientation.Horizontal:
@@ -99,7 +101,7 @@ class WorksheetHeaderView(QHeaderView):
         painter.setFont(font)
         painter.setPen(fg)
 
-        has_formula = self.orientation() == Qt.Orientation.Horizontal and logicalIndex in getattr(self, 'formula_columns', set())
+        has_formula = self.orientation() == Qt.Orientation.Horizontal and logicalIndex in appearance.formula_columns
         text_right_margin = -26 if (has_formula and rect.width() >= 42) else -2
         painter.drawText(rect.adjusted(2, 0, text_right_margin, 0), Qt.AlignmentFlag.AlignCenter, label_text)
 
@@ -162,7 +164,9 @@ class WorksheetDelegate(QStyledItemDelegate):
                 editor.setText(self._initial_editor_text)
                 self.closeEditor.emit(editor, QStyledItemDelegate.EndEditHint.RevertModelCache)
                 return True
-            direction = movement(event, getattr(self.parent(), 'enter_direction', 'down'), in_editor=True)
+            view = self.parent()
+            owner = getattr(view, "worksheet_owner", view)
+            direction = movement(event, owner.enter_direction, in_editor=True)
             if direction is not None and isinstance(editor, QLineEdit):
                 if self.navigate is not None:
                     self.navigate(direction, editor, self)
@@ -170,7 +174,8 @@ class WorksheetDelegate(QStyledItemDelegate):
         return super().eventFilter(editor, event)
 
     def paint(self, painter, option, index):
-        table = self.parent()
+        view = self.parent()
+        table = getattr(view, "worksheet_owner", view)
         col = index.column()
         row = index.row()
         sel_cols = getattr(table, "selected_columns", set())
@@ -242,7 +247,30 @@ class WorksheetDelegate(QStyledItemDelegate):
         painter.restore()
 
 
-class WorksheetTable(QTableWidget):
+class WorksheetTableWidget(QTableWidget):
+    def edit(self, index, *args):
+        frozen = getattr(self, "frozen_panes", None)
+        pane = frozen.pane_for_index(self, index) if frozen and index.isValid() else None
+        if pane is None:
+            return super().edit(index, *args)
+        self.scrollTo(index)
+        return pane.edit(index, *args)
+
+    def scrollTo(self, index, hint=QTableView.ScrollHint.EnsureVisible):
+        frozen = getattr(self, "frozen_panes", None)
+        if frozen and frozen.active and index.isValid():
+            frozen.ensure_visible(self, index, hint)
+        else:
+            super().scrollTo(index, hint)
+
+    def scrollContentsBy(self, dx, dy):
+        super().scrollContentsBy(dx, dy)
+        frozen = getattr(self, "frozen_panes", None)
+        if frozen and self is frozen.table:
+            frozen.sync_scroll()
+
+
+class WorksheetTable(WorksheetTableWidget):
     fillHandleDragged = Signal(int, int, int, int, int, int, int, int)
 
     def __init__(self, navigate, parent=None):
@@ -546,7 +574,7 @@ class WorksheetTable(QTableWidget):
         painter.end()
 
 
-class ColumnNamesTable(QTableWidget):
+class ColumnNamesTable(WorksheetTableWidget):
     """Header row table for column names (C1, C2...) with seamless Minitab-style navigation."""
     def __init__(self, navigate, parent=None):
         super().__init__(1, 0, parent)
@@ -555,6 +583,12 @@ class ColumnNamesTable(QTableWidget):
         self.selected_columns = set()
         self.selected_rows = set()
         self.setItemDelegate(WorksheetDelegate(self, navigate, is_column_names=True))
+
+    def updateGeometries(self):
+        super().updateGeometries()
+        frozen = getattr(self, "frozen_panes", None)
+        if frozen:
+            frozen.sync_name_scroll()
 
     def event(self, event):
         if event.type() == QEvent.Type.KeyPress:
@@ -576,4 +610,233 @@ class ColumnNamesTable(QTableWidget):
                         self.navigate(direction)
                         return True
         return super().event(event)
+
+
+class FrozenWorksheetView(QTableView):
+    """A view of a pinned region of an existing worksheet table."""
+
+    def __init__(self, owner, *, column_names=False):
+        super().__init__(owner)
+        self.worksheet_owner = owner
+        self._syncing = False
+        self.setModel(owner.model())
+        self.setSelectionModel(owner.selectionModel())
+        self.setItemDelegate(WorksheetDelegate(self, owner.navigate, is_column_names=column_names))
+        self.setFocusProxy(owner)
+        self.setEditTriggers(owner.editTriggers())
+        self.setProperty("frozenWorksheetPane", True)
+        self.setSelectionMode(owner.selectionMode())
+        self.setSelectionBehavior(owner.selectionBehavior())
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+        self.setVerticalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+        self.horizontalHeader().hide()
+        self.verticalHeader().hide()
+        self.pressed.connect(lambda idx: owner.cellPressed.emit(idx.row(), idx.column()))
+        self.clicked.connect(lambda idx: owner.cellClicked.emit(idx.row(), idx.column()))
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.hide()
+
+    def mirror_header(self, source):
+        header = WorksheetHeaderView(source.orientation(), self)
+        header.appearance_source = source
+        header.setMinimumSectionSize(source.minimumSectionSize())
+        header.setDefaultSectionSize(source.defaultSectionSize())
+        header.sectionClicked.connect(source.sectionClicked.emit)
+        if source.orientation() == Qt.Orientation.Horizontal:
+            self.setHorizontalHeader(header)
+            header.sectionHandleDoubleClicked.connect(source.sectionHandleDoubleClicked.emit)
+            header.sectionResized.connect(
+                lambda index, old, size: self.worksheet_owner.setColumnWidth(index, size)
+                if size > 0 and self.worksheet_owner.columnWidth(index) != size and not self._syncing else None
+            )
+        else:
+            self.setVerticalHeader(header)
+        header.show()
+        return header
+
+    def scrollTo(self, index, hint=QTableView.ScrollHint.EnsureVisible):
+        # The canonical views own the scroll offsets, including during selection changes.
+        pass
+
+    def wheelEvent(self, event):
+        table = self.worksheet_owner.frozen_panes.table
+        QApplication.sendEvent(table.viewport(), event)
+
+
+class WorksheetFreezePanes(QObject):
+    """Keep the main worksheet and its pinned views on the same models and scroll offsets."""
+
+    def __init__(self, table, names):
+        super().__init__(table)
+        self.table = table
+        self.names = names
+        self.rows = self.columns = self.width = self.height = 0
+        self.top = self.left = self.corner = self.name_pane = None
+        self._layout_timer = QTimer(self, interval=0, singleShot=True)
+        self._layout_timer.timeout.connect(self.sync_layout)
+        for view in (table, names):
+            view.frozen_panes = self
+            view.setHorizontalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+            view.horizontalHeader().sectionResized.connect(self._schedule_layout)
+            view.viewport().installEventFilter(self)
+        table.setVerticalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+        table.verticalHeader().sectionResized.connect(self._schedule_layout)
+        table.horizontalScrollBar().rangeChanged.connect(self.sync_name_scroll)
+        for owner, target in ((table, names), (names, table)):
+            owner.horizontalHeader().sectionResized.connect(
+                lambda index, old, size, peer=target: peer.setColumnWidth(index, size)
+                if size > 0 and peer.columnWidth(index) != size else None
+            )
+
+    @property
+    def active(self):
+        return bool(self.rows or self.columns)
+
+    def _create_views(self):
+        window = self.table.window()
+        self.top = FrozenWorksheetView(self.table)
+        self.left = FrozenWorksheetView(self.table)
+        self.corner = FrozenWorksheetView(self.table)
+        self.name_pane = FrozenWorksheetView(self.names, column_names=True)
+        rows = self.top.mirror_header(self.table.verticalHeader())
+        names = self.name_pane.mirror_header(self.names.horizontalHeader())
+        for header, menu in ((rows, window._on_row_header_context_menu),
+                             (names, window._on_column_header_context_menu)):
+            header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            header.customContextMenuRequested.connect(lambda pos, h=header, show=menu: show(pos, h))
+        for pane in (self.top, self.left, self.corner):
+            pane.customContextMenuRequested.connect(
+                lambda pos, view=pane: window._on_table_context_menu(pos, view)
+            )
+        self.name_pane.customContextMenuRequested.connect(
+            lambda pos: window._show_worksheet_context_menu(self.name_pane.viewport().mapToGlobal(pos))
+        )
+
+    def set_frozen_counts(self, rows, columns):
+        if self.active or rows or columns:
+            self.rows, self.columns = rows, columns
+            if self.top is None:
+                self._create_views()
+            self.sync_layout()
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Resize:
+            self._schedule_layout()
+        return super().eventFilter(obj, event)
+
+    def _schedule_layout(self, *args):
+        if self.active and not getattr(self.table.window(), "_refreshing", False):
+            self._layout_timer.start()
+
+    def sync_layout(self):
+        self._layout_timer.stop()
+        if not self.active:
+            for pane in (self.top, self.left, self.corner, self.name_pane):
+                pane.hide()
+            self.width = self.height = 0
+            return
+
+        data = self.table.viewport().geometry()
+        names = self.names.viewport().geometry()
+        width = sum(self.table.columnWidth(c) for c in range(min(self.columns, self.table.columnCount())))
+        height = sum(self.table.rowHeight(r) for r in range(min(self.rows, self.table.rowCount())))
+        self.width = min(width, data.width())
+        self.height = min(height, data.height())
+        row_label = self.table.verticalHeader().geometry()
+        column_label = self.names.horizontalHeader().geometry()
+        self.top.verticalHeader().setFixedWidth(row_label.width())
+        self.name_pane.horizontalHeader().setFixedHeight(column_label.height())
+        panes = (
+            (self.top, QRect(row_label.x(), data.y(), data.right() + 1 - row_label.x(), self.height),
+             range(self.rows), None),
+            (self.left, QRect(data.x(), data.y() + self.height, self.width, data.height() - self.height),
+             range(self.rows, self.table.rowCount()), range(self.columns)),
+            (self.corner, QRect(data.x(), data.y(), self.width, self.height),
+             range(self.rows), range(self.columns)),
+            (self.name_pane, QRect(names.x(), column_label.y(), min(width, names.width()),
+                                   names.bottom() + 1 - column_label.y()),
+             None, range(self.columns)),
+        )
+        for pane, geometry, rows, columns in panes:
+            if geometry.isEmpty():
+                pane.hide()
+                continue
+            self._sync_sections(pane, rows, columns)
+            pane.setGeometry(geometry)
+            pane.show()
+            pane.raise_()
+        self.sync_scroll()
+
+    @staticmethod
+    def _sync_sections(pane, rows, columns):
+        owner = pane.worksheet_owner
+        pane._syncing = True
+        try:
+            pane.setFont(owner.font())
+            pane.setShowGrid(owner.showGrid())
+            for source, target, visible in ((owner.horizontalHeader(), pane.horizontalHeader(), columns),
+                                            (owner.verticalHeader(), pane.verticalHeader(), rows)):
+                for section in range(source.count()):
+                    hidden = source.isSectionHidden(section) or (visible is not None and section not in visible)
+                    if target.isSectionHidden(section) != hidden:
+                        target.setSectionHidden(section, hidden)
+                    if not hidden and target.sectionSize(section) != source.sectionSize(section):
+                        target.resizeSection(section, source.sectionSize(section))
+        finally:
+            pane._syncing = False
+
+    def sync_name_scroll(self, *args):
+        # The names viewport extends across the data table's vertical scrollbar gutter.
+        source = self.table.horizontalScrollBar()
+        scroll = self.names.horizontalScrollBar()
+        scroll.setRange(source.minimum(), source.maximum())
+        scroll.setValue(source.value())
+
+    def sync_scroll(self):
+        self.sync_name_scroll()
+        if self.height:
+            self.top.horizontalScrollBar().setValue(self.table.horizontalScrollBar().value())
+        if self.width:
+            self.left.verticalScrollBar().setValue(self.table.verticalScrollBar().value())
+
+    def pane_for_index(self, owner, index):
+        column = self.width and index.column() < self.columns and not owner.isColumnHidden(index.column())
+        if owner is self.names:
+            return self.name_pane if column else None
+        row = self.height and index.row() < self.rows
+        if row:
+            return self.corner if column else self.top
+        return self.left if column else None
+
+    def ensure_visible(self, owner, index, hint):
+        # Qt scrolls against the full viewport. Keep pinned axes steady and ensure
+        # moving cells are revealed just beyond the pinned strips.
+        horizontal = self.table.horizontalScrollBar()
+        vertical = self.table.verticalScrollBar()
+        old_x, old_y = horizontal.value(), vertical.value()
+        if owner is self.names:
+            # Use the worksheet's narrower viewport and keep the body row in place.
+            data_index = self.table.model().index(max(0, self.table.currentRow()), index.column())
+        else:
+            data_index = index
+        QTableView.scrollTo(self.table, data_index, hint)
+        rect = self.table.visualRect(data_index)
+        if self.width and index.column() < self.columns:
+            horizontal.setValue(old_x)
+        elif 0 <= rect.right() and rect.x() < self.width:
+            horizontal.setValue(horizontal.value() + rect.x() - self.width)
+        if owner is self.names or (self.height and index.row() < self.rows):
+            vertical.setValue(old_y)
+        elif 0 <= rect.bottom() and rect.y() < self.height:
+            vertical.setValue(vertical.value() + rect.y() - self.height)
+
+    def update_highlights(self):
+        if self.active:
+            for pane in (self.top, self.left, self.corner, self.name_pane):
+                pane.viewport().update()
+                pane.horizontalHeader().viewport().update()
+                pane.verticalHeader().viewport().update()
 

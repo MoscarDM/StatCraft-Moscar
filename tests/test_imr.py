@@ -169,6 +169,28 @@ class IMRChartTests(unittest.TestCase):
         widget.resize(800, 600)
         widget.repaint()
 
+    def test_variable_picker_assigns_named_column_and_accepts_fit(self):
+        from PySide6.QtWidgets import QDialog
+        from statcraft.imr_dialogs import IMRChartDialog
+
+        worksheet = Worksheet("Measurements", [
+            Column("Start", values=[0, 1, 2, 3]),
+            Column("Final Yield", values=[10, 12, 9, 11]),
+        ])
+        dialog = IMRChartDialog(worksheet)
+        self.addCleanup(dialog.deleteLater)
+        item = dialog.var_list.item(1)
+        dialog.var_list.setCurrentItem(item)
+        dialog.btn_select.click()
+        self.assertEqual(dialog.edit_vars.text(), 'C2: "Final Yield"')
+
+        dialog.edit_vars.clear()
+        dialog.var_list.itemDoubleClicked.emit(item)
+        self.assertEqual(dialog.edit_vars.text(), 'C2: "Final Yield"')
+        dialog._on_ok()
+        self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
+        self.assertEqual(dialog.selected_params["variables"], [1])
+
 
 if __name__ == "__main__":
     unittest.main()

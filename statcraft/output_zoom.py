@@ -14,22 +14,67 @@ class OutputZoomView(QGraphicsView):
         self.setFrameShape(QGraphicsView.Shape.NoFrame)
         self.setStyleSheet('QGraphicsView { border: none; background: #e6e6e6; }')
         self._resizing=False
+        self.verticalScrollBar().rangeChanged.connect(self._on_vbar_range_changed)
         self.resize_content()
 
+    def _on_vbar_range_changed(self,_min,_max):
+        try:
+            if self.percent==100 and not self.fit_mode:
+                self.resize_content()
+        except RuntimeError:
+            return
+
+    def _safe_resize_content(self):
+        try:
+            if self.percent==100 and not self.fit_mode:
+                self.resize_content()
+        except RuntimeError:
+            return
+
     def resize_content(self):
-        if self._resizing:return
-        self._resizing=True
-        hint=self.content.minimumSizeHint()
-        width=max(320,self.width()-2,self.content.minimumWidth(),hint.width())
-        height=max(180,self.height()-2,self.content.minimumHeight(),hint.height())
-        self.proxy.resize(width,height)
-        self.scene().setSceneRect(self.proxy.boundingRect())
-        if self.fit_mode:self.fit_window()
-        self._resizing=False
+        try:
+            if getattr(self,'_resizing',False):return
+            self._resizing=True
+            try:
+                vp=self.viewport().size()
+                avail_w=(vp.width()-4) if vp.width()>6 else (self.width()-4)
+                avail_h=(vp.height()-4) if vp.height()>6 else (self.height()-4)
+                hint=self.content.minimumSizeHint()
+                min_w=max(self.content.minimumWidth(),hint.width())
+                min_h=max(self.content.minimumHeight(),hint.height())
+                vbar=self.verticalScrollBar()
+                if (
+                    self.verticalScrollBarPolicy()!=Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+                    and not vbar.isVisible()
+                    and min_h>avail_h
+                ):
+                    vbar_w=max(12,vbar.sizeHint().width())
+                    avail_w=max(1,avail_w-vbar_w)
+                width=max(320,avail_w,min_w)
+                if self.content.hasHeightForWidth():
+                    hfw=self.content.heightForWidth(width)
+                    if hfw>0:
+                        min_h=max(min_h,hfw)
+                height=max(180,avail_h,min_h)
+                self.proxy.resize(width,height)
+                self.scene().setSceneRect(self.proxy.boundingRect())
+                if self.fit_mode:self.fit_window()
+            finally:
+                self._resizing=False
+        except RuntimeError:
+            return
+
+    def showEvent(self,event):
+        super().showEvent(event)
+        QTimer.singleShot(0,self._safe_resize_content)
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
-        if hasattr(self,'proxy'):self.resize_content()
+        if hasattr(self,'proxy'):
+            if self.fit_mode:
+                self.fit_window()
+            elif self.percent==100:
+                self.resize_content()
 
     def set_zoom(self,percent):
         self.fit_mode=False;self.percent=max(10,min(500,int(percent)))

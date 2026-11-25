@@ -102,6 +102,7 @@ def prepare(chart, result: dict[str, Any]) -> None:
             'k_subgroups': k_sub,
             'values': disp_vals,
             'center': disp_center,
+            'centers': result.get('disp_centers', []),
             'center_label': f'_\n{disp_name}={disp_center:.3f}' if disp_center is not None else '',
             'lcls': disp_lcls,
             'ucls': disp_ucls,
@@ -128,14 +129,24 @@ def draw_panel(chart, p: QPainter, area: QRectF, d: dict[str, Any]) -> None:
 
     values = d['values']
     center = d.get('center')
+    centers = d.get('centers', [])
     lcls = d.get('lcls', [])
     ucls = d.get('ucls', [])
-    signals = d.get('signals', {})
+    raw_signals = d.get('signals', {})
+    signals = {}
+    for k, v in raw_signals.items():
+        try:
+            signals[int(k)] = v
+        except (TypeError, ValueError):
+            pass
 
     # Collect all Y values for bounds
     all_y = [v for v in values if v is not None]
     if center is not None:
         all_y.append(center)
+    for c_val in centers:
+        if c_val is not None:
+            all_y.append(c_val)
     for l in lcls:
         if l is not None:
             all_y.append(l)
@@ -156,10 +167,27 @@ def draw_panel(chart, p: QPainter, area: QRectF, d: dict[str, Any]) -> None:
     p.save()
     p.setClipRect(plot.adjusted(-1, -1, 1, 1))
 
-    # 1. Draw Center Line (green solid/dash)
-    if center is not None and yb[0] <= center <= yb[1]:
-        pen_cl = QPen(QColor(GREEN), 1.3, Qt.PenStyle.DashLine)
-        p.setPen(pen_cl)
+    # 1. Draw Center Line (green solid/dash, stepped if varying across subgroups)
+    valid_centers = [c_val for c_val in centers if c_val is not None]
+    pen_cl = QPen(QColor(GREEN), 1.3, Qt.PenStyle.DashLine)
+    p.setPen(pen_cl)
+    if valid_centers and len(set(round(c_val, 5) for c_val in valid_centers)) > 1:
+        path_cl = QPainterPath()
+        first = True
+        for i, c_val in enumerate(centers, 1):
+            if c_val is None:
+                continue
+            x_left = x(i - 0.5)
+            x_right = x(i + 0.5)
+            y_pos = y(c_val)
+            if first:
+                path_cl.moveTo(QPointF(x_left, y_pos))
+                first = False
+            else:
+                path_cl.lineTo(QPointF(x_left, y_pos))
+            path_cl.lineTo(QPointF(x_right, y_pos))
+        p.drawPath(path_cl)
+    elif center is not None and yb[0] <= center <= yb[1]:
         p.drawLine(QPointF(plot.left(), y(center)), QPointF(plot.right(), y(center)))
 
     # 2. Draw Control Limits (red dashed lines)
@@ -317,7 +345,12 @@ def draw_panel(chart, p: QPainter, area: QRectF, d: dict[str, Any]) -> None:
         lbl_uw = f"UWL={uw_val:.3f}" if len(set(round(u, 5) for u in valid_uwl)) == 1 else "UWL=varies"
         p.drawText(QRectF(right_x, y(uw_val) - 8, 75, 16), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, lbl_uw)
 
-    if center is not None:
+    if valid_centers and len(set(round(c_val, 5) for c_val in valid_centers)) > 1:
+        c_val = valid_centers[-1]
+        p.setPen(QColor(GREEN))
+        c_lbl_prefix = d.get('center_label', 'CL=').split('=')[0].replace('\n', ' ')
+        p.drawText(QRectF(right_x, y(c_val) - 8, 75, 16), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, f"{c_lbl_prefix}=varies")
+    elif center is not None:
         p.setPen(QColor(GREEN))
         c_lbl = d.get('center_label', f"CL={center:.3f}").replace('\n', ' ')
         p.drawText(QRectF(right_x, y(center) - 8, 75, 16), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, c_lbl)

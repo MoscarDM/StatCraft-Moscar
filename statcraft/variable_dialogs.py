@@ -715,7 +715,7 @@ class ScatterDialog(QDialog):
             if c.kind=='number':
                 label=format_variable_reference(i,worksheet)
                 item=QListWidgetItem(label); item.setToolTip(label); item.setData(Qt.ItemDataRole.UserRole,i); self.available.addItem(item)
-        left.addWidget(self.available); select=QPushButton('Select'); select.setAutoDefault(False)
+        left.addWidget(self.available); self.available.installEventFilter(self); select=QPushButton('Select'); select.setAutoDefault(False)
         select.clicked.connect(self.transfer); self.available.itemDoubleClicked.connect(lambda item:self.transfer()); left.addWidget(select); body.addLayout(left,1)
         right=QVBoxLayout(); self.roles=RoleTable(8,2); self.roles.setHorizontalHeaderLabels(['Y variables','X variables'])
         self.roles.activate=lambda:self.activate('pairs')

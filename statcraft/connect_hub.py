@@ -309,17 +309,11 @@ class ViewRCodeDialog(QDialog):
         pill_box.addStretch()
         layout.addLayout(pill_box)
 
-        # Monospace Code Editor
-        self.code_view = QPlainTextEdit(self)
-        self.code_view.setReadOnly(True)
+        # Monospace Code Editor with line numbers and R syntax highlighting
+        from .r_workbench_widget import RCodeEditor
+        self.code_view = RCodeEditor(parent=self, is_dark=dark, read_only=True, with_highlighter=True)
         self.code_view.setPlainText(self.r_script)
-        font = QFont("Consolas", 10)
-        font.setStyleHint(QFont.StyleHint.Monospace)
-        self.code_view.setFont(font)
-        if dark:
-            self.code_view.setStyleSheet("background-color: #1e1e2e; color: #cdd6f4; border: 1px solid #313244; border-radius: 4px; padding: 8px;")
-        else:
-            self.code_view.setStyleSheet("background-color: #f8fafc; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 4px; padding: 8px;")
+        self.highlighter = self.code_view.highlighter
         layout.addWidget(self.code_view, 1)
 
         # Action Buttons
@@ -412,6 +406,85 @@ class ViewRCodeDialog(QDialog):
                 QMessageBox.critical(self, "Export Error", f"Failed to save R script:\n{err}")
 
 
+from PySide6.QtCore import QPoint as _QPoint, QRect as _QRect, QSize as _QSize
+from PySide6.QtWidgets import QLayout as _QLayout
+
+
+class FlowLayout(_QLayout):
+    """Horizontal wrapping layout so action ribbons fit narrow report panes without overflow."""
+
+    def __init__(self, parent=None, margin: int = 0, h_spacing: int = 6, v_spacing: int = 5):
+        super().__init__(parent)
+        self._items = []
+        self._h_space = h_spacing
+        self._v_space = v_spacing
+        self.setContentsMargins(margin, margin, margin, margin)
+
+    def __del__(self):
+        item = self.takeAt(0)
+        while item is not None:
+            item = self.takeAt(0)
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):
+        if 0 <= index < len(self._items):
+            return self._items[index]
+        return None
+
+    def takeAt(self, index):
+        if 0 <= index < len(self._items):
+            return self._items.pop(index)
+        return None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._do_layout(_QRect(0, 0, width, 0), test_only=True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = _QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        left, top, right, bottom = self.getContentsMargins()
+        return size + _QSize(left + right, top + bottom)
+
+    def _do_layout(self, rect: _QRect, test_only: bool) -> int:
+        left, top, right, bottom = self.getContentsMargins()
+        eff = rect.adjusted(left, top, -right, -bottom)
+        x = eff.x()
+        y = eff.y()
+        line_height = 0
+        for item in self._items:
+            hint = item.sizeHint()
+            next_x = x + hint.width() + self._h_space
+            if line_height > 0 and next_x - self._h_space > eff.right() + 1:
+                x = eff.x()
+                y = y + line_height + self._v_space
+                next_x = x + hint.width() + self._h_space
+                line_height = 0
+            if not test_only:
+                item.setGeometry(_QRect(_QPoint(x, y), hint))
+            x = next_x
+            line_height = max(line_height, hint.height())
+        return y + line_height - rect.y() + bottom
+
+
 class StatCraftAnalysisBar(QFrame):
     """Modern StatCraft Analysis ribbon with 1-click R script copy/export and dialog recall."""
 
@@ -422,13 +495,26 @@ class StatCraftAnalysisBar(QFrame):
         self.conn_dict = conn_dict
         self._init_ui()
 
+    def _resolve_worksheet(self):
+        presenter = getattr(self.window, "presenter", None)
+        if presenter is None:
+            return None
+        if hasattr(presenter, "resolve_entry_worksheet"):
+            return presenter.resolve_entry_worksheet(self.entry)
+        return getattr(presenter, "worksheet", None)
+
     def _init_ui(self):
         from .connect import ConnectedAnalysis, check_analysis_freshness
         from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QApplication, QFileDialog
 
         self.conn_obj = ConnectedAnalysis.from_dict(self.conn_dict)
-        worksheet = self.window.presenter.worksheet if hasattr(self.window, "presenter") and self.window.presenter else None
-        status, status_msg = check_analysis_freshness(self.conn_obj, worksheet) if worksheet else ("current", "In Sync")
+        worksheet = self._resolve_worksheet()
+        if worksheet is not None:
+            status, status_msg = check_analysis_freshness(self.conn_obj, worksheet)
+        else:
+            ws_name = self.entry.get("worksheet_name") or self.conn_obj.worksheet_name or ""
+            status = "missing_sheet"
+            status_msg = f"Source worksheet '{ws_name}' is unavailable."
         dark = _is_dark_active(self)
 
         self.setObjectName("statcraftAnalysisBar")
@@ -455,13 +541,27 @@ class StatCraftAnalysisBar(QFrame):
 
         r2_val = self.entry.get("result", {}).get("r_squared")
         r2_str = f"R² = {r2_val:.4f}" if r2_val is not None else "Fitted Procedure"
-        n_obs = len(self.conn_obj.fitted_row_ids)
-        model_info = QLabel(f"<b>{self.conn_obj.title}</b>  |  {r2_str}  |  N = {n_obs}")
+        meta = self.conn_obj.metadata or {}
+        if self.conn_obj.analysis_type == "two_sample_t" and meta.get("data_format", 1) != 2:
+            n1 = meta.get("sample1_n") or (meta.get("sample1") or {}).get("n")
+            n2 = meta.get("sample2_n") or (meta.get("sample2") or {}).get("n")
+            n_text = f"N1 = {n1}, N2 = {n2}" if (n1 is not None and n2 is not None) else f"N = {len(self.conn_obj.fitted_row_ids)}"
+        else:
+            n_text = f"N = {len(self.conn_obj.fitted_row_ids)}"
+        model_info = QLabel(f"<b>{self.conn_obj.title}</b>  |  {r2_str}  |  {n_text}")
+        model_info.setWordWrap(True)
         model_info.setStyleSheet("font-size: 8.5pt; color: #334155;" if not dark else "font-size: 8.5pt; color: #cbd5e1;")
+        self.model_info = model_info
         top_bar.addWidget(model_info, 1)
 
         if status != "current":
-            warn_badge = QLabel("⚠ " + ("Data Modified Since Fit" if status == "stale" else "Source Column Missing"))
+            if status == "stale":
+                warn_text = "⚠ Data Modified Since Fit"
+            elif status == "missing_sheet":
+                warn_text = "⚠ Source Worksheet Unavailable"
+            else:
+                warn_text = "⚠ Source Column Missing"
+            warn_badge = QLabel(warn_text)
             warn_color = "#f59e0b" if status == "stale" else "#ef4444"
             warn_badge.setStyleSheet(
                 f"color: {warn_color}; font-size: 8pt; font-weight: 600; padding: 2px 6px; border: 1px solid {warn_color}; border-radius: 3px;"
@@ -473,25 +573,24 @@ class StatCraftAnalysisBar(QFrame):
             sync_badge.setStyleSheet(
                 "color: #10b981; font-size: 8pt; font-weight: 600; padding: 2px 6px; border: 1px solid #10b981; border-radius: 3px;"
             )
-            sync_badge.setToolTip("Active worksheet data matches analysis training state.")
+            sync_badge.setToolTip("Source worksheet data matches analysis training state.")
             top_bar.addWidget(sync_badge)
 
         root.addLayout(top_bar)
 
         # Action Buttons Ribbon
-        btn_bar = QHBoxLayout()
-        btn_bar.setSpacing(6)
+        btn_bar = FlowLayout(h_spacing=6, v_spacing=5)
 
         btn_primary_qss = (
-            "QPushButton { background: #0284c7; color: #ffffff; border: 1px solid #0369a1; border-radius: 4px; padding: 4px 12px; font-size: 8.5pt; font-weight: 700; }"
+            "QPushButton { background: #0284c7; color: #ffffff; border: 1px solid #0369a1; border-radius: 4px; padding: 4px 10px; font-size: 8.5pt; font-weight: 700; }"
             "QPushButton:hover { background: #0369a1; }"
         )
 
         btn_qss = (
-            "QPushButton { background: #27272a; color: #f4f4f5; border: 1px solid #3f3f46; border-radius: 4px; padding: 4px 10px; font-size: 8.5pt; font-weight: 500; }"
+            "QPushButton { background: #27272a; color: #f4f4f5; border: 1px solid #3f3f46; border-radius: 4px; padding: 4px 9px; font-size: 8.5pt; font-weight: 500; }"
             "QPushButton:hover { background: #3f3f46; border-color: #0284c7; color: #38bdf8; }"
             if dark else
-            "QPushButton { background: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 10px; font-size: 8.5pt; font-weight: 500; }"
+            "QPushButton { background: #ffffff; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 9px; font-size: 8.5pt; font-weight: 500; }"
             "QPushButton:hover { background: #e0f2fe; border-color: #0284c7; color: #005a9e; }"
         )
 
@@ -525,11 +624,7 @@ class StatCraftAnalysisBar(QFrame):
         b_export_r.clicked.connect(self.export_r_file)
         btn_bar.addWidget(b_export_r)
 
-        sep1 = QLabel("|")
-        sep1.setStyleSheet("color: #cbd5e1;" if not dark else "color: #3f3f46;")
-        btn_bar.addWidget(sep1)
-
-        b_dialog = QPushButton("🔙 Recall Minitab Dialog...")
+        b_dialog = QPushButton("🔙 Recall Dialog...")
         b_dialog.setStyleSheet(btn_qss)
         b_dialog.setToolTip("Edit variables, options, and parameters in the classic procedure dialog (restoring previous selections)")
         b_dialog.clicked.connect(lambda: self.window.connect_open_dialog(self.entry) if hasattr(self.window, "connect_open_dialog") else None)
@@ -541,11 +636,10 @@ class StatCraftAnalysisBar(QFrame):
         b_report.clicked.connect(lambda: self.window.append_connected_report_to_report_pad(self.entry) if hasattr(self.window, "append_connected_report_to_report_pad") else None)
         btn_bar.addWidget(b_report)
 
-        btn_bar.addStretch()
         root.addLayout(btn_bar)
 
     def get_full_r_script(self) -> str:
-        ws = getattr(self.window.presenter, "worksheet", None) if hasattr(self.window, "presenter") else None
+        ws = self._resolve_worksheet()
         if ws is not None:
             from .r_universal_translator import translate_entry_to_r
             base, _, _ = translate_entry_to_r(self.entry, ws)
@@ -553,17 +647,24 @@ class StatCraftAnalysisBar(QFrame):
         return self.conn_obj.r_script or ""
 
     def get_tidyverse_r_script(self) -> str:
-        ws = getattr(self.window.presenter, "worksheet", None) if hasattr(self.window, "presenter") else None
+        ws = self._resolve_worksheet()
         if ws is not None:
             from .r_universal_translator import translate_entry_to_r
             _, tidy, _ = translate_entry_to_r(self.entry, ws)
             return tidy
+        meta_tidy = self.conn_obj.metadata.get("tidyverse_script") if isinstance(self.conn_obj.metadata, dict) else None
+        if meta_tidy:
+            return meta_tidy
+        if self.conn_obj.r_script:
+            return self.conn_obj.r_script
         from .connect_r import generate_r_tidyverse_script
         return generate_r_tidyverse_script(self.conn_obj, ws)
 
     def get_vroom_r_script(self) -> str:
         from .connect_r import generate_vroom_data_import_code
-        ws = getattr(self.window.presenter, "worksheet", None) if hasattr(self.window, "presenter") else None
+        ws = self._resolve_worksheet()
+        if ws is None:
+            ws = getattr(self.window.presenter, "worksheet", None) if hasattr(self.window, "presenter") else None
         return generate_vroom_data_import_code(ws)
 
     def copy_r_script(self):

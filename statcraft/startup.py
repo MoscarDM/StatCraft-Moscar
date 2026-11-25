@@ -34,16 +34,23 @@ def splash_pixmap():
 
 def start_window(app, window_factory, arguments=(), minimum_ms=0):
     """Return a controller kept alive by app; instant window creation with zero splash delay when minimum_ms=0."""
+    paths = [value for value in arguments if not str(value).startswith('-')]
+
+    def offer_recovery(window):
+        recover = getattr(window, "recover_autosave_if_present", None)
+        if not paths and recover is not None:
+            recover(ask=True)
+
     if minimum_ms <= 0:
         state = {'splash': None, 'window': None, 'ready': False, 'error': None}
         try:
             window = window_factory()
             state['window'] = window
-            paths = [value for value in arguments if not str(value).startswith('-')]
             if paths:
                 window.load_path(Path(paths[0]))
             state['ready'] = True
             window.showMaximized()
+            offer_recovery(window)
         except Exception as exc:
             state['error'] = str(exc)
             from PySide6.QtWidgets import QMessageBox
@@ -62,7 +69,6 @@ def start_window(app, window_factory, arguments=(), minimum_ms=0):
         try:
             window = window_factory()
             state['window'] = window
-            paths = [value for value in arguments if not str(value).startswith('-')]
             if paths:
                 window.load_path(Path(paths[0]))
             state['ready'] = True
@@ -70,6 +76,7 @@ def start_window(app, window_factory, arguments=(), minimum_ms=0):
             def reveal():
                 window.showMaximized()
                 splash.finish(window)
+                offer_recovery(window)
 
             QTimer.singleShot(max(0, minimum_ms - timer.elapsed()), reveal)
         except Exception as exc:

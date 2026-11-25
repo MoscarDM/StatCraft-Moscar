@@ -5,18 +5,19 @@
 <img src="StatCraft.png" width="128" height="128" alt="StatCraft Logo" />
 
 ### Modern, High-Performance Statistical Analysis & Quality Engineering Software
-**A powerful desktop alternative to Minitab with native MPX file compatibility, universal R code translation (Tidyverse, ggplot2, Base R), interactive 3D CAD response surfaces, and complete offline privacy.**
+**An open-source desktop app for statistical analysis, quality engineering, and design of experiments, with interactive charts and optional R workflows.**
 
-[![Version](https://img.shields.io/badge/version-118.0.0-blue.svg)](https://github.com/SkinnDeep/StatCraft/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/SkinnDeep/StatCraft)
+[![Release](https://img.shields.io/github/v/release/SkinnDeep/StatCraft?label=release&color=blue)](https://github.com/SkinnDeep/StatCraft/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20(arm64%20%26%20x86__64)%20%7C%20Linux-lightgrey.svg)](https://github.com/SkinnDeep/StatCraft/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-green.svg)](https://www.qt.io/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-[Download Release (v118.0.0)](https://github.com/SkinnDeep/StatCraft/releases/tag/v118.0.0) •
+[Website & Downloads](https://skinndeep.github.io/StatCraft/) •
+[Latest Release](https://github.com/SkinnDeep/StatCraft/releases/latest) •
 [Documentation](#capabilities--features) •
 [Installation Guide](#installation--setup) •
-[Roadmap](#cross-platform-roadmap)
+[Cross-Platform Releases](#cross-platform-roadmap)
 
 </div>
 
@@ -24,7 +25,9 @@
 
 ## Overview
 
-**StatCraft** is a modern, standalone desktop statistical software suite engineered for quality engineers, data scientists, researchers, and manufacturing specialists. It provides an authentic, high-speed alternative to legacy tools like Minitab, featuring direct compatibility with standard **MPX** and **MWX** project files, publication-ready graphics with balanced aspect ratios, interactive 3D CAD response surface navigation, and an intelligent **Universal R Code Translator**.
+**StatCraft** is a modern, standalone desktop statistical software suite engineered for quality engineers, data scientists, researchers, and manufacturing specialists. It offers worksheet-based analysis, publication-ready graphics, interactive 3D response surfaces, and R script generation.
+
+StatCraft is not affiliated with or endorsed by Minitab or JMP.
 
 StatCraft operates **100% offline** with zero cloud telemetry, ensuring your proprietary formulas, manufacturing measurements, and research data remain entirely private on your local machine.
 
@@ -39,8 +42,9 @@ Every analysis and dataset in StatCraft can be instantly translated into standal
 - **Publication Plots Out-of-the-Box**: Automatically generates normal distribution curve overlays for histograms, fitted lines with 95% confidence bands, and 4-in-1 residual diagnostic plots.
 - **IDE Ready**: One-click copy or direct export to **Positron**, **RStudio**, or **VS Code**. Column names with special characters and units (`Strength (N)`) are preserved cleanly with `check.names = FALSE`.
 
-### 2. Minitab 22 Regression Parity
-StatCraft delivers identical statistical reporting and diagnostic rigor to Minitab 22:
+### 2. Regression and Diagnostics
+StatCraft includes fitted-line plots, regression summaries, and residual diagnostics.
+
 - **Standard Regression Equation**: Displays cleanly formatted linear equations (e.g. `Strength = 520.14 + 1.482 Temp - 0.312 Pressure`).
 - **Complete Model Summary**: Reports standard error $S$, $R^2$, adjusted $R^2_{adj}$, and **Predicted R-squared ($R^2_{pred}$)** computed via the **PRESS** (Prediction Error Sum of Squares) statistic.
 - **Fits and Diagnostics for Unusual Observations**: Automatically detects and flags:
@@ -70,9 +74,7 @@ StatCraft delivers identical statistical reporting and diagnostic rigor to Minit
 
 ---
 
-## 🚀 Unique Innovations (Beyond Traditional Minitab)
-
-StatCraft breaks free from the rigid, static 1990s desktop paradigm with modern, workflow-accelerating features unavailable in traditional commercial packages:
+## 🚀 Analysis and Workflow Tools
 
 1. **Interactive "What-If" Spec & Tolerance Sliders**: Non-destructive, live simulation on Capability and Distribution outputs. Tweak LSL, USL, or target tolerances on the fly with instant recalculation of $C_p$, $C_{pk}$, and expected PPM directly on dynamic vector curves without touching worksheet data.
 2. **Automated "Plain English" Executive Summary**: Instant, audit-ready 3-sentence executive briefings for non-statistical managers and PowerPoint slides, translating $p$-values, effect sizes, and $R^2$ into clear, actionable prose.
@@ -87,12 +89,12 @@ StatCraft breaks free from the rigid, static 1990s desktop paradigm with modern,
 
 ---
 
-## 🚀 What's New in v118.0.0 — Minitab UX Parity, Interactive 2D Charts, HiDPI Vector Export & Drag-Fill
+## 🚀 What's New in v118.0.0 — Worksheet Improvements, Interactive 2D Charts, HiDPI Vector Export & Drag-Fill
 
-- **Full Dark/Light Dialog Parity**: Unified palette styling (`dialog_theme.py`) across `ScatterDialog`, `ScatterTypeDialog`, `GraphBuilderDialog`, `GraphObjectDialog`, `CheckForUpdatesDialog`, two-sample/paired t, and rare-event control chart dialogs.
+- **Consistent Dark and Light Dialogs**: Unified palette styling (`dialog_theme.py`) across `ScatterDialog`, `ScatterTypeDialog`, `GraphBuilderDialog`, `GraphObjectDialog`, `CheckForUpdatesDialog`, two-sample/paired t, and rare-event control chart dialogs.
 - **Ctrl+E Replay, Pre-Selection & Clear Validation**: Automatic pre-population from selected worksheet columns, `Reset` / `F3` state reset & persistence across `ScatterDialog` and `GraphBuilderDialog`, `Ctrl+E` mode memory, and unified type-aware validation messages.
 - **HiDPI Capture, Full-Frame Vector SVG Export & Rich Table Clipboard**: 2x DPR graph capture, complete `GraphFrame` SVG export (title, subtitle, chart, footnote), and dual HTML+TSV clipboard formatting for Excel/Word/PowerPoint.
-- **Worksheet Ergonomics & Drag-Fill Handle**: Multi-page status-bar summary (`N`, `Mean`, `StDev`, `Min`, `Max`, plus `Count` for non-numeric selections), Excel/Minitab `Ctrl+Arrow` block jumping, `Ctrl+1` column formatting + column context actions, undo/redo selection retention, and bottom-right mouse drag-fill handles for numeric sequences and text patterns.
+- **Worksheet Ergonomics & Drag-Fill Handle**: Multi-page status-bar summary (`N`, `Mean`, `StDev`, `Min`, `Max`, plus `Count` for non-numeric selections), `Ctrl+Arrow` to jump between data blocks, `Ctrl+1` column formatting + column context actions, undo/redo selection retention, and bottom-right mouse drag-fill handles for numeric sequences and text patterns.
 - **Interactive Output Pane & 2D Charts**: Live Navigator filter bar, `Ctrl+F` / `F3` search across Output Report headings, labels, and tables, per-table `Decimal Places` precision quick-toggle, compact `tab_corner_widget` chrome, clickable legend series visibility toggle, and interactive 2D wheel zoom / pan with **Reset Zoom**.
 
 ---
@@ -106,11 +108,11 @@ StatCraft breaks free from the rigid, static 1990s desktop paradigm with modern,
 
 ---
 
-## ⚡ 40 Make-or-Break Usability Parity Enhancements
+## ⚡ Worksheet and Workflow Improvements
 
-StatCraft includes 40 targeted usability fixes and full behavioral parity with Minitab, ensuring the application responds precisely as experienced practitioners expect:
+These improvements cover worksheet navigation, editing, and graph workflows.
 
-### 1. Authentic Worksheet Navigation & Cell Editing
+### 1. Worksheet Navigation & Cell Editing
 - **In-Editor Arrow Traversal**: Pressing Up/Down/Left/Right inside a cell editor now commits cleanly and moves to the adjacent cell without getting trapped or requiring extra mouse clicks.
 - **Seamless Column Name Traversal**: Seamlessly navigate between row 1 and the column header name row using vertical arrow keys.
 - **Type-Over Cell Entry**: Typing any alphanumeric character immediately overwrites the cell and begins inline editing, matching desktop spreadsheet standards.
@@ -181,7 +183,7 @@ StatCraft includes 40 targeted usability fixes and full behavioral parity with M
   - Grubbs' and Dixon's tests for outlier identification.
 
 ### 2. Advanced Regression & Linear Models
-- **Multiple Linear Regression (OLS)**: Full Minitab 22 parity with PRESS, Predicted R-squared, Unusual Observations ($R, X, RX$), and publication 4-in-1 residual plots.
+- **Multiple Linear Regression (OLS)**: Includes PRESS, Predicted R-squared, Unusual Observations ($R, X, RX$), and publication 4-in-1 residual plots.
 - **Stepwise & Best Subsets Regression**: Automated model selection via Stepwise, Forward, Backward, Forward/Backward AIC, and Forward/Backward BIC; Mallows' $C_p$, $R^2_{adj}$, and PRESS.
 - **Poisson Regression**: Log-link generalized linear models (GLM) for event counts with continuous and categorical predictors, exposure/offset terms, deviance/Pearson goodness-of-fit, and relative rate ratios with 95% CIs.
 - **Binary, Ordinal & Nominal Logistic Regression**:
@@ -251,10 +253,12 @@ StatCraft includes 40 targeted usability fixes and full behavioral parity with M
 - **Taguchi Robust Designs**: Orthogonal arrays ($L_4$ to $L_{36}$) with S/N ratios (Larger-is-better, Smaller-is-better, Nominal-is-best).
 - **Definitive Screening Designs (DSD)**: Main effects unconfounded with two-factor interactions.
 
-### 8. Native File Compatibility & Data Prep
-- **Excel, MPX / MWX & JMP Compatibility**: Directly open Microsoft Excel (`.xlsx`) workbooks, read/edit/save native Minitab (`.mpx` / `.mwx`) containers, and import JMP (`.jmp` / `.jsl`) datasets with column types, dates, and formulas preserved.
+### 8. File Formats & Data Preparation
+- **File import**: Open Excel workbooks (`.xlsx`) and supported Minitab projects (`.mpx`), worksheets (`.mwx`), and JMP tables (`.jmp`). MWX import is read-only. StatCraft can also read literal table data from supported `.jsl` files.
 - **Office Export**: Export worksheets and high-resolution reports to Microsoft Excel (`.xlsx`), Word (`.docx`), PowerPoint (`.pptx`), and PDF.
 - **Data Calculator & Transformations**: Formula evaluation, pattern generation, stacking/unstacking, transposing, sorting, and standardization.
+
+Minitab and JMP are named here to identify their file formats. Neither is affiliated with StatCraft.
 
 ---
 
@@ -302,9 +306,10 @@ StatCraft is built on the cross-platform Qt6 (PySide6) framework:
 
 | Platform | Current Status | Release Artifact |
 |---|---|---|
-| **Windows x64** | **Available (v118.0.0)** | `StatCraft-Setup.exe`, `StatCraft.exe` |
-| **macOS (Apple Silicon & Intel)** | *In Preparation* | `.dmg` installer & standalone `.app` bundle |
-| **Linux (x86_64)** | *In Preparation* | `AppImage` & `.deb` package |
+| **Windows x64** | **Automated Release** | `StatCraft-Setup-v<ver>-Windows-x64.exe`, `StatCraft-v<ver>-Windows-x64.exe` |
+| **macOS Apple Silicon (`arm64`)** | **Automated Release** | `StatCraft-v<ver>-macOS-arm64.dmg`, `StatCraft-v<ver>-macOS-arm64.zip` |
+| **macOS Intel (`x86_64`)** | **Automated Release** | `StatCraft-v<ver>-macOS-x86_64.dmg`, `StatCraft-v<ver>-macOS-x86_64.zip` |
+| **Linux (`x86_64`)** | **Automated Release** | `StatCraft-v<ver>-Linux-x86_64.tar.gz` |
 
 Source execution is fully functional on macOS and Linux by running `python launch_modern.py`.
 

@@ -68,7 +68,7 @@ def supported(entry):
         options = r.get('options') if isinstance(r.get('options'), dict) else {}
         graphs = r.get('graphs', options.get('graphs', 'four'))
         return graphs != 'none'
-    if isinstance(r, dict) and (r.get('graph') in ('attribute_capability', 'attribute_gage', 'symmetry_plot', 'acceptance_sampling_attributes', 'acceptance_sampling_variables') or r.get('analysis') in ('attribute_control', 'time_weighted_control', 'rare_event_control', 'multivariate_control', 'pareto_chart', 'type1_gage', 'tolerance_intervals', 'acceptance_control', 'attribute_gage', 'symmetry_plot', 'acceptance_sampling_attributes', 'acceptance_sampling_variables')):
+    if isinstance(r, dict) and (r.get('graph') in ('attribute_capability', 'attribute_gage', 'symmetry_plot', 'acceptance_sampling_attributes', 'acceptance_sampling_variables', 'ecdf_plot', 'marginal_plot', 'probability_distribution') or r.get('analysis') in ('attribute_control', 'time_weighted_control', 'rare_event_control', 'multivariate_control', 'pareto_chart', 'type1_gage', 'tolerance_intervals', 'acceptance_control', 'attribute_gage', 'symmetry_plot', 'acceptance_sampling_attributes', 'acceptance_sampling_variables', 'johnson_transformation', 'dist_id', 'ecdf_plot', 'marginal_plot', 'probability_distribution')):
         return True
     if isinstance(r, dict) and r.get('analysis') == 'oneway_anova':
         from .oneway_chart import supported as oneway_supported
@@ -95,9 +95,15 @@ def supported(entry):
         return True
     if isinstance(r,dict) and r.get('analysis')=='factorial_plots':return bool(r.get('main_effects') or r.get('interactions'))
     if isinstance(r,dict) and r.get('analysis') in ('model_contour_plot','model_surface_plot'):return bool(r.get('panels'))
+    if isinstance(r, dict) and r.get('analysis') in ('operating_window_3d', 'confirmation_evaluation'):
+        return True
     if isinstance(r,dict) and r.get('analysis')=='response_optimizer':return bool(r.get('options',{}).get('optimization_plot',True))
     if isinstance(r,dict) and r.get('analysis')=='binary_logistic':return r.get('options',{}).get('graphs')=='four'
-    if isinstance(r,dict) and r.get('plot_residuals') is False: return False
+    if isinstance(r, dict) and r.get('plot_residuals') is False:
+        if r.get('factor_terms'):
+            from .doe import factorial_pareto
+            return factorial_pareto(r) is not None
+        return False
     return isinstance(r,dict) and (r.get('graph') in ('categorical_points','dotplot_graphs','boxplot_graphs','histogram_graphs','descriptive_graphs','panel_graph','graph_layout','expanded','histogram','scatter','boxplot','normal_probability') or
         r.get('analysis')=='gage_rr' or any(k in r for k in ('xbar_center','i_center','within_stdev')) or
         r.get('chart') in ('P','U') or ('fitted' in r and 'residuals' in r))
@@ -234,6 +240,10 @@ class ChartWidget(GraphInteractionMixin,QWidget):
         if r.get('analysis') in ('factorial_plots','model_contour_plot','model_surface_plot'):
             from .model_plots_chart import prepare
             prepare(self,r);return
+        if r.get('analysis') in ('operating_window_3d', 'confirmation_evaluation'):
+            from .operating_window_chart import prepare
+            prepare(self, r)
+            return
         if r.get('analysis')=='response_optimizer':
             from .optimizer_chart import prepare
             prepare(self,r);return
@@ -466,6 +476,10 @@ class ChartWidget(GraphInteractionMixin,QWidget):
         if kind in ('model_main_effects','model_interaction','model_contour','model_surface'):
             from .model_plots_chart import draw_panel
             draw_panel(self,p,area,d);return
+        if kind in ('operating_window_3d', 'confirmation_interval'):
+            from .operating_window_chart import draw_panel
+            draw_panel(self, p, area, d)
+            return
         if kind == 'phase6_chart':
             from .phase6_charts import draw_panel
             draw_panel(self, p, area, d)
@@ -687,7 +701,7 @@ class ChartWidget(GraphInteractionMixin,QWidget):
 
 
     def _has_3d_panel(self):
-        return any(isinstance(p, dict) and p.get('kind') in ('model_surface', 'surface', 'scatter3d') for p in self.panels)
+        return any(isinstance(p, dict) and p.get('kind') in ('model_surface', 'operating_window_3d', 'surface', 'scatter3d') for p in self.panels)
 
     def _has_contour_panel(self):
         return any(isinstance(p, dict) and p.get('kind') == 'model_contour' for p in self.panels)
@@ -750,7 +764,7 @@ class ChartWidget(GraphInteractionMixin,QWidget):
 
     def _probe_surface_click(self, pos):
         for p in self.panels:
-            if isinstance(p, dict) and p.get('kind') == 'model_surface' and p.get('surface_vertices'):
+            if isinstance(p, dict) and p.get('kind') in ('model_surface', 'operating_window_3d') and p.get('surface_vertices'):
                 verts = p['surface_vertices']
                 best_v = None
                 best_dist = 42.0
@@ -978,7 +992,7 @@ class ChartWidget(GraphInteractionMixin,QWidget):
             # 3. Left-click: Probe surface point without rotating
             if event.button() == Qt.MouseButton.LeftButton:
                 for p in self.panels:
-                    if isinstance(p, dict) and p.get('kind') in ('model_surface', 'surface', 'scatter3d'):
+                    if isinstance(p, dict) and p.get('kind') in ('model_surface', 'operating_window_3d', 'surface', 'scatter3d'):
                         cube = p.get('cube_rect')
                         if cube and cube.contains(pos):
                             self._probe_surface_click(pos)

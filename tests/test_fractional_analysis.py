@@ -21,6 +21,36 @@ def sample():
 
 
 class FractionalAnalysisTests(unittest.TestCase):
+    def test_randomized_half_fraction_fit_plots_and_project_roundtrip(self):
+        p = Presenter()
+        design = p.create_factorial(FACTORS, generators={'D': 'ABC'}, replicates=2, seed=42)
+        self.assertEqual(design['result']['runs'], 16)
+        self.assertEqual(design['result']['resolution'], 4)
+        p.add_column('Response')
+        for row in range(p.worksheet.row_count):
+            order, _, _, _, a, b, c, d, _ = p.worksheet.row(row)
+            response = 10 + 2*a - 3*b + 1.5*c + .5*d + (1 if order <= 8 else -1)
+            p.set_cell(row, 8, str(response))
+        fit = p.analyze_factorial(8, [4, 5, 6, 7], max_order=1)
+        result = fit['result']
+        self.assertEqual(result['df_error'], 11)
+        self.assertAlmostEqual(result['ss_error'], 16)
+        for coefficient, expected in zip(result['coefficients'], [10, 2, -3, 1.5, .5], strict=True):
+            self.assertAlmostEqual(coefficient['estimate'], expected)
+        self.assertTrue(any('AB = CD' in row['aliases'] for row in result['alias_structure']))
+        plots = p.factorial_plots(fit['recipe'], options={'show_interaction_plot': False})
+        for series, expected in zip(plots['result']['main_effects'], [4, -6, 3, 1], strict=True):
+            self.assertAlmostEqual(series['effect'], expected)
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder:
+            path = Path(folder) / 'fractional.mpx'
+            p.save(path)
+            restored = Presenter()
+            restored.load(path)
+            for original in (fit, plots):
+                saved = next(item for item in restored.history if item.get('recipe', {}).get('action') == original['recipe']['action'])
+                self.assertEqual(saved['result'], original['result'])
+                self.assertEqual(restored.rerun_result(saved)['result'], saved['result'])
+
     def test_known_main_effects_and_alias_table(self):
         result=analyze_factorial(sample(),8,[4,5,6,7],max_order=1)
         self.assertEqual([round(c['effect'],8) for c in result['coefficients'][1:]],[4,-6,3,1])

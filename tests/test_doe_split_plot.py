@@ -164,6 +164,8 @@ class SplitPlotDialogAndPresenterTests(unittest.TestCase):
         self.assertEqual(fit["result"]["subplot_df"], 2)
 
     def test_create_factorial_dialog_split_plot_option_enabled_and_validates(self):
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QDialog
         dlg = CreateFactorialDialog(None)
         self.dialogs.append(dlg)
         dlg.show()
@@ -173,12 +175,18 @@ class SplitPlotDialogAndPresenterTests(unittest.TestCase):
         split_radio.setChecked(True)
         self.app.processEvents()
         ok_btn = dlg.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Ok)
+        self.assertFalse(ok_btn.isEnabled())
+        with patch.object(QDialog, "exec", return_value=QDialog.DialogCode.Accepted):
+            dlg.designs()
+        self.app.processEvents()
+        self.assertTrue(ok_btn.isEnabled())
         QTest.mouseClick(ok_btn, Qt.MouseButton.LeftButton)
         self.app.processEvents()
         self.assertEqual(dlg.result(), QDialog.DialogCode.Accepted)
         self.assertTrue(dlg.is_split_plot())
         self.assertIn("hard_factors", dlg.parameters)
         self.assertIn("easy_factors", dlg.parameters)
+        self.assertEqual(dlg.parameters["subplot_replicates"], 1)
 
     def test_build_analyze_split_plot_dialog_autofills_and_validates(self):
         ws = create_split_plot_design(

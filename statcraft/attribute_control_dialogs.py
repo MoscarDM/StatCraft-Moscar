@@ -33,8 +33,19 @@ from PySide6.QtWidgets import (
 )
 
 from .attribute_control_engine import parse_subgroup_omission
+from .dialog_theme import AutoErrorLabel, clamp_dialog_to_screen, dialog_stylesheet, is_dark_active
 from .model import Worksheet
 from .variable_dialogs import format_variable_reference, resolve_variables
+
+
+def _show_context_help(dialog: QDialog, title: str, text: str) -> None:
+    target = dialog.parent()
+    while target is not None and not hasattr(target, "context_help"):
+        target = target.parent() if callable(getattr(target, "parent", None)) else None
+    if target is not None and hasattr(target, "context_help"):
+        target.context_help(title)
+        return
+    QMessageBox.information(dialog, title, text)
 
 
 class AttributeOptionsDialog(QDialog):
@@ -54,8 +65,7 @@ class AttributeOptionsDialog(QDialog):
             win_title = f"{self.chart_type} Chart Options"
 
         self.setWindowTitle(win_title)
-        self.setMinimumSize(560, 420)
-        self.resize(560, 420)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.options = copy.deepcopy(options)
 
@@ -117,7 +127,7 @@ class AttributeOptionsDialog(QDialog):
 
         note_est = QLabel("(Enter subgroup numbers or a range of numbers, separated by spaces. Example: 3 12:15)")
         note_est.setWordWrap(True)
-        note_est.setStyleSheet("color: #5b6b77; font-size: 8.5pt;")
+        note_est.setObjectName("secondary")
         layout_est.addWidget(note_est)
         layout_est.addStretch()
         self.tabs.addTab(tab_est, "Estimate")
@@ -253,11 +263,15 @@ class AttributeOptionsDialog(QDialog):
         layout_st.addStretch()
         self.tabs.addTab(tab_storage, "Storage")
 
+        self.error = AutoErrorLabel()
+        layout.addWidget(self.error)
+
         # Dialog buttons
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btns.accepted.connect(self._accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
+        clamp_dialog_to_screen(self, 560, 440, min_w=520, min_h=380)
 
     def _on_test_mode_changed(self, idx: int):
         if idx == 0:  # All tests
@@ -276,6 +290,7 @@ class AttributeOptionsDialog(QDialog):
             self.chk_t4.setChecked(False)
 
     def _accept(self):
+        self.error.clear()
         # Parameters
         if self.chart_type in ("P", "NP", "P'"):
             txt = self.prop_edit.text().strip()
@@ -283,11 +298,11 @@ class AttributeOptionsDialog(QDialog):
                 try:
                     val = float(txt)
                     if not 0.0 <= val <= 1.0:
-                        QMessageBox.warning(self, "Invalid Proportion", "Historical proportion must be between 0.0 and 1.0.")
+                        self.error.setText("Historical proportion must be between 0.0 and 1.0.")
                         return
                     self.options["historical_p"] = val
                 except ValueError:
-                    QMessageBox.warning(self, "Invalid Proportion", "Proportion must be a valid number.")
+                    self.error.setText("Proportion must be a valid number.")
                     return
             else:
                 self.options["historical_p"] = None
@@ -297,24 +312,34 @@ class AttributeOptionsDialog(QDialog):
                 try:
                     val = float(txt)
                     if val < 0.0:
-                        QMessageBox.warning(self, "Invalid Mean", "Historical mean defect count cannot be negative.")
+                        self.error.setText("Historical mean defect count cannot be negative.")
                         return
                     self.options["historical_mean"] = val
                 except ValueError:
-                    QMessageBox.warning(self, "Invalid Mean", "Mean must be a valid number.")
+                    self.error.setText("Mean must be a valid number.")
                     return
             else:
                 self.options["historical_mean"] = None
 
         # Estimate
-        self.options["omit_subgroups"] = self.omit_edit.text().strip()
+        omit_txt = self.omit_edit.text().strip()
+        if omit_txt:
+            try:
+                parse_subgroup_omission(omit_txt)
+            except ValueError as exc:
+                self.error.setText(str(exc))
+                return
+        self.options["omit_subgroups"] = omit_txt
 
         # Limits
         k_txt = self.k_sigma_edit.text().strip()
         try:
-            self.options["k_sigma"] = float(k_txt) if k_txt else 3.0
+            k_val = float(k_txt) if k_txt else 3.0
+            if k_val <= 0:
+                raise ValueError
+            self.options["k_sigma"] = k_val
         except ValueError:
-            QMessageBox.warning(self, "Invalid K-Sigma", "Standard deviations (K) must be a positive number.")
+            self.error.setText("Standard deviations (K) must be a positive number.")
             return
 
         self.options["display_upper"] = self.chk_upper.isChecked()
@@ -322,12 +347,20 @@ class AttributeOptionsDialog(QDialog):
 
         # Tests
         mode = self.combo_tests_mode.currentIndex()
+        try:
+            t1_k = float(self.k_t1.text().strip() or 3.0)
+            t2_k = int(self.k_t2.text().strip() or 9)
+            t3_k = int(self.k_t3.text().strip() or 6)
+            t4_k = int(self.k_t4.text().strip() or 14)
+        except ValueError:
+            self.error.setText("Test K thresholds must be valid numbers.")
+            return
         if mode == 0:
             tests_cfg = {
-                "test1": {"enabled": True, "k": float(self.k_t1.text().strip() or 3.0)},
-                "test2": {"enabled": True, "k": int(self.k_t2.text().strip() or 9)},
-                "test3": {"enabled": True, "k": int(self.k_t3.text().strip() or 6)},
-                "test4": {"enabled": True, "k": int(self.k_t4.text().strip() or 14)},
+                "test1": {"enabled": True, "k": t1_k},
+                "test2": {"enabled": True, "k": t2_k},
+                "test3": {"enabled": True, "k": t3_k},
+                "test4": {"enabled": True, "k": t4_k},
             }
         elif mode == 2:
             tests_cfg = {
@@ -338,10 +371,10 @@ class AttributeOptionsDialog(QDialog):
             }
         else:
             tests_cfg = {
-                "test1": {"enabled": self.chk_t1.isChecked(), "k": float(self.k_t1.text().strip() or 3.0)},
-                "test2": {"enabled": self.chk_t2.isChecked(), "k": int(self.k_t2.text().strip() or 9)},
-                "test3": {"enabled": self.chk_t3.isChecked(), "k": int(self.k_t3.text().strip() or 6)},
-                "test4": {"enabled": self.chk_t4.isChecked(), "k": int(self.k_t4.text().strip() or 14)},
+                "test1": {"enabled": self.chk_t1.isChecked(), "k": t1_k},
+                "test2": {"enabled": self.chk_t2.isChecked(), "k": t2_k},
+                "test3": {"enabled": self.chk_t3.isChecked(), "k": t3_k},
+                "test4": {"enabled": self.chk_t4.isChecked(), "k": t4_k},
             }
         self.options["tests"] = tests_cfg
 
@@ -386,8 +419,7 @@ class AttributeChartDialog(QDialog):
             self.setWindowTitle("P Chart")
             btn_text = "P Chart O&ptions..."
 
-        self.setMinimumSize(560, 420)
-        self.resize(560, 420)
+        self.setStyleSheet(dialog_stylesheet(is_dark_active(parent or self)))
         self.setSizeGripEnabled(True)
         self.selected_params: Optional[Dict[str, Any]] = None
         self.options: Dict[str, Any] = {}
@@ -395,13 +427,16 @@ class AttributeChartDialog(QDialog):
 
         main_layout = QHBoxLayout(self)
 
-        # Left Column: Variables list
+        # Left Column: Filter + Variables list
         left_layout = QVBoxLayout()
+        self.var_filter = QLineEdit()
+        self.var_filter.setPlaceholderText("Filter variables…")
+        self.var_filter.setClearButtonEnabled(True)
+        self.var_filter.textChanged.connect(self._populate_var_list)
+        left_layout.addWidget(self.var_filter)
+
         self.var_list = QListWidget()
-        for idx, col in enumerate(worksheet.columns):
-            item = QListWidgetItem(format_variable_reference(idx, worksheet))
-            item.setData(Qt.ItemDataRole.UserRole, idx)
-            self.var_list.addItem(item)
+        self._populate_var_list()
         self.var_list.itemDoubleClicked.connect(self._on_list_double_clicked)
         left_layout.addWidget(self.var_list)
 
@@ -432,7 +467,7 @@ class AttributeChartDialog(QDialog):
             right_layout.addWidget(self.edit_subgroup)
 
             note_sub = QLabel("(enter a number or column containing the sizes)")
-            note_sub.setStyleSheet("color: #5b6b77; font-size: 8.5pt;")
+            note_sub.setObjectName("secondary")
             right_layout.addWidget(note_sub)
 
             self.edit_vars.installEventFilter(self)
@@ -450,6 +485,9 @@ class AttributeChartDialog(QDialog):
 
         right_layout.addStretch()
 
+        self.error = AutoErrorLabel()
+        right_layout.addWidget(self.error)
+
         # Action buttons
         btn_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -458,9 +496,23 @@ class AttributeChartDialog(QDialog):
         )
         btn_box.accepted.connect(self._validate_and_accept)
         btn_box.rejected.connect(self.reject)
+        btn_box.helpRequested.connect(lambda: _show_context_help(self, self.windowTitle(), "Select numeric variables and subgroup sizes (constant or numeric column)."))
         right_layout.addWidget(btn_box)
 
         main_layout.addLayout(right_layout, 2)
+        clamp_dialog_to_screen(self, 580, 440, min_w=540, min_h=380)
+
+    def _populate_var_list(self):
+        self.var_list.clear()
+        needle = self.var_filter.text().strip().lower() if hasattr(self, "var_filter") else ""
+        for idx, col in enumerate(self.worksheet.columns):
+            if col.kind != "number":
+                continue
+            if needle and needle not in col.name.lower() and needle not in f"c{idx + 1}":
+                continue
+            item = QListWidgetItem(format_variable_reference(idx, self.worksheet))
+            item.setData(Qt.ItemDataRole.UserRole, idx)
+            self.var_list.addItem(item)
 
     def eventFilter(self, watched, event):
         if event.type() == event.Type.FocusIn:
@@ -496,14 +548,19 @@ class AttributeChartDialog(QDialog):
             self.options = dlg.options
 
     def _validate_and_accept(self):
+        self.error.clear()
         vars_text = self.edit_vars.text().strip()
         if not vars_text:
-            QMessageBox.warning(self, "Input Required", "Please specify at least one measurement column in Variables.")
+            self.error.setText("Please specify at least one numeric measurement column in Variables.")
             return
 
-        var_indices = resolve_variables(vars_text, self.worksheet)
+        try:
+            var_indices = resolve_variables(vars_text, self.worksheet, kinds=("number",))
+        except ValueError as exc:
+            self.error.setText(str(exc))
+            return
         if not var_indices:
-            QMessageBox.warning(self, "Invalid Variables", f"Could not find valid columns matching: {vars_text}")
+            self.error.setText(f"Could not find valid numeric columns matching: {vars_text}")
             return
 
         subgroup_val: Union[float, int, None] = None
@@ -513,22 +570,26 @@ class AttributeChartDialog(QDialog):
         if self.chart_type in ("P", "NP", "U", "P'", "U'"):
             sub_text = self.edit_subgroup.text().strip() if self.edit_subgroup else ""
             if not sub_text:
-                QMessageBox.warning(self, "Input Required", "Please enter a constant number or column for subgroup sizes.")
+                self.error.setText("Please enter a constant number or column for subgroup sizes.")
                 return
 
             # Check if constant number
             try:
                 c_val = float(sub_text)
                 if c_val <= 0:
-                    QMessageBox.warning(self, "Invalid Size", "Subgroup size must be a positive number.")
+                    self.error.setText("Subgroup size must be a positive number.")
                     return
                 subgroup_val = c_val
                 is_subgroup_col = False
             except ValueError:
                 # Resolve as column
-                sub_cols = resolve_variables(sub_text, self.worksheet)
+                try:
+                    sub_cols = resolve_variables(sub_text, self.worksheet, kinds=("number",))
+                except ValueError as exc:
+                    self.error.setText(str(exc))
+                    return
                 if not sub_cols:
-                    QMessageBox.warning(self, "Invalid Subgroup Column", f"Could not find column matching: {sub_text}")
+                    self.error.setText(f"Could not find numeric column matching: {sub_text}")
                     return
                 subgroup_col_idx = sub_cols[0]
                 is_subgroup_col = True

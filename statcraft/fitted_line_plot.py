@@ -58,20 +58,37 @@ def fit_fitted_line_plot(
     if np.all(y_arr == y_arr[0]):
         raise ValueError("Response Y must have variation (cannot be constant).")
 
-    # Build design matrix X for full degree
-    X = np.column_stack([x_arr ** d for d in range(degree + 1)])
+    # Fit in a bounded basis so the predictor's units and origin do not set the rank.
+    min_x, max_x = float(x_arr.min()), float(x_arr.max())
+    center = min_x / 2 + max_x / 2
+    scale = max(max_x - center, center - min_x)
+    scaled_x = (x_arr - center) / scale
+    design = np.polynomial.polynomial.polyvander(scaled_x, degree)
+    q, r = np.linalg.qr(design)
+    if np.linalg.matrix_rank(r) < p:
+        raise ValueError("The fitted line model is rank-deficient. Choose a lower model order or more distinct predictor values.")
 
-    # Solve OLS
-    XtX = X.T @ X
-    XtX_inv = np.linalg.pinv(XtX)
-    beta = XtX_inv @ (X.T @ y_arr)
+    projections = q.T @ y_arr
+    scaled_beta = np.linalg.solve(r, projections)
+    inverse_r = np.linalg.solve(r, np.eye(p))
+
+    # Convert only the reported coefficients and standard errors to worksheet units.
+    original_basis = np.polynomial.Polynomial([-center / scale, 1 / scale])
+    transform = np.zeros((p, p))
+    for power in range(p):
+        coefficients = (original_basis ** power).coef
+        transform[:len(coefficients), power] = coefficients
+    beta = transform @ scaled_beta
+    coefficient_scales = np.linalg.norm(transform @ inverse_r, axis=1)
+    if not np.all(np.isfinite(beta)) or not np.all(np.isfinite(coefficient_scales)):
+        raise ValueError("Fitted line coefficients exceed the supported numeric range.")
 
     # Fitted values and residuals
-    y_hat = X @ beta
+    y_hat = design @ scaled_beta
     residuals = y_arr - y_hat
 
     # Hat matrix diagonal (leverages)
-    H_diag = np.sum(X * (X @ XtX_inv), axis=1)
+    H_diag = np.sum(q**2, axis=1)
 
     # Sum of squares
     mean_y = float(np.mean(y_arr))
@@ -88,7 +105,7 @@ def fit_fitted_line_plot(
     s = math.sqrt(ms_error)
 
     f_stat = ms_regression / ms_error if ms_error > 0 else float("inf")
-    p_val = float(1.0 - stats.f.cdf(f_stat, df_regression, df_error)) if ms_error > 0 else 0.0
+    p_val = float(stats.f.sf(f_stat, df_regression, df_error)) if ms_error > 0 else 0.0
 
     # Model Summary metrics
     r2 = max(0.0, min(1.0, 1.0 - (ss_error / ss_total))) if ss_total > 0 else 1.0
@@ -123,15 +140,11 @@ def fit_fitted_line_plot(
 
     # Sequential ANOVA Decomposition
     sequential_anova = []
-    current_ss_prev = 0.0
     for d in range(1, degree + 1):
-        Xd = np.column_stack([x_arr ** k for k in range(d + 1)])
-        beta_d = np.linalg.pinv(Xd.T @ Xd) @ (Xd.T @ y_arr)
-        ss_reg_d = float(np.sum((Xd @ beta_d - mean_y) ** 2))
-        ss_term = max(0.0, ss_reg_d - current_ss_prev)
-        current_ss_prev = ss_reg_d
+        # Each successive orthogonal column adds one term to the model.
+        ss_term = float(projections[d] ** 2)
         f_term = ss_term / ms_error if ms_error > 0 else float("inf")
-        p_term = float(1.0 - stats.f.cdf(f_term, 1, df_error)) if ms_error > 0 else 0.0
+        p_term = float(stats.f.sf(f_term, 1, df_error)) if ms_error > 0 else 0.0
         term_name = "Linear" if d == 1 else "Quadratic" if d == 2 else "Cubic"
         sequential_anova.append({
             "source": term_name,
@@ -147,9 +160,9 @@ def fit_fitted_line_plot(
     t_crit = float(stats.t.ppf(1.0 - (1.0 - confidence) / 2.0, df_error))
     for d in range(degree + 1):
         c_val = float(beta[d])
-        se_val = float(s * math.sqrt(max(0.0, XtX_inv[d, d])))
+        se_val = float(s * coefficient_scales[d])
         t_val = c_val / se_val if se_val > 0 else float("inf")
-        p_coef = float(2.0 * (1.0 - stats.t.cdf(abs(t_val), df_error))) if se_val > 0 else 0.0
+        p_coef = float(2.0 * stats.t.sf(abs(t_val), df_error)) if se_val > 0 else 0.0
         tname = "Constant" if d == 0 else x_name if d == 1 else f"{x_name}²" if d == 2 else f"{x_name}³"
         terms_info.append({
             "term": tname,
@@ -193,13 +206,13 @@ def fit_fitted_line_plot(
             })
 
     # Evaluation Curve & Bands across X range (120 points)
-    min_x = float(np.min(x_arr))
-    max_x = float(np.max(x_arr))
-    x_range = max(1e-9, max_x - min_x)
-    grid_x = np.linspace(min_x - 0.03 * x_range, max_x + 0.03 * x_range, 120)
-
-    grid_X = np.column_stack([grid_x ** d for d in range(degree + 1)])
-    grid_fit = grid_X @ beta
+    low, high = float(scaled_x.min()), float(scaled_x.max())
+    margin = .03 * (high - low)
+    grid_scaled = np.linspace(low - margin, high + margin, 120)
+    grid_x = center + scale * grid_scaled
+    grid_design = np.polynomial.polynomial.polyvander(grid_scaled, degree)
+    grid_fit = grid_design @ scaled_beta
+    grid_se = s * np.linalg.norm(grid_design @ inverse_r, axis=1)
 
     ci_low = []
     ci_high = []
@@ -207,8 +220,7 @@ def fit_fitted_line_plot(
     pi_high = []
 
     for i in range(len(grid_x)):
-        x0 = grid_X[i, :]
-        se_fit_i = float(s * math.sqrt(max(0.0, x0 @ XtX_inv @ x0.T)))
+        se_fit_i = float(grid_se[i])
         fit_i = float(grid_fit[i])
         ci_margin = t_crit * se_fit_i
         se_pred_i = math.sqrt(max(0.0, s ** 2 + se_fit_i ** 2))

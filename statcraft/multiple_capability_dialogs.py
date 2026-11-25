@@ -1,8 +1,4 @@
-"""Original multiple-process capability forms using documented data roles.
-
-REA confirms installed menu labels and purpose. Ordinary main-dialog geometry is
-unverified; only implemented options are exposed here.
-"""
+"""Configure capability analyses for multiple processes using worksheet columns."""
 import copy
 import math
 import re
@@ -10,6 +6,7 @@ from PySide6.QtCore import Qt,QEvent
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,
     QLineEdit,QListWidget,QListWidgetItem,QPushButton,QComboBox,QCheckBox,
     QDialogButtonBox,QAbstractItemView)
+from .dialog_theme import AutoErrorLabel
 from .variable_dialogs import format_variable_reference,format_variable_list,resolve_variables
 
 
@@ -51,7 +48,7 @@ class MultipleCapabilityOptionsDialog(QDialog):
             control.setCurrentIndex(choices.index(current.get(key,default)));self.controls[key]=control;form.addRow(label,control)
         for key,label,default in [('include_ci','Include confidence intervals',False),('unbiased_within','Use unbiasing constants for within standard deviation',True),('unbiased_overall','Use unbiasing constants for overall standard deviation',False)]:
             control=QCheckBox(label);control.setChecked(current.get(key,default));self.controls[key]=control;form.addRow('',control)
-        layout.addLayout(form);self.error=QLabel();self.error.setObjectName('error');self.error.setWordWrap(True);layout.addWidget(self.error)
+        layout.addLayout(form);self.error=AutoErrorLabel();layout.addWidget(self.error)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._on_ok);buttons.rejected.connect(self.reject);layout.addWidget(buttons)
         self.btn_ok=buttons.button(QDialogButtonBox.StandardButton.Ok)
@@ -105,7 +102,7 @@ class MultipleCapabilityDialog(QDialog):
             self.btn_options=QPushButton('Options…');self.btn_options.setAutoDefault(False);self.btn_options.clicked.connect(self._open_options);form.addRow('',self.btn_options)
         right=QVBoxLayout();right.addLayout(form)
         note=QLabel('Enter at least one specification limit for every variable or group. Multiple values follow the variable order or the worksheet group-value order.');note.setWordWrap(True);right.addWidget(note);right.addStretch();body.addLayout(right,2);layout.addLayout(body)
-        self.error=QLabel();self.error.setObjectName('error');self.error.setWordWrap(True);layout.addWidget(self.error)
+        self.error=AutoErrorLabel();layout.addWidget(self.error)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         self.btn_ok=buttons.button(QDialogButtonBox.StandardButton.Ok);buttons.accepted.connect(self._on_ok);buttons.rejected.connect(self.reject);layout.addWidget(buttons)
         self._toggle_by(False)
